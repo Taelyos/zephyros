@@ -40,8 +40,8 @@ from zephyros.core.contract import (
     validate_object,
 )
 from zephyros.core.deliveries import DeliveryRecord, DeliveryService
-from zephyros.core.gate import Inspected
 from zephyros.core.errors import Refusal, remedy
+from zephyros.core.gate import Inspected
 from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
@@ -159,7 +159,10 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             "Say who the hub takes the caller to be. A Contractor instance also reaches, with "
             "its project token: the model gateway at `/v1`, and the staging area of its "
             "project — `GET /staging/base` (the base to start from, as a git bundle) and "
-            "`POST /staging/delivery?branch=<name>` (its work, as a git bundle).",
+            "`POST /staging/delivery?branch=<name>` (its work, as a git bundle). An Owner "
+            "instance reads the staging area too: `GET /staging/base` (the client's repository) "
+            "and `GET /staging/delivery/<delivery_id>` (a delivered branch, as a git bundle: read "
+            "it, and its diff against the base, before judging the delivery).",
         ),
         ToolSpec(
             "project.create",
@@ -795,6 +798,18 @@ class Hub:
         def work(service: DeliveryService, project_id: str) -> tuple[bytes, dict[str, object]]:
             package = service.base_package(project_id)
             return package, {"bytes": len(package)}
+
+        return self._transport(caller, Action.STAGING_READ, work)
+
+    def staging_delivery(
+        self, caller: Caller, delivery_id: str
+    ) -> tuple[bytes | None, ToolFailure | None]:
+        """A delivered branch of the caller's project, as a package
+        (GET /staging/delivery/<delivery_id>): the Owner reads what it judges (ADR 0020)."""
+
+        def work(service: DeliveryService, project_id: str) -> tuple[bytes, dict[str, object]]:
+            package = service.delivery_package(project_id, delivery_id)
+            return package, {"delivery_id": delivery_id, "bytes": len(package)}
 
         return self._transport(caller, Action.STAGING_READ, work)
 

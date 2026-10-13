@@ -43,6 +43,8 @@ from zephyros.core.ports.delivery import Delivery, DeliveryArea, DeliveryError
 from zephyros.core.ports.forge import Forge, ForgeError, PullRequestRequest, RepositoryRef
 from zephyros.core.ports.verification import (
     Outcome as TestOutcome,
+)
+from zephyros.core.ports.verification import (
     VerificationError,
     VerificationRequest,
     VerificationRunner,
@@ -201,6 +203,14 @@ class DeliveryService:
     def base_package(self, project_id: str) -> bytes:
         try:
             return self._area.base_package(project_id)
+        except DeliveryError as error:
+            raise Refusal(Reason.NOT_FOUND, str(error)) from None
+
+    def delivery_package(self, project_id: str, delivery_id: str) -> bytes:
+        """A kept delivery, as a package: what the Owner side reads before judging it."""
+        self._record(project_id, delivery_id)
+        try:
+            return self._area.package(project_id, delivery_id)
         except DeliveryError as error:
             raise Refusal(Reason.NOT_FOUND, str(error)) from None
 

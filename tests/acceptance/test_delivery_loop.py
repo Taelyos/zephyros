@@ -303,6 +303,23 @@ def test_the_staging_area_needs_a_token_of_the_project(world: World) -> None:
     assert other.get("/staging/base").status_code == 401  # a token is bound to its address
 
 
+# ----------------------------------------------------------------------------- ADR 0020
+def test_the_owner_reads_the_delivered_branch_it_judges(world: World) -> None:
+    """The second real run's Owner could not see a delivery, so it missed a rewritten client
+    file. It now fetches the delivered branch, and only of its own project."""
+    prepared(world)
+    delivery = deliver(world, ADD_SUB)
+    read = world["owner_a"].http().get(f"/staging/delivery/{delivery}")
+    assert read.status_code == 200, read.text
+    assert read.headers["content-type"].startswith("application/x-git-bundle")
+    assert world.deliveries is not None
+    assert read.content == world.deliveries.delivery_package(world.project_a, delivery)
+    assert world["owner_b"].http().get(f"/staging/delivery/{delivery}").status_code == 404
+    assert world["owner_a"].http().get("/staging/delivery/d999").status_code == 404
+    assert world["owner_a"].http().get("/staging/delivery/latest").status_code == 400
+    assert world["owner_a"].http(token="").get(f"/staging/delivery/{delivery}").status_code == 401
+
+
 # ----------------------------------------------------------------------------- ATK-23, EXG-49
 def test_atk_23_hostile_text_in_the_delivery_changes_neither_the_decision_nor_the_report_shape(
     world: World,

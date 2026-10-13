@@ -1,7 +1,9 @@
 """The agent endpoint: the one hub destination open to instances (annex "Hub endpoints open to
 instances"). It serves `/mcp`, the model endpoint `/v1`, and the staging area: `GET /staging/base`
-(the base of the project, as a package) and `POST /staging/delivery?branch=<name>` (a pushed
-branch, as a package; the Contractor only). Each is one call of the hub, with one record.
+(the base of the project, as a package), `POST /staging/delivery?branch=<name>` (a pushed
+branch, as a package; the Contractor only) and `GET /staging/delivery/<delivery_id>` (a delivered
+branch, as a package, for the Owner to read what it judges; ADR 0020). Each is one call of the
+hub, with one record.
 
 By decision of the Owner (2026-10-10), `GET /v1/models` answers without a token with a fixed,
 non-secret list, because Hermes asks for it bare after every turn. The metadata probes that
@@ -10,6 +12,7 @@ Hermes sends before its first call get 404, silently. Nothing else is served wit
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from starlette.applications import Starlette
@@ -38,6 +41,8 @@ METADATA_PROBES: Final = frozenset(
     {"/api/v1/models", "/api/tags", "/api/show", "/props", "/v1/props", "/version"}
 )
 
+
+DELIVERY_ID: Final = re.compile(r"d[0-9]{1,6}")
 
 async def mcp_endpoint(hub: Hub, request: Request, endpoint: Endpoint) -> Response:
     """POST, GET and DELETE on /mcp, for the agent endpoint and the main-agent endpoint."""
@@ -126,6 +131,21 @@ def build_agent_app(
             return failure_response(failure)
         return Response(package, media_type=BUNDLE_TYPE)
 
+    async def staging_delivery_read(request: Request) -> Response:
+        caller = hub.authenticate(
+            bearer(request), peer_address=peer_address(request), endpoint=Endpoint.AGENT
+        )
+        if caller is None:
+            return unauthorized()
+        delivery_id = str(request.path_params["delivery_id"])
+        if not DELIVERY_ID.fullmatch(delivery_id):
+            hub.log_caller_refusal(caller, Reason.INVALID_REQUEST, "not a delivery identifier")
+            return JSONResponse({"error": "not a delivery identifier"}, status_code=400)
+        package, failure = await run_in_threadpool(hub.staging_delivery, caller, delivery_id)
+        if package is None:
+            return failure_response(failure)
+        return Response(package, media_type=BUNDLE_TYPE)
+
     async def staging_delivery(request: Request) -> Response:
         caller = hub.authenticate(
             bearer(request), peer_address=peer_address(request), endpoint=Endpoint.AGENT
@@ -167,6 +187,7 @@ def build_agent_app(
             Route("/v1/chat/completions", chat, methods=["POST"]),
             Route("/staging/base", staging_base, methods=["GET"]),
             Route("/staging/delivery", staging_delivery, methods=["POST"]),
+            Route("/staging/delivery/{delivery_id}", staging_delivery_read, methods=["GET"]),
             Route(
                 "/{path:path}",
                 fallback,

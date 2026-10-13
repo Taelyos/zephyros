@@ -8,7 +8,7 @@ An agent reaches the hub through MCP on its agent endpoint, and the operator rea
 
 | Tool | What it does | Operator | Main agent | Owner instance | Contractor instance |
 | --- | --- | --- | --- | --- | --- |
-| `whoami` | Say who the hub takes the caller to be. A Contractor instance also reaches, with its project token: the model gateway at `/v1`, and the staging area of its project — `GET /staging/base` (the base to start from, as a git bundle) and `POST /staging/delivery?branch=<name>` (its work, as a git bundle). | yes | yes | yes | yes |
+| `whoami` | Say who the hub takes the caller to be. A Contractor instance also reaches, with its project token: the model gateway at `/v1`, and the staging area of its project — `GET /staging/base` (the base to start from, as a git bundle) and `POST /staging/delivery?branch=<name>` (its work, as a git bundle). An Owner instance reads the staging area too: `GET /staging/base` (the client's repository) and `GET /staging/delivery/<delivery_id>` (a delivered branch, as a git bundle: read it, and its diff against the base, before judging the delivery). | yes | yes | yes | yes |
 | `project.create` | Create a project from a name and, as inert text, a repository URL. | yes | yes | no | no |
 | `project.list` | List the projects the caller may see. | yes | yes | own project | own project |
 | `project.get` | Describe one project. | yes | yes | own project | own project |
