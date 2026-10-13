@@ -452,7 +452,6 @@ def test_output_that_prints_the_inspection_heading_cuts_nothing_from_the_report(
 
 
 # ----------------------------------------------------------------------------- T10
-@pytest.mark.xfail(strict=True, reason="T10: the delivery passes vacuously until the fix")
 def test_a_delivery_declared_before_the_contract_never_passes(
     world: World, forge_root: Path
 ) -> None:

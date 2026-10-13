@@ -15,6 +15,9 @@ delivery says about itself.
    reservation, never a pass. FAIL when a rule is not met even counting the awaited objects as
    verified; CONCERNS when the rules are met only with them, or when there are reservations;
    PASS otherwise. WAIVED is never computed.
+4. A rule with nothing to count is met, but a decision is never PASS for want of anything to
+   judge (T10): a contract with no requirement or constraint, or a delivery where no acceptance
+   test passed, holds a reservation that says so, and is CONCERNS at best.
 """
 
 from __future__ import annotations
@@ -164,6 +167,25 @@ def outcome_of(outcomes: Mapping[str, Outcome], test: str) -> Outcome:
     return outcomes.get(test, Outcome.NOT_RUN)
 
 
+NOTHING_JUDGED = "nothing was judged: the contract has no requirement or constraint"
+NOTHING_TESTED = "nothing was judged by test: no acceptance test ran"
+NOTHING_PASSED = "no acceptance test passed"
+
+
+def _vacuous(judged: tuple[Judged, ...]) -> tuple[str, ...]:
+    """What keeps a decision from PASS for want of evidence (T10): nothing to judge, or no
+    acceptance test of the judged objects that passed. Failed or broken tests say so apart
+    from tests that did not run, so that running a failing test never improves a decision."""
+    if not judged:
+        return (NOTHING_JUDGED,)
+    outcomes = [outcome for item in judged for _test, outcome in item.tests]
+    if Outcome.PASSED in outcomes:
+        return ()
+    if any(outcome is not Outcome.NOT_RUN for outcome in outcomes):
+        return (NOTHING_PASSED,)
+    return (NOTHING_TESTED,)
+
+
 def compute_gate(
     objects: Objects,
     outcomes: Mapping[str, Outcome],
@@ -201,10 +223,14 @@ def compute_gate(
 
     checks = checks_of(lambda j: j.verified)
     awaited = [j for j in judged if j.awaiting]
-    every = tuple(reservations) + tuple(
-        f"{j.id} ({j.priority}) awaits a recorded judgment: "
-        + ", ".join(m for m in j.methods if m != "test")
-        for j in awaited
+    every = (
+        tuple(reservations)
+        + tuple(
+            f"{j.id} ({j.priority}) awaits a recorded judgment: "
+            + ", ".join(m for m in j.methods if m != "test")
+            for j in awaited
+        )
+        + _vacuous(judged)
     )
     if not all(check.met for check in checks_of(lambda j: j.verified or j.awaiting)):
         decision = Decision.FAIL

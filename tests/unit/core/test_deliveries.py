@@ -29,7 +29,7 @@ from zephyros.core.deliveries import (
     flagged_paths,
 )
 from zephyros.core.errors import Refusal
-from zephyros.core.gate import Inspected
+from zephyros.core.gate import NOTHING_JUDGED, Inspected
 from zephyros.core.ports.forge import (
     ForgeError,
     PullRequest,
@@ -96,10 +96,11 @@ def service(
     contracts = ContractService(InMemoryContractStore(), clock, new_change_id=lambda: "c_00000001")
     project = projects.create(OPERATOR, {"name": "Calc"}).id
     objects = contract(*specs)
-    change = parse_change(
-        {"summary": "s", "operations": [{"op": "put", "object": o} for o in objects.values()]}
-    )
-    contracts.apply_reserved(OPERATOR, project, change)
+    if objects:
+        change = parse_change(
+            {"summary": "s", "operations": [{"op": "put", "object": o} for o in objects.values()]}
+        )
+        contracts.apply_reserved(OPERATOR, project, change)
     if forge == "default":
         forge = InMemoryForge(
             {"example/calc": frozenset({"main"})},
@@ -230,13 +231,14 @@ def test_the_cost_in_the_report_is_the_gateway_usage_of_the_project() -> None:
     assert "2 model calls, 350 prompt tokens, 20 completion tokens." in report
 
 
-def test_a_contract_without_acceptance_tests_runs_nothing_and_passes_vacuously() -> None:
-    made, project, _audit, _store = service()
-    made._contracts = ContractService(InMemoryContractStore(), FakeClock())  # an empty contract
+def test_a_delivery_declared_before_the_contract_runs_nothing_and_never_passes() -> None:
+    """T10: it passed for want of anything to judge. The runner would fail if it ran."""
+    made, project, _audit, _store = service(runner=Exploding(), specs=())
     ready(made, project)
     record = made.status(project, delivered(made, project))
-    assert record.outcomes == {}
-    assert record.decision == "PASS"
+    assert (record.outcomes, record.decision, record.contract_version) == ({}, "CONCERNS", 0)
+    assert record.report is not None
+    assert f"- {NOTHING_JUDGED}" in record.report.splitlines()
 
 
 def test_the_worker_hooks_are_harmless() -> None:
