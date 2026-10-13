@@ -8,7 +8,13 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+- The continuity ladder no longer wakes the Contractor while its contract is still being
+  written (US-E7-01, ADR 0021). Its task now waits until the version in force names an
+  acceptance test and no change that could still be approved awaits a decision. A change
+  proposed while it works holds its ladder until the change is decided. Before this fix, a base
+  prepared early, so that the Owner side could read it, woke the Contractor after
+  `continuity.inactivity_seconds`, and the Contractor spent its turns on a draft.
 
 ## [0.1.0] - 2026-10-13
 
