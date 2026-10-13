@@ -612,8 +612,8 @@ def _rule_gateway(data: Mapping[str, object]) -> list[Problem]:
             Problem(
                 "gateway.models",
                 "names the models the gateway may serve at the provider: it is required when "
-                "gateway.provider is openai-compatible, and the configured model must be one "
-                "of them",
+                "gateway.provider is openai-compatible, and the model the gateway sends to the "
+                "provider must be one of them",
             )
         )
         return problems

@@ -9,9 +9,9 @@ Flash on every side, through OpenCode Go, on small Python projects (see the
 ## What changes: the gateway
 
 The hub never gives an instance a provider credential (EXG-04,
-[ADR 0008](decisions/0008-model-gateway-in-hub.md)): it is a gateway. The instances run Hermes, which asks the gateway; the gateway forwards each call
-to an OpenAI-compatible provider, with the credential file the configuration names. Swapping the
-provider is one table of the configuration:
+[ADR 0008](decisions/0008-model-gateway-in-hub.md)): it is a gateway. The instances run Hermes,
+which asks the gateway; the gateway forwards each call to an OpenAI-compatible provider, with the
+credential file the configuration names. Swapping the provider is one table of the configuration:
 
 ```toml
 [gateway]
@@ -105,7 +105,8 @@ instead, so the variables always resolve.
 4. **The Owner side** (runs 2 and 3): `instance.start` with `"side": "owner"` and its task. The
    Owner instance proposes the stories, the criteria and their links, and puts its acceptance
    tests. Read each proposal with `contract.pending` before you approve it with
-   `contract.approve`.
+   `contract.approve`. A proposal cannot hold what is reserved to the operator (a P0 criterion,
+   a link to a P0 requirement): apply those with `contract.apply_reserved`.
 
 5. **The Contractor side**: `instance.start` with `"side": "contractor"` and the task. From here
    the real agents work: they call the hub's tools (MCP), fetch the staging base, push a branch

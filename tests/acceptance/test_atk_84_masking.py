@@ -27,6 +27,7 @@ from tests.unit.core.test_gate import contract
 from zephyros.adapters.dummy.verification import AssertionRunner
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.app.hub import DeliverySetup
+from zephyros.core.audit import Action
 from zephyros.core.masking import MASK
 
 pytestmark = pytest.mark.acceptance
@@ -140,7 +141,7 @@ def test_atk_84_words_that_hold_a_key_prefix_come_back_intact_everywhere(
     assert f"`{DELIVERED}`" in report
     assert f"`{observation}`" in report
     assert MASK not in report
-    # The log: the push names the branch, the inspection its observation.
+    # The log: the push names the branch as written, and no record holds a mask.
     records = world.records(world.project_a)
     pushes = [json.loads(r.parameters) for r in records if r.action.value == "delivery.push"]
     assert [push["branch"] for push in pushes] == [BRANCH]
@@ -148,10 +149,14 @@ def test_atk_84_words_that_hold_a_key_prefix_come_back_intact_everywhere(
     world.verify_logs()
 
 
-def test_atk_84_canaries_in_a_verdict_come_back_masked_from_the_pull_request_and_the_log(
+def test_atk_84_canaries_in_a_message_and_a_verdict_come_back_masked(
     world: World, forge_root: Path
 ) -> None:
+    """The canaries reach the log as the name of a tool the Contractor asks for (the log keeps
+    it), and the pull request as the reasons of the Owner's verdict (posted on it)."""
     delivery = judged_delivery(world)
+    for canary in CANARIES:
+        assert world["contractor_a"].tool(canary).refused
     reasons = "the run printed " + " and ".join(CANARIES) + f", on {BRANCH}"
     reviewed = world["owner_a"].tool(
         "delivery_review",
@@ -159,13 +164,14 @@ def test_atk_84_canaries_in_a_verdict_come_back_masked_from_the_pull_request_and
     )
     assert not reviewed.refused, reviewed.error
     world.run_jobs()
-    found = pull_request(forge_root)
-    posted = json.dumps(found["comments"])
-    logged = json.dumps([r.parameters for r in world.records(world.project_a)])
+    posted = json.dumps(pull_request(forge_root))
+    records = world.records(world.project_a)
+    asked = [r for r in records if r.action is Action.UNKNOWN]
+    logged = json.dumps([r.parameters for r in records])
     for canary in CANARIES:
         assert canary not in posted
         assert canary not in logged
     # The canaries were really carried, and really masked; the branch next to them was not.
-    assert posted.count(MASK) >= len(CANARIES)
-    assert f"on {BRANCH}" in posted
+    assert [json.loads(r.parameters)["requested"] for r in asked] == [MASK] * len(CANARIES)
+    assert f"and {MASK}, on {BRANCH}" in posted
     world.verify_logs()
