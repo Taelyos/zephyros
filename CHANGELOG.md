@@ -8,6 +8,14 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-10-14
+
+The first release: a hub with no model that runs a software project between an Owner side and a
+Contractor side, tried in three runs with real models. Release notes:
+[docs/release-notes/0.1.0.md](docs/release-notes/0.1.0.md).
+
 ### Added
 - The contract schema, version 1.1.0: requirements, constraints, stories, criteria, links and
   notes, with the operator-reserved objects and the acceptance criteria of the Owner side.
@@ -27,8 +35,12 @@ version. Each schema carries its own version number.
 - The Owner side judges with the hub (ADR 0020): it reads the pending changes of the contract
   (`contract.pending`) and the delivered branch (`GET /staging/delivery/<id>`), records an
   inspection (`inspection.record`) and its verdict (`delivery.review`), posted on the pull
-  request. The gate judges the constraints as well as the requirements. The forge interface is
-  0.3.0 (`comment`).
+  request. The gate judges the constraints as well as the requirements. When an inspection
+  changes the decision, the hub retitles the pull request. The forge interface is 0.4.0
+  (`comment`, `update_title`).
+- The evidence report flags the acceptance test files of the Owner side that no criterion
+  names: the gate never runs them. `acceptance.put` answers the criteria that name the file
+  (`named_by`), with a warning when there are none.
 - The events schema, version 1.1.0: the payloads of the signed notifications
   (`delivery.decided`, `delivery.loop`, `delivery.reviewed`, `continuity.alert_main`,
   `continuity.alert_human`); every payload carries `schema_version`. 1.1.0 added
@@ -36,11 +48,13 @@ version. Each schema carries its own version number.
 - The command line: `zephyros config check|schema`, `zephyros hub start|call`,
   `zephyros filter start`, `zephyros --version`.
 - The API of the hub: the operator channel, the main-agent channel and the agent endpoint,
-  with the tool set of `docs/tools.md` and the instance tools of `docs/instance-tools.md`.
+  with the tool set of `docs/tools.md` and the instance tools of `docs/instance-tools.md`. The
+  agent endpoint gives the version of Zephyros in its MCP handshake.
+- `scripts/deploy.sh up|down|call` runs Zephyros on one machine; `down` also removes the
+  guards, turns and sandboxes, and their networks, and keeps the volumes.
 
 ### Breaking changes
-- None yet: version 0.0.0 is the first milestone and nothing has been promised before it. To
-  note all the same (ADR 0020): the gate now judges the constraints as well as the
-  requirements, and an object verified by a method other than test keeps a delivery from
-  PASS until the Owner side records its inspection; the rule names in the report say
-  "requirements and constraints".
+- None: 0.1.0 is the first release, and nothing was promised before it. To note all the same
+  (ADR 0020): the gate judges the constraints as well as the requirements, and an object
+  verified by a method other than test keeps a delivery from PASS until the Owner side records
+  its inspection; the rule names in the report say "requirements and constraints".
