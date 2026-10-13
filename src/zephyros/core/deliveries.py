@@ -319,6 +319,16 @@ class DeliveryService:
             contract_version=record.contract_version,
             after="inspection",
         )
+        if gate.decision.value != record.decision:
+            self._events(
+                "delivery.decided",
+                {
+                    "project_id": project_id,
+                    "delivery_id": delivery_id,
+                    "branch": record.branch,
+                    "decision": gate.decision.value,
+                },
+            )
         self._comment_later(
             updated,
             f"**Inspection recorded** by {by}: {object_id} "
@@ -343,6 +353,17 @@ class DeliveryService:
         }
         updated = replace(record, review=review)
         self._store.put_record(updated)
+        self._events(
+            "delivery.reviewed",
+            {
+                "project_id": project_id,
+                "delivery_id": delivery_id,
+                "branch": record.branch,
+                "decision": record.decision,
+                "verdict": verdict.value,
+                "reasons": mask(reasons, self._secrets()),
+            },
+        )
         self._comment_later(
             updated,
             f"**Review of the Owner side** ({by}): **{verdict.value.replace('_', ' ')}**, "

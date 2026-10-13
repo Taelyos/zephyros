@@ -20,7 +20,7 @@ TIMESTAMP_HEADER = "X-Zephyros-Timestamp"
 
 TOLERANCE_SECONDS = 300
 
-EVENTS_SCHEMA_VERSION = "1.0.0"
+EVENTS_SCHEMA_VERSION = "1.1.0"
 """The version of the event payloads (annex "Public API"): every notification carries it."""
 """How far the timestamp of a delivery may be from the receiver's clock."""
 

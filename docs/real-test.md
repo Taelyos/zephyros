@@ -60,10 +60,19 @@ deploy.sh mounts an empty file instead, so the variables always resolve.
    From here the real agents work: they call the hub's tools (MCP), fetch the staging base,
    push a branch, declare the delivery.
 5. The hub replays the acceptance tests in a sandbox, computes the gate, writes the evidence
-   report and opens the pull request on the forge — with real models on both sides, the Owner
-   instance reviews the proposal and approves or rejects it. On GitHub, the pull request opens
-   on the project's repository; the branch the hub pushes is new by construction, and the hub
-   never rewrites a branch that exists.
+   report and opens the pull request on the forge. On GitHub, the pull request opens on the
+   project's repository; the branch the hub pushes is new by construction, and the hub never
+   rewrites a branch that exists.
+6. The Owner instance judges the delivery (ADR 0020): it reads the delivered branch
+   (`GET /staging/delivery/<id>`, a git bundle, against `GET /staging/base`), records an
+   inspection for each requirement or constraint that tests cannot show (`inspection.record`;
+   until then such an object keeps the decision at CONCERNS), and records its verdict with its
+   reasons (`delivery.review`), posted on the pull request. Before approving a change of the
+   contract that the Owner proposed, read it with `contract.pending`. The merge stays yours.
+
+Keep the client's interface in the contract (a constraint) when the Owner must write tests
+against it: a first prompt holds 4 000 characters, and the Owner reads the code only once it
+is delivered.
 
 What to watch: `delivery.status` for the decision, the log (`log.read`, `log.verify`) for
 every call and every refusal, and the notifications if `[notifications]` is set — the hub

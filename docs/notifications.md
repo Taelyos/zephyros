@@ -8,8 +8,9 @@ signed webhooks of EXG-43: one HTTP delivery per event, signed, fresh and single
 
 | Event | When | Fields |
 | --- | --- | --- |
-| `delivery.decided` | A delivery received its gate decision (PASS, FAIL or ERROR) | `project_id`, `delivery_id`, `branch`, `decision` |
+| `delivery.decided` | A delivery received its gate decision (PASS, CONCERNS, FAIL or ERROR), or a new one after an inspection (ADR 0020) | `project_id`, `delivery_id`, `branch`, `decision` |
 | `delivery.loop` | A streak of refused deliveries reached `continuity.rejections` without a pass in between (EXG-23) | `project_id`, `branch`, `rejections` |
+| `delivery.reviewed` | The Owner side recorded its verdict on a delivery (`accept`, `accept_with_reservations` or `reject`; ADR 0020): a `reject` is the main agent's to act on | `project_id`, `delivery_id`, `branch`, `decision`, `verdict`, `reasons` |
 | `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01) | `project_id`, `side`, `step`, `task`, `detail` |
 | `continuity.alert_human` | The main agent did not unblock the task within `continuity.unblock_seconds` | `project_id`, `side`, `step`, `task`, `detail` |
 

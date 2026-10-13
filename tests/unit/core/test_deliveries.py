@@ -508,3 +508,34 @@ def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_loc
     made._store.put_record(decided)
     made.record_review("operator", project, pushed.delivery_id, Verdict.ACCEPT, "fine")
     assert not made.step()  # no pull request: nothing to post
+
+
+def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_changes() -> None:
+    """ADR 0020: a reject is the main agent's to act on; a new decision is a transition."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, _audit, _store = service()
+    made._events = lambda event, payload: events.append((event, payload))
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    events.clear()
+    made.record_inspection("operator", project, delivery, "CTR-01", Inspected.CONFORMS, "ok")
+    made.record_inspection("operator", project, delivery, "CTR-01", Inspected.CONFORMS, "again")
+    made.record_review("operator", project, delivery, Verdict.REJECT, "the README is wrong")
+    assert events == [
+        (
+            "delivery.decided",
+            {"project_id": project, "delivery_id": delivery, "branch": "work", "decision": "PASS"},
+        ),
+        (
+            "delivery.reviewed",
+            {
+                "project_id": project,
+                "delivery_id": delivery,
+                "branch": "work",
+                "decision": "PASS",
+                "verdict": "reject",
+                "reasons": "the README is wrong",
+            },
+        ),
+    ]

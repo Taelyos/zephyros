@@ -29,9 +29,10 @@ version. Each schema carries its own version number.
   inspection (`inspection.record`) and its verdict (`delivery.review`), posted on the pull
   request. The gate judges the constraints as well as the requirements. The forge interface is
   0.3.0 (`comment`).
-- The events schema, version 1.0.0: the payloads of the signed notifications
-  (`delivery.decided`, `delivery.loop`, `continuity.alert_main`, `continuity.alert_human`);
-  every payload carries `schema_version`.
+- The events schema, version 1.1.0: the payloads of the signed notifications
+  (`delivery.decided`, `delivery.loop`, `delivery.reviewed`, `continuity.alert_main`,
+  `continuity.alert_human`); every payload carries `schema_version`. 1.1.0 added
+  `delivery.reviewed` (ADR 0020).
 - The command line: `zephyros config check|schema`, `zephyros hub start|call`,
   `zephyros filter start`, `zephyros --version`.
 - The API of the hub: the operator channel, the main-agent channel and the agent endpoint,
