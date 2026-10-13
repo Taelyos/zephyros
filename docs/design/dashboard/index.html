@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The policy the dashboard sends as a header (ADR 0021). No inline script or style anywhere,
+     no request outside the page's own origin. frame-ancestors only works as a header. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Zephyros · dashboard mockup</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="boot" id="boot">
+  <div>
+    <p>Loading the replay…</p>
+    <p>If this message stays, serve this folder over HTTP, for example<br>
+      <code>python3 -m http.server --bind 127.0.0.1 --directory docs/design/dashboard 8765</code><br>
+      and open <code>http://127.0.0.1:8765/</code>.</p>
+  </div>
+</div>
+
+<div class="app" id="app" hidden>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">Z</span><span>Zephyros</span></div>
+    <span class="divider" aria-hidden="true"></span>
+    <div class="project">
+      <div class="project-name" id="project-name"></div>
+      <div class="project-sub" id="project-sub"></div>
+    </div>
+    <span class="spacer"></span>
+    <div class="badges" id="badges"></div>
+  </header>
+
+  <main class="board" id="board">
+    <h1 class="visually-hidden">Project overview</h1>
+    <section class="row hero" aria-label="Now">
+      <article class="card gate-card" id="gate-card" aria-label="The gate's decision"></article>
+      <article class="card side-card owner" id="side-owner" aria-label="Owner"></article>
+      <article class="card side-card contractor" id="side-contractor" aria-label="Contractor"></article>
+      <article class="card run-card" id="run-card" aria-label="The run"></article>
+    </section>
+
+    <section class="card timeline-card" aria-labelledby="timeline-title">
+      <div class="timeline-head">
+        <span class="eyebrow" id="timeline-title">Timeline</span>
+        <div class="legend" aria-hidden="true">
+          <span><i class="owner"></i>Owner turn</span>
+          <span><i class="contractor"></i>Contractor turn</span>
+          <span><i class="failed"></i>failed turn</span>
+          <span><i class="call"></i>model call</span>
+          <span><i class="refused"></i>refused call</span>
+        </div>
+      </div>
+      <div class="timeline-box"><svg class="timeline-svg" id="timeline" role="group" aria-label="Timeline of the run"></svg></div>
+    </section>
+
+    <section class="row bottom">
+      <section class="card" id="req-card" aria-label="Requirements and constraints"></section>
+      <section class="card" id="moments-card" aria-label="Key moments"></section>
+    </section>
+  </main>
+
+  <footer class="transport" id="transport" aria-label="Replay controls"></footer>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden></aside>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<div class="caption" id="caption" hidden></div>
+<div class="visually-hidden" id="announcer" aria-live="polite"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
