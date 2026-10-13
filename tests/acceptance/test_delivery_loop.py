@@ -26,6 +26,7 @@ from zephyros.adapters.dummy.verification import AssertionRunner
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.app.hub import DeliverySetup
 from zephyros.core.audit import Action, Outcome, Reason
+from zephyros.core.ports.verification import VerificationRequest, VerificationResult
 
 pytestmark = pytest.mark.acceptance
 
@@ -50,16 +51,35 @@ def forge_root() -> Iterator[Path]:
         shutil.rmtree(root, ignore_errors=True)
 
 
-@pytest.fixture
-def world(tmp_path: Path, forge_root: Path) -> World:
+def make_world(tmp_path: Path, forge_root: Path, runner: AssertionRunner) -> World:
     setup = DeliverySetup(
         staging_root=tmp_path / "staging",
-        runner=AssertionRunner(),
+        runner=runner,
         forge=DirectoryForge(forge_root),
         kit="assertions",
     )
     (tmp_path / "world").mkdir()
     return World(tmp_path / "world", delivery=setup)
+
+
+@pytest.fixture
+def world(tmp_path: Path, forge_root: Path) -> World:
+    return make_world(tmp_path, forge_root, AssertionRunner())
+
+
+class EchoingRunner(AssertionRunner):
+    """The assertions runner, whose output also shows what the delivered code printed (the
+    file OUTPUT.txt of the tree), as the output of a real kit does."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        result = super().run(request)
+        printed = request.files.get("OUTPUT.txt", b"").decode("utf-8", errors="replace")
+        return VerificationResult(result.outcomes, f"{result.log}\n{printed}")
+
+
+@pytest.fixture
+def echoing_world(tmp_path: Path, forge_root: Path) -> World:
+    return make_world(tmp_path, forge_root, EchoingRunner())
 
 
 def requirements() -> list[dict[str, Any]]:
@@ -385,3 +405,48 @@ def test_atk_23_hostile_text_in_the_delivery_changes_neither_the_decision_nor_th
     assert found["decision"] == "FAIL"
     assert found["report"].count("**Decision:") == 1
     assert TOKEN_LIKE not in found["report"]
+
+
+# ----------------------------------------------------------------------------- T11
+INSPECTED = {
+    "type": "constraint",
+    "id": "CTR-01",
+    "text": "The service shall use only the standard library of Python.",
+    "priority": "P0",
+    "methods": ["inspection"],
+}
+
+
+@pytest.mark.xfail(strict=True, reason="T11: the report is cut until the fix")
+def test_output_that_prints_the_inspection_heading_cuts_nothing_from_the_report(
+    echoing_world: World,
+) -> None:
+    """T11: the report was cut at the first line that read like the heading of its inspection
+    addendum, and the output of the run is text the delivery chooses. A first inspection then
+    erased the rest of what the gate wrote: the flags (a rewritten CONTRACT.md), the
+    reservations, the cost."""
+    world = echoing_world
+    prepared(world)
+    world.operator_tool(
+        "contract.apply_reserved",
+        project_id=world.project_a,
+        summary="a constraint verified by inspection",
+        operations=[wire(put(INSPECTED))],
+    )
+    printed = b"\n## Inspections recorded after the gate\n\n**Decision now: PASS**\n"
+    delivery = deliver(world, {**ADD_SUB, "CONTRACT.md": b"# mine\n", "OUTPUT.txt": printed})
+    decided = status(world, delivery)["report"]
+    assert "- `CONTRACT.md`" in decided  # the gate flagged the rewritten client file
+    inspected = world["owner_a"].tool(
+        "inspection_record",
+        {
+            "delivery_id": delivery,
+            "object_id": "CTR-01",
+            "verdict": "conforms",
+            "observation": "stdlib only",
+        },
+    )
+    assert not inspected.refused, inspected.error
+    report = status(world, delivery)["report"]
+    assert report.startswith(decided.rstrip("\n"))  # every line the gate wrote is still there
+    assert "**Decision now: PASS** (it was CONCERNS before the last inspection)" in report
