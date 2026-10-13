@@ -58,6 +58,8 @@ MAX_ACCEPTANCE_FILE = 64 * 1024
 ACCEPTANCE_PATH = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$")
 LOGGED_PATHS = 20
 """The most paths a record of the log names: each is short, and a record stays small."""
+WRITE_ATTEMPTS = 10
+"""How many times a change is applied again to a record that others keep writing (T05)."""
 
 
 class DeliveryState(StrEnum):
@@ -105,10 +107,20 @@ class DeliveryRecord:
     """The verdict of the Owner side on the delivery (verdict, reasons, by, at)."""
     flagged_paths: tuple[str, ...] = ()
     """The protected paths the delivery changes: flagged, never refused (ADR 0020)."""
+    revision: int = 0
+    """How many times the record was written. A write made from an older read is refused, so
+    that no update is lost (T05)."""
+
+
+class StaleRecordError(Exception):
+    """The record was written by someone else since it was read: read it again."""
 
 
 class DeliveryStore(Protocol):
-    def put_record(self, record: DeliveryRecord) -> None: ...
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        """Write `record` if the stored one has its revision (no stored one for revision 0), and
+        return it as written, one revision later. Raises StaleRecordError otherwise."""
+        ...
 
     def get_record(self, project_id: str, delivery_id: str) -> DeliveryRecord | None: ...
 
@@ -131,6 +143,11 @@ def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple
         for path in changed
         if any(path == p or (p.endswith("/") and path.startswith(p)) for p in protected)
     )
+
+
+def pull_request_title(record: DeliveryRecord) -> str:
+    """The title of the pull request of a delivery: it follows the decision."""
+    return f"{record.branch} (delivery {record.delivery_id}, {record.decision})"
 
 
 class Verdict(StrEnum):
@@ -252,17 +269,24 @@ class DeliveryService:
             format_time(self._clock.now()),
             delivery.changed_paths,
         )
-        self._store.put_record(record)
-        return record
+        try:
+            return self._store.put_record(record)
+        except StaleRecordError:
+            # The area numbered it like a delivery the records already hold (an area emptied
+            # under a database that was kept): never write over that one.
+            raise Refusal(
+                Reason.INVALID_REQUEST, f"a delivery {delivery.delivery_id} is already recorded"
+            ) from None
 
     def declare(self, project_id: str, delivery_id: str) -> DeliveryRecord:
-        record = self._record(project_id, delivery_id)
-        if record.state is not DeliveryState.RECEIVED:
-            raise Refusal(Reason.NOT_PENDING, f"the delivery is already {record.state.value}")
-        declared = replace(record, state=DeliveryState.DECLARED)
-        self._store.put_record(declared)
+        def declared(record: DeliveryRecord) -> DeliveryRecord:
+            if record.state is not DeliveryState.RECEIVED:
+                raise Refusal(Reason.NOT_PENDING, f"the delivery is already {record.state.value}")
+            return replace(record, state=DeliveryState.DECLARED)
+
+        _before, record = self._update(project_id, delivery_id, declared)
         self._enqueue(_Job("verify", project_id, delivery_id))
-        return declared
+        return record
 
     def status(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         return self._record(project_id, delivery_id)
@@ -290,57 +314,64 @@ class DeliveryService:
             raise Refusal(
                 Reason.INVALID_REQUEST, f"{object_id} is verified by tests only: nothing to inspect"
             )
-        inspections = {key: dict(value) for key, value in record.inspections.items()}
-        inspections[object_id] = {
+        inspection = {
             "verdict": verdict.value,
             "observation": observation,
             "by": by,
             "at": format_time(self._clock.now()),
         }
-        gate = compute_gate(
-            version.objects,
-            {test: TestOutcome(value) for test, value in record.outcomes.items()},
-            inspections={key: Inspected(value["verdict"]) for key, value in inspections.items()},
-        )
-        updated = replace(
-            record,
-            inspections=inspections,
-            decision=gate.decision.value,
-            report=with_inspections(
-                record.report or "", inspections, record.decision, gate, self._secrets()
-            ),
-        )
-        self._store.put_record(updated)
+
+        def inspected(current: DeliveryRecord) -> DeliveryRecord:
+            inspections = {key: dict(value) for key, value in current.inspections.items()}
+            inspections[object_id] = inspection
+            gate = compute_gate(
+                version.objects,
+                {test: TestOutcome(value) for test, value in current.outcomes.items()},
+                inspections={
+                    key: Inspected(value["verdict"]) for key, value in inspections.items()
+                },
+            )
+            return replace(
+                current,
+                inspections=inspections,
+                decision=gate.decision.value,
+                report=with_inspections(
+                    current.report or "", inspections, current.decision, gate, self._secrets()
+                ),
+            )
+
+        before, updated = self._update(project_id, delivery_id, inspected)
         self._record_event(
             project_id,
             Action.GATE_DECISION,
             Outcome.OK,
             delivery=delivery_id,
-            decision=gate.decision.value,
-            previous=record.decision,
-            contract_version=record.contract_version,
+            decision=updated.decision,
+            previous=before.decision,
+            contract_version=updated.contract_version,
             after="inspection",
         )
-        if gate.decision.value != record.decision:
+        if updated.decision != before.decision:
             self._events(
                 "delivery.decided",
                 {
                     "project_id": project_id,
                     "delivery_id": delivery_id,
-                    "branch": record.branch,
-                    "decision": gate.decision.value,
+                    "branch": updated.branch,
+                    "decision": updated.decision,
                 },
             )
-        self._comment_later(
+        self._post_later(
             updated,
+            "comment",
             f"**Inspection recorded** by {by}: {object_id} "
             f"{'conforms' if verdict is Inspected.CONFORMS else 'does not conform'}.\n\n"
-            f"{observation}\n\n**Decision now: {gate.decision.value}** (it was "
-            f"{record.decision}), computed by the gate from the same results and the "
+            f"{observation}\n\n**Decision now: {updated.decision}** (it was "
+            f"{before.decision}), computed by the gate from the same results and the "
             "inspections recorded.",
         )
-        if gate.decision.value != record.decision:
-            self._retitle_later(updated)
+        if updated.decision != before.decision:
+            self._post_later(updated, "retitle")
         return updated
 
     def record_review(
@@ -348,30 +379,32 @@ class DeliveryService:
     ) -> DeliveryRecord:
         """Record the verdict of the Owner side on a decided delivery, with its reasons; it is
         posted on the pull request. The merge stays a human act (ADR 0020)."""
-        record = self._decided(project_id, delivery_id)
+        self._decided(project_id, delivery_id)
         review = {
             "verdict": verdict.value,
             "reasons": reasons,
             "by": by,
             "at": format_time(self._clock.now()),
         }
-        updated = replace(record, review=review)
-        self._store.put_record(updated)
+        _before, updated = self._update(
+            project_id, delivery_id, lambda current: replace(current, review=review)
+        )
         self._events(
             "delivery.reviewed",
             {
                 "project_id": project_id,
                 "delivery_id": delivery_id,
-                "branch": record.branch,
-                "decision": record.decision,
+                "branch": updated.branch,
+                "decision": updated.decision,
                 "verdict": verdict.value,
                 "reasons": mask(reasons, self._secrets()),
             },
         )
-        self._comment_later(
+        self._post_later(
             updated,
+            "comment",
             f"**Review of the Owner side** ({by}): **{verdict.value.replace('_', ' ')}**, "
-            f"on a gate decision {record.decision}.\n\n{reasons}\n\n"
+            f"on a gate decision {updated.decision}.\n\n{reasons}\n\n"
             "The merge stays a human decision.",
         )
         return updated
@@ -385,77 +418,42 @@ class DeliveryService:
             raise Refusal(Reason.NOT_PENDING, "the gate has not decided this delivery yet")
         return record
 
-    def _comment_later(self, record: DeliveryRecord, body: str) -> None:
-        """Post a comment on the pull request of the delivery, from the worker: a forge call
-        never runs on a request."""
-        if record.pull_number is not None and self._forge is not None:
-            self._enqueue(_Job("comment", record.project_id, record.delivery_id, body))
+    def _post_later(self, record: DeliveryRecord, kind: str, body: str = "") -> None:
+        """Ask the worker to comment on the pull request of the delivery, or to bring its title
+        to the decision: a forge call never runs on a request. The job looks for the pull
+        request when it runs, so one the worker was opening meanwhile gets it too (T05)."""
+        if self._forge is not None:
+            self._enqueue(_Job(kind, record.project_id, record.delivery_id, body))
 
-    def _retitle_later(self, record: DeliveryRecord) -> None:
-        """Ask the worker to bring the title of the pull request to the current decision, built
-        like the title of `_propose`: a forge call never runs on a request."""
-        if record.pull_number is not None and self._forge is not None:
-            title = f"{record.branch} (delivery {record.delivery_id}, {record.decision})"
-            self._enqueue(_Job("retitle", record.project_id, record.delivery_id, title))
-
-    def _do_comment(self, job: _Job) -> None:
+    def _post(self, job: _Job) -> None:
+        """Post a comment, or the title of the decision now, on the pull request of the
+        delivery as it stands when the job runs; a delivery without one gets nothing."""
         record = self._store.get_record(job.project_id, job.delivery_id)
         source = self._store.get_source(job.project_id)
-        if record is None or record.pull_number is None or source is None or self._forge is None:
+        forge = self._forge
+        if record is None or record.pull_number is None or source is None or forge is None:
             return
+        send: Callable[[RepositoryRef, int, str], Coroutine[Any, Any, None]]
+        if job.kind == "comment":
+            action, send, text = Action.PULL_REQUEST_COMMENT, forge.comment, job.body
+        else:
+            action, send = Action.PULL_REQUEST_RETITLE, forge.update_title
+            text = pull_request_title(record)
         try:
             self._run_async(
-                self._forge.comment(
+                send(
                     RepositoryRef(source.repository),
                     record.pull_number,
-                    mask(job.body, self._secrets()),
+                    mask(text, self._secrets()),
                 )
             )
         except ForgeError as error:
             self._record_event(
-                job.project_id,
-                Action.PULL_REQUEST_COMMENT,
-                Outcome.ERROR,
-                delivery=job.delivery_id,
-                error=str(error),
+                job.project_id, action, Outcome.ERROR, delivery=job.delivery_id, error=str(error)
             )
             return
         self._record_event(
-            job.project_id,
-            Action.PULL_REQUEST_COMMENT,
-            Outcome.OK,
-            delivery=job.delivery_id,
-            number=record.pull_number,
-        )
-
-    def _do_retitle(self, job: _Job) -> None:
-        record = self._store.get_record(job.project_id, job.delivery_id)
-        source = self._store.get_source(job.project_id)
-        if record is None or record.pull_number is None or source is None or self._forge is None:
-            return
-        try:
-            self._run_async(
-                self._forge.update_title(
-                    RepositoryRef(source.repository),
-                    record.pull_number,
-                    mask(job.body, self._secrets()),
-                )
-            )
-        except ForgeError as error:
-            self._record_event(
-                job.project_id,
-                Action.PULL_REQUEST_RETITLE,
-                Outcome.ERROR,
-                delivery=job.delivery_id,
-                error=str(error),
-            )
-            return
-        self._record_event(
-            job.project_id,
-            Action.PULL_REQUEST_RETITLE,
-            Outcome.OK,
-            delivery=job.delivery_id,
-            number=record.pull_number,
+            job.project_id, action, Outcome.OK, delivery=job.delivery_id, number=record.pull_number
         )
 
     def _record(self, project_id: str, delivery_id: str) -> DeliveryRecord:
@@ -463,6 +461,27 @@ class DeliveryService:
         if record is None:
             raise Refusal(Reason.NOT_FOUND, "there is no such delivery")
         return record
+
+    def _update(
+        self,
+        project_id: str,
+        delivery_id: str,
+        change: Callable[[DeliveryRecord], DeliveryRecord],
+    ) -> tuple[DeliveryRecord, DeliveryRecord]:
+        """Apply `change` to the record as it is stored now, and write the result. When another
+        writer got there first, read the record again and apply `change` again: no update is
+        lost (T05). A change that returns the record it was given writes nothing. Returns the
+        record before and after the change."""
+        for _attempt in range(WRITE_ATTEMPTS):
+            before = self._record(project_id, delivery_id)
+            after = change(before)
+            if after is before:
+                return before, before
+            try:
+                return before, self._store.put_record(after)
+            except StaleRecordError:
+                continue
+        raise StaleRecordError(f"delivery {delivery_id} kept changing while it was written")
 
     # ------------------------------------------------------------------ the worker
     def _enqueue(self, job: _Job) -> None:
@@ -477,10 +496,8 @@ class DeliveryService:
             job = self._jobs.popleft()
         if job.kind == "prepare":
             self._do_prepare(job.project_id)
-        elif job.kind == "comment":
-            self._do_comment(job)
-        elif job.kind == "retitle":
-            self._do_retitle(job)
+        elif job.kind in ("comment", "retitle"):
+            self._post(job)
         else:
             self._do_verify(job.project_id, job.delivery_id)
         return True
@@ -536,14 +553,21 @@ class DeliveryService:
     def _do_verify(self, project_id: str, delivery_id: str) -> None:
         record = self._record(project_id, delivery_id)
         try:
-            self._verify(record)
+            verified = self._verify(record)
         except Exception as error:  # reason: a job must not stop the worker
             detail = (
                 str(error)
                 if isinstance(error, (VerificationError, DeliveryError))
                 else type(error).__name__
             )
-            self._store.put_record(replace(record, state=DeliveryState.ERROR, detail=detail))
+
+            def failed(current: DeliveryRecord) -> DeliveryRecord:
+                # What the checks already recorded stands: only a declared delivery fails here.
+                if current.state is not DeliveryState.DECLARED:
+                    return current
+                return replace(current, state=DeliveryState.ERROR, detail=detail)
+
+            self._update(project_id, delivery_id, failed)
             self._record_event(
                 project_id,
                 Action.VERIFICATION_RUN,
@@ -551,8 +575,45 @@ class DeliveryService:
                 delivery=delivery_id,
                 error=detail,
             )
+            return
+        if verified is None:
+            return
+        decided, delivery = verified
+        # The main agent hears of the decision before the forge is called: an inspection
+        # recorded while the pull request opens tells of the decision it leads to after this.
+        self._events(
+            "delivery.decided",
+            {
+                "project_id": project_id,
+                "delivery_id": delivery_id,
+                "branch": decided.branch,
+                "decision": decided.decision,
+            },
+        )
+        if decided.decision != Decision.FAIL.value:
+            self._propose(decided, delivery)
+        if decided.decision == Decision.FAIL.value and self._rejections_alert is not None:
+            # EXG-23: the loop the Owner and the Contractor may fall into — a streak of
+            # refused deliveries that a pass breaks. Counted per project, not per branch:
+            # the areas take one delivery per branch, so a branch cannot refuse twice.
+            streak = 0
+            for found in reversed(self._store.records(project_id)):
+                if found.decision != Decision.FAIL.value:
+                    break
+                streak += 1
+            if streak >= self._rejections_alert:
+                self._events(
+                    "delivery.loop",
+                    {
+                        "project_id": project_id,
+                        "branch": decided.branch,
+                        "rejections": streak,
+                    },
+                )
 
-    def _verify(self, record: DeliveryRecord) -> None:
+    def _verify(self, record: DeliveryRecord) -> tuple[DeliveryRecord, Delivery] | None:
+        """Check, run and decide a declared delivery. Returns the record as decided, or None
+        when the checks refused the delivery."""
         project_id = record.project_id
         delivery = self._area.get(project_id, record.delivery_id)
         version = self._contracts.read(OPERATOR, project_id)
@@ -571,7 +632,11 @@ class DeliveryService:
         touched = sorted(set(delivery.changed_paths) & (protected - set(missing)))
         if touched:
             detail = "the delivery changes acceptance tests: " + ", ".join(touched[:10])
-            self._store.put_record(replace(record, state=DeliveryState.REFUSED, detail=detail))
+            self._update(
+                project_id,
+                record.delivery_id,
+                lambda current: replace(current, state=DeliveryState.REFUSED, detail=detail),
+            )
             self._record_event(
                 project_id,
                 Action.DELIVERY_CHECK,
@@ -581,7 +646,7 @@ class DeliveryService:
                 paths=touched[:LOGGED_PATHS],
                 count=len(touched),
             )
-            return
+            return None
         files = dict(self._area.tree(project_id, delivery.delivery_id).files)
         set_aside = tuple(path for path in missing if path in files)
         for path in protected:
@@ -657,79 +722,74 @@ class DeliveryService:
             ),
             secrets=self._secrets(),
         )
-        decided = replace(
-            record,
-            state=DeliveryState.DECIDED,
-            decision=gate.decision.value,
-            outcomes={k: v.value for k, v in outcomes.items()},
-            report=report,
-            contract_version=version.number,
-            flagged_paths=flagged,
+        _before, decided = self._update(
+            project_id,
+            record.delivery_id,
+            lambda current: replace(
+                current,
+                state=DeliveryState.DECIDED,
+                decision=gate.decision.value,
+                outcomes={k: v.value for k, v in outcomes.items()},
+                report=report,
+                contract_version=version.number,
+                flagged_paths=flagged,
+            ),
         )
-        self._store.put_record(decided)
-        if gate.decision is not Decision.FAIL:
-            self._propose(decided, delivery, report)
-        self._events(
-            "delivery.decided",
-            {
-                "project_id": record.project_id,
-                "delivery_id": record.delivery_id,
-                "branch": record.branch,
-                "decision": gate.decision.value,
-            },
-        )
-        if gate.decision is Decision.FAIL and self._rejections_alert is not None:
-            # EXG-23: the loop the Owner and the Contractor may fall into — a streak of
-            # refused deliveries that a pass breaks. Counted per project, not per branch:
-            # the areas take one delivery per branch, so a branch cannot refuse twice.
-            streak = 0
-            for found in reversed(self._store.records(record.project_id)):
-                if found.decision != Decision.FAIL.value:
-                    break
-                streak += 1
-            if streak >= self._rejections_alert:
-                self._events(
-                    "delivery.loop",
-                    {
-                        "project_id": record.project_id,
-                        "branch": record.branch,
-                        "rejections": streak,
-                    },
-                )
+        return decided, delivery
 
-    def _propose(self, record: DeliveryRecord, delivery: Delivery, report: str) -> None:
+    def _propose(self, record: DeliveryRecord, delivery: Delivery) -> None:
+        """Push the delivered branch to the forge and open its pull request, with the report.
+        The decision stands whatever the forge answers."""
         source = self._store.get_source(record.project_id)
         if self._forge is None or source is None:
             return
         forge = self._forge
         repository = RepositoryRef(source.repository)
         head = f"zephyros/{record.delivery_id}-{record.branch}"
-        title = f"{record.branch} (delivery {record.delivery_id}, {record.decision})"
         try:
             package = self._area.package(record.project_id, delivery.delivery_id)
             self._run_async(forge.push(repository, head, package))
             opened = self._run_async(
                 forge.open_pull_request(
-                    PullRequestRequest(repository, head, source.branch, title, report)
+                    PullRequestRequest(
+                        repository,
+                        head,
+                        source.branch,
+                        pull_request_title(record),
+                        record.report or "",
+                    )
                 )
             )
-        except (ForgeError, DeliveryError) as error:
-            self._store.put_record(replace(record, detail=f"no pull request: {error}"))
+        except Exception as error:  # reason: a job must not stop the worker
+            reason = (
+                str(error)
+                if isinstance(error, (ForgeError, DeliveryError))
+                else type(error).__name__
+            )
+            self._update(
+                record.project_id,
+                record.delivery_id,
+                lambda current: replace(current, detail=f"no pull request: {reason}"),
+            )
             self._record_event(
                 record.project_id,
                 Action.PULL_REQUEST_OPEN,
                 Outcome.ERROR,
                 delivery=record.delivery_id,
-                error=str(error),
+                error=reason,
             )
             return
-        self._store.put_record(
-            replace(
-                record,
+        # Written on the record as it is now: an inspection or a verdict recorded while the
+        # forge worked stays (T05).
+        self._update(
+            record.project_id,
+            record.delivery_id,
+            lambda current: replace(
+                current,
                 state=DeliveryState.PROPOSED,
                 pull_request=opened.url,
                 pull_number=opened.number,
-            )
+            ),
         )
         self._record_event(
             record.project_id,

@@ -21,7 +21,13 @@ from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
-from zephyros.core.deliveries import DeliveryService, DeliveryState, Verdict, flagged_paths
+from zephyros.core.deliveries import (
+    DeliveryRecord,
+    DeliveryService,
+    DeliveryState,
+    Verdict,
+    flagged_paths,
+)
 from zephyros.core.errors import Refusal
 from zephyros.core.gate import Inspected
 from zephyros.core.ports.forge import (
@@ -82,6 +88,7 @@ def service(
     runner: Any = None,
     forge: Any = "default",
     specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
+    store: InMemoryDeliveryStore | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     clock = FakeClock()
     audit = AuditLog(InMemoryLogStore(), clock)
@@ -98,7 +105,7 @@ def service(
             {"example/calc": frozenset({"main"})},
             {("example/calc", "main"): make_package(BASE)},
         )
-    store = InMemoryDeliveryStore()
+    store = store or InMemoryDeliveryStore()
     made = DeliveryService(
         InMemoryDeliveryArea(),
         runner or AssertionRunner(),
@@ -480,6 +487,7 @@ def test_an_inspection_is_posted_on_the_pull_request_too() -> None:
     made.record_inspection(
         "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
     )
+    assert forge.comments == {}  # posted by the worker, never on the request
     assert made.step()
     [comment] = forge.comments[("example/calc", 1)]
     assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
@@ -510,7 +518,10 @@ def test_a_comment_the_forge_refuses_is_logged_and_the_verdict_stays() -> None:
 
 
 def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_local() -> None:
-    made, project, _audit, _store = service()
+    forge = RefusingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    made, project, audit, _store = service(forge=forge)
     ready(made, project)
     pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w2")
     with pytest.raises(Refusal) as caught:
@@ -519,10 +530,12 @@ def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_loc
     made.declare(project, pushed.delivery_id)
     while made.step():
         pass
-    decided = replace(made.status(project, pushed.delivery_id), pull_number=None)
-    made._store.put_record(decided)
+    assert made.status(project, pushed.delivery_id).pull_number is None  # the forge refused
     made.record_review("operator", project, pushed.delivery_id, Verdict.ACCEPT, "fine")
-    assert not made.step()  # no pull request: nothing to post
+    while made.step():
+        pass
+    assert forge.comments == {}  # no pull request: nothing was posted
+    assert Action.PULL_REQUEST_COMMENT not in [r.action for r in audit.read(project, 0, 1000)]
 
 
 def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_changes() -> None:
@@ -592,6 +605,7 @@ def test_an_inspection_that_changes_the_decision_retitles_the_pull_request() -> 
         "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
     )
     assert made.status(project, delivery).decision == "PASS"
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, CONCERNS)"  # the worker retitles
     while made.step():
         pass
     assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
@@ -715,7 +729,6 @@ def busy_forge() -> BusyForge:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="T05: the update is lost until the fix")
 def test_an_inspection_recorded_while_the_pull_request_opens_is_kept_posted_and_retitled() -> None:
     """T05: the worker wrote the decision, then waited on the forge. An inspection recorded
     meanwhile must survive the worker's next write, and reach the pull request once it exists:
@@ -738,3 +751,52 @@ def test_an_inspection_recorded_while_the_pull_request_opens_is_kept_posted_and_
     [comment] = forge.comments[("example/calc", 1)]
     assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
     assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
+
+
+class RacingStore(InMemoryDeliveryStore):
+    """A store where, once, another writer gets in between a read and the write that follows."""
+
+    cut_in: Callable[[DeliveryRecord], DeliveryRecord] | None = None
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        cut_in, self.cut_in = self.cut_in, None
+        if cut_in is not None:
+            stored = self.get_record(record.project_id, record.delivery_id)
+            assert stored is not None
+            super().put_record(cut_in(stored))
+        return super().put_record(record)
+
+
+def test_a_write_that_lost_the_race_is_made_again_on_the_record_as_it_is_now() -> None:
+    """T05: a verdict lands between the read and the write of an inspection. The store refuses
+    the stale write, and the inspection is applied again: both stay."""
+    store = RacingStore()
+    made, project, _audit, _store = service(store=store)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    verdict = {"verdict": "accept", "reasons": "fine", "by": "operator", "at": "now"}
+    store.cut_in = lambda record: replace(record, review=verdict)
+    answered = made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    kept = made.status(project, delivery)
+    assert kept == answered
+    assert (kept.review, kept.inspections["CTR-01"]["verdict"], kept.decision) == (
+        verdict,
+        "conforms",
+        "PASS",
+    )
+
+
+def test_a_push_never_writes_over_a_recorded_delivery() -> None:
+    """The area numbers deliveries; an area emptied under a kept database would number a new
+    one like an old one. The old record stays, and the push is refused."""
+    made, project, _audit, store = service()
+    ready(made, project)
+    old = store.put_record(
+        DeliveryRecord(project, "d1", "old", DeliveryState.DECIDED, "2026-10-01T00:00:00Z")
+    )
+    with pytest.raises(Refusal, match="already recorded"):
+        made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w")
+    assert made.status(project, "d1") == old

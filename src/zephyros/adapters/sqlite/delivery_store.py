@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 
 from zephyros.adapters.sqlite.database import Database
-from zephyros.core.deliveries import DeliveryRecord, DeliveryState, Source
+from zephyros.core.deliveries import DeliveryRecord, DeliveryState, Source, StaleRecordError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -46,9 +47,17 @@ def _record_body(record: DeliveryRecord) -> str:
             "inspections": {key: dict(value) for key, value in record.inspections.items()},
             "review": dict(record.review) if record.review is not None else None,
             "flagged_paths": list(record.flagged_paths),
+            "revision": record.revision,
         },
         sort_keys=True,
     )
+
+
+def _revision(body: dict[str, object]) -> int:
+    """The revision of a stored record. One written before revisions existed (T05) was
+    written once at least."""
+    revision = body.get("revision", 1)
+    return revision if isinstance(revision, int) else 1
 
 
 def _record(row: sqlite3.Row) -> DeliveryRecord:
@@ -71,6 +80,7 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         inspections=body.get("inspections") or {},
         review=body.get("review"),
         flagged_paths=tuple(body.get("flagged_paths") or ()),
+        revision=_revision(body),
     )
 
 
@@ -79,8 +89,17 @@ class SqliteDeliveryStore:
         self._db = database
         database.script(SCHEMA)
 
-    def put_record(self, record: DeliveryRecord) -> None:
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        written = replace(record, revision=record.revision + 1)
         with self._db.transaction() as connection:
+            # The read and the write are one transaction: no other write comes in between.
+            row = connection.execute(
+                "SELECT body FROM deliveries WHERE project_id = ? AND delivery_id = ?",
+                (record.project_id, record.delivery_id),
+            ).fetchone()
+            stored = 0 if row is None else _revision(json.loads(row["body"]))
+            if record.revision != stored:
+                raise StaleRecordError(f"delivery {record.delivery_id} changed since it was read")
             connection.execute(
                 "INSERT INTO deliveries (project_id, delivery_id, seq, body) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT (project_id, delivery_id) DO UPDATE SET body = excluded.body",
@@ -88,9 +107,10 @@ class SqliteDeliveryStore:
                     record.project_id,
                     record.delivery_id,
                     int(record.delivery_id[1:]),
-                    _record_body(record),
+                    _record_body(written),
                 ),
             )
+        return written
 
     def get_record(self, project_id: str, delivery_id: str) -> DeliveryRecord | None:
         rows = self._db.query(
