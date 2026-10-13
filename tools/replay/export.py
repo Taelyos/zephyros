@@ -7,18 +7,24 @@ One replay tells what happened in one recorded run, in order. The exporter reads
 
 * `hub-log`: the records of the project's stream of the hash-chained audit log. Every exported
   record is checked against `zephyros.core.audit.compute_hash` and against the link to the record
-  before it; the result goes to `integrity`.
-* `hub-state`: what the hub's tables hold and a record does not spell out — every contract version,
-  the outcomes of a delivery, the observation of an inspection, the reasons of a review, the URL of
-  a pull request, and the protected paths a delivery changes when the rule was not in force yet
-  (`delivery.flag` with `by: "exporter"`).
+  before it; the result goes to `integrity`. The `data` of such an event holds what its record
+  holds, and nothing the tables add.
+* `hub-state`: what the hub's tables hold and a record does not spell out. Every contract version
+  is an event of its own, and so is a protected path that a delivery changed when the hub did not
+  flag such paths yet (`delivery.flag`, `by: "exporter"`). What the tables add to a record — the
+  paths a delivery changed, the outcomes a decision was computed from, the observation of an
+  inspection, the reasons of a review, the URL of a pull request — goes to the event's
+  `hub_state`, and only when it held at the time of the event: the tables keep the last state of
+  a delivery, not its history.
 * `transcript`: the answers of an instance's own conversation, from its Hermes state database.
 
 What a replay never carries: the network address of each caller, the token identifiers, and the
-prompts (the hub logs their length and digest only). Private IPv4 addresses — the ranges of
-RFC 1918 and the carrier-grade range of RFC 6598 — and every `--redact` pattern are replaced by
-`[redacted]`; `--rename` and `--rename-file` replace a real name by a neutral one wherever it
-appears. The kinds that matched are listed in `run.redactions`, never the names themselves.
+prompts (the hub logs their length and digest only). Token-shaped secrets are masked the way the
+hub masks its log (EXG-49). Private IPv4 addresses — the ranges of RFC 1918 and the carrier-grade
+range of RFC 6598 — and every `--redact` pattern are replaced by `[redacted]`; `--rename` and
+`--rename-file` replace a real name by a neutral one. All of it applies to every text of the
+replay, dictionary keys included. The kinds that matched are listed in `run.redactions`, never
+what was replaced.
 
 Only what the standard library and `zephyros` offer is imported: the exporter is a tool of the
 repository, not a part of the hub.
@@ -31,26 +37,32 @@ import json
 import re
 import sqlite3
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from zephyros.core.audit import compute_hash
+from zephyros.core.deliveries import flagged_paths
+from zephyros.core.masking import mask_text
 
 FORMAT = "zephyros-replay"
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 EXPORTER = f"tools.replay.export {VERSION}"
+KINDS = ("real", "scripted", "synthetic")
 PLAYER_TEMPLATE = Path(__file__).with_name("player.html")
 """The self-contained player; `--html` writes a copy with the replay embedded in it."""
 PLAYER_DATA = '<script type="application/json" id="replay-data"></script>'
 REDACTED = "[redacted]"
 DEFAULT_PROTECTED_PATHS = ("CONTRACT.md",)
 DEFAULT_MESSAGE_CHARS = 1200
-DEFAULT_PRICE_NOTE = "Rates given to the exporter on the command line; indicative only."
 DEFAULT_INPUT_PRICE = 0.15
 DEFAULT_OUTPUT_PRICE = 0.60
+DEFAULT_PRICE_NOTE = (
+    "The exporter's default rates, not read from any provider's price list; indicative only."
+)
+GIVEN_PRICE_NOTE = "Rates given to the exporter on the command line; indicative only."
 MAX_SUMMARY = 160
 MAX_MESSAGE_PREVIEW = 100
 MAX_SEQ = 2**63 - 1
@@ -60,6 +72,7 @@ SOURCE_STATE = "hub-state"
 SOURCE_TRANSCRIPT = "transcript"
 OUTCOME_OK = "ok"
 OUTCOME_REFUSED = "refused"
+OUTCOME_ERROR = "error"
 
 PRIVATE_IPV4 = re.compile(
     r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
@@ -69,14 +82,21 @@ PRIVATE_IPV4 = re.compile(
 )
 """The private ranges of RFC 1918 and the carrier-grade range of RFC 6598 (100.64.0.0/10)."""
 PRIVATE_IPV4_KIND = "private IPv4 addresses"
+MASKED_KIND = "token-shaped secrets"
+PATTERN_KIND = "--redact patterns"
 RENAMED_KIND = "renamed names"
-"""What `run.redactions` names when a `--rename` matched: never the name that was replaced."""
+"""What `run.redactions` names: the kind of what was replaced, never what was replaced."""
 
 DROPPED_PARAMETERS = frozenset({"source", "token_id"})
 """What a replay never carries: the caller's address, and the identifiers of the tokens."""
 
 VERSION_ACTIONS = frozenset({"contract.import", "contract.apply_reserved", "contract.approve"})
 """A record of one of these writes a new version of the contract, named in its `version_id`."""
+VERSION_ID = re.compile(r"v(\d+)-")
+"""A version identifier starts with its number: `v2-0123456789ab`."""
+PULL_REQUEST_ACTIONS = frozenset(
+    {"pull_request.open", "pull_request.comment", "pull_request.retitle"}
+)
 
 CATEGORY_BY_ACTION: dict[str, str] = {
     "contract.import": "contract",
@@ -94,16 +114,19 @@ CATEGORY_BY_ACTION: dict[str, str] = {
     "delivery.push": "delivery",
     "delivery.declare": "delivery",
     "delivery.status": "delivery",
-    "delivery.check": "delivery",
+    "delivery.check": "flag",
     "staging.prepare": "delivery",
     "staging.read": "delivery",
     "verification.run": "delivery",
     "pull_request.open": "delivery",
     "pull_request.comment": "delivery",
+    "pull_request.retitle": "delivery",
     "gate.decision": "gate",
     "inspection.record": "judgment",
     "delivery.review": "judgment",
 }
+"""A `delivery.check` the hub accepts is always a flag: it records one only when a delivery
+changes a protected path. One it refuses is a refusal, as every refused action."""
 DEFAULT_CATEGORY = "other"
 CATEGORY_REFUSAL = "refusal"
 CATEGORY_FLAG = "flag"
@@ -168,7 +191,7 @@ def shorten(text: str, limit: int) -> str:
     collapsed = one_line(text)
     if len(collapsed) <= limit:
         return collapsed
-    return collapsed[: limit - 1].rstrip() + "\u2026"
+    return collapsed[: limit - 1].rstrip() + "…"
 
 
 def actor_of(principal: str) -> str:
@@ -183,9 +206,29 @@ def label(actor: str) -> str:
     return ACTOR_LABELS.get(actor, actor)
 
 
+def number(value: object) -> str:
+    """An integer with its thousands separated, anything else as it is: `18,432`, `?`."""
+    return f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else str(value)
+
+
+def plural(count: object, word: str) -> str:
+    """`1 path`, `2 paths`."""
+    return f"{number(count)} {word}" if count == 1 else f"{number(count)} {word}s"
+
+
 def kept(parameters: Mapping[str, Any]) -> dict[str, Any]:
-    """The parameters of a record, without what a replay never carries."""
-    return {key: value for key, value in parameters.items() if key not in DROPPED_PARAMETERS}
+    """The parameters of a record, without what a replay never carries. The gate and the worker
+    name a delivery `delivery`, the tools `delivery_id`: a replay always says `delivery_id`."""
+    data = {key: value for key, value in parameters.items() if key not in DROPPED_PARAMETERS}
+    if "delivery" in data and "delivery_id" not in data:
+        data["delivery_id"] = data.pop("delivery")
+    return data
+
+
+def version_number(version_id: object) -> int | None:
+    """The number a version identifier starts with, or None for anything else."""
+    found = VERSION_ID.match(str(version_id or ""))
+    return int(found.group(1)) if found else None
 
 
 # ----------------------------------------------------------------------------- redaction
@@ -217,10 +260,23 @@ def read_renames(path: Path) -> list[tuple[str, str]]:
 
 
 def rename_pattern(old: str) -> re.Pattern[str]:
-    """`alpha-svc` matches `Alpha-Svc` and `alpha-svc`, never `myalpha-svc`."""
-    before = r"(?<!\w)" if re.fullmatch(r"\w", old[:1]) else ""
-    after = r"(?!\w)" if re.fullmatch(r"\w", old[-1:]) else ""
+    """`alpha-svc` matches `Alpha-Svc`, `alpha-svc` and the middle of `test_alpha-svc_up`, never
+    `myalpha-svc`: a name stops where letters and digits stop, and `_` is not one of them."""
+    letter_or_digit = r"[^\W_]"
+    before = rf"(?<!{letter_or_digit})" if re.fullmatch(letter_or_digit, old[:1]) else ""
+    after = rf"(?!{letter_or_digit})" if re.fullmatch(letter_or_digit, old[-1:]) else ""
     return re.compile(before + re.escape(old) + after, re.IGNORECASE)
+
+
+def distinct(key: str, taken: Mapping[str, object]) -> str:
+    """A key that redaction made equal to one already there gets a number, so no value is lost:
+    `[redacted]`, then `[redacted] (2)`."""
+    if key not in taken:
+        return key
+    number = 2
+    while f"{key} ({number})" in taken:
+        number += 1
+    return f"{key} ({number})"
 
 
 @dataclass
@@ -241,22 +297,29 @@ class Redactor:
                 compiled = re.compile(pattern)
             except re.error as error:
                 raise ReplayError(f"--redact {pattern!r}: {error}") from None
-            patterns.append((f"pattern {pattern}", compiled, REDACTED))
+            patterns.append((PATTERN_KIND, compiled, REDACTED))
         patterns.extend((RENAMED_KIND, rename_pattern(old), new) for old, new in renames)
         return cls(patterns)
 
     def text(self, value: str) -> str:
+        masked = mask_text(value)
+        if masked != value:
+            self.replaced.add(MASKED_KIND)
         for kind, pattern, replacement in self.patterns:
-            value, count = pattern.subn(replacement, value)
+            masked, count = pattern.subn(replacement, masked)
             if count:
                 self.replaced.add(kind)
-        return value
+        return masked
 
     def value(self, value: Any) -> Any:
+        """Every text inside `value`, the keys of its dictionaries included."""
         if isinstance(value, str):
             return self.text(value)
         if isinstance(value, Mapping):
-            return {str(key): self.value(item) for key, item in value.items()}
+            result: dict[str, Any] = {}
+            for key, item in value.items():
+                result[distinct(self.text(str(key)), result)] = self.value(item)
+            return result
         if isinstance(value, (list, tuple)):
             return [self.value(item) for item in value]
         return value
@@ -285,6 +348,15 @@ class Prices:
             "currency": "USD",
             "note": self.note,
         }
+
+
+def price_note(input_price: float, output_price: float, note: str | None) -> str:
+    """The note given, or one that says where the rates come from."""
+    if note is not None:
+        return note
+    if (input_price, output_price) == (DEFAULT_INPUT_PRICE, DEFAULT_OUTPUT_PRICE):
+        return DEFAULT_PRICE_NOTE
+    return GIVEN_PRICE_NOTE
 
 
 # ----------------------------------------------------------------------------- the hub
@@ -394,7 +466,13 @@ def read_transcript(path: Path) -> list[tuple[str, str, str, float]]:
 
 # ----------------------------------------------------------------------------- integrity
 def verify_chain(stream: str, records: Sequence[LogRecord]) -> dict[str, Any]:
-    """Check every exported record against its hash and the link to the one before it."""
+    """Check every exported record against its hash and the link to the one before it.
+
+    This is all the check covers: neither the head the hub keeps of the stream nor its anchor
+    outside the store is read, and the chain has no key. A record cut after the last exported
+    one, or a log rewritten whole with its hashes recomputed, goes unnoticed here; `log.verify`
+    on the hub is the check for those.
+    """
     detail: str | None = None
     for index, record in enumerate(records):
         expected = compute_hash(
@@ -452,13 +530,29 @@ def contract_objects(objects: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def protected_paths_in(changed: Sequence[str], protected: Sequence[str]) -> list[str]:
-    """The changed paths that are the client's own files: a protected path, or under one."""
-    return [
-        path
-        for path in changed
-        if any(path == rule or (rule.endswith("/") and path.startswith(rule)) for rule in protected)
-    ]
+def contract_document(version: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A version as the document's `contract` names it; no version is an empty contract."""
+    if version is None:
+        return {"version": None, "version_id": None, "objects": []}
+    objects = version["objects"]
+    return {
+        "version": version["number"],
+        "version_id": version["version_id"],
+        "objects": contract_objects(objects if isinstance(objects, Mapping) else {}),
+    }
+
+
+def contract_at(
+    versions: Sequence[Mapping[str, Any]], moment: datetime | None, *, before: bool
+) -> dict[str, Any]:
+    """The contract in force at `moment`: the last version written before it (`before`), or at
+    the latest at it. With no moment, the last version."""
+    chosen: Mapping[str, Any] | None = None
+    for version in versions:
+        written = parse_moment(str(version["time"]))
+        if moment is None or written < moment or (not before and written == moment):
+            chosen = version
+    return contract_document(chosen)
 
 
 # ----------------------------------------------------------------------------- events
@@ -475,10 +569,11 @@ class Event:
     outcome: str
     summary: str
     data: dict[str, Any]
-    order: int = 0
+    hub_state: dict[str, Any] | None = None
+    """For a `hub-log` event: what the hub's tables add to its record, as it stood then."""
 
     def render(self, identifier: int, started: datetime) -> dict[str, Any]:
-        return {
+        rendered: dict[str, Any] = {
             "id": identifier,
             "t": self.when,
             "offset_ms": offset_ms(self.when, started),
@@ -491,310 +586,357 @@ class Event:
             "summary": self.summary,
             "data": self.data,
         }
+        if self.hub_state is not None:
+            rendered["hub_state"] = self.hub_state
+        return rendered
 
 
-def delivery_id_of(parameters: Mapping[str, Any]) -> str:
-    """The delivery a record names, as `delivery` (the gate) or `delivery_id` (the hub)."""
-    value = parameters.get("delivery") or parameters.get("delivery_id")
-    return "" if value is None else str(value)
+Summary = Callable[[str, str, dict[str, Any]], str]
+"""What one record says, in one line, from its actor, its outcome and its data. A summary may
+add to the data what it derives from the record alone (the number of a version)."""
 
 
-def _refusal_event(record: LogRecord, actor: str) -> Event:
-    parameters = kept(record.parameters)
-    data: dict[str, Any] = {**parameters, "reason": record.reason, "action": record.action}
-    data.setdefault("detail", None)
-    detail = parameters.get("detail") or record.action
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=record.action,
-        category=CATEGORY_REFUSAL,
-        outcome=record.outcome,
-        summary=shorten(f"Refused ({record.reason}): {detail}", MAX_SUMMARY),
-        data=data,
-    )
+class _Fields(dict[str, Any]):
+    """The fields a template names; one the record lacks reads `?`."""
+
+    def __missing__(self, key: str) -> str:
+        return "?"
 
 
-def _model_event(record: LogRecord, actor: str, prices: Prices) -> Event:
-    parameters = kept(record.parameters)
-    model = parameters.pop("model", None)
-    data: dict[str, Any] = {"side": actor, "model": model}
-    if record.outcome == OUTCOME_OK:
-        prompt = int(parameters.get("prompt_tokens") or 0)
-        completion = int(parameters.get("completion_tokens") or 0)
-        tool_calls = int(parameters.get("tool_calls") or 0)
-        data.update(
-            {
-                "prompt_tokens": prompt,
-                "completion_tokens": completion,
-                "tool_calls": tool_calls,
-                "cost_usd": prices.cost(prompt, completion),
-            }
-        )
-        plural = "" if tool_calls == 1 else "s"
-        summary = f"Model call: {prompt:,} in / {completion:,} out, {tool_calls} tool call{plural}"
-    else:
-        data["detail"] = parameters.get("detail")
-        summary = f"Model call failed: {parameters.get('detail') or record.action}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=record.action,
-        category="model",
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
-    )
+def _says(template: str) -> Summary:
+    """A summary that fills `template` from the record's data and `{actor}`, its label."""
+
+    def summary(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+        return template.format_map(_Fields(data, actor=label(actor)))
+
+    return summary
 
 
-def _contract_event(record: LogRecord, actor: str, version_numbers: Mapping[str, int]) -> Event:
-    data = kept(record.parameters)
-    action = record.action
-    text = shorten(str(data.get("summary") or ""), MAX_SUMMARY)
-    if action == "contract.read":
-        version_id = str(data.get("version_id") or "?")
-        number = version_numbers.get(version_id)
-        if number is not None:
-            data["version"] = number
-        named = number if number is not None else version_id
-        summary = f"{label(actor)} reads contract version {named}"
-    elif action == "contract.propose":
-        change = str(data.get("change_id") or "?")
-        summary = f"{label(actor)} proposes change {change}: {text}"
-    elif action == "contract.approve":
-        summary = (
-            f"{label(actor)} approves change {data.get('change_id', '?')} "
-            f"as {data.get('version_id', '?')}"
-        )
-    elif action == "contract.reject":
-        summary = f"{label(actor)} rejects change {data.get('change_id', '?')}"
-    elif action == "contract.pending":
-        summary = f"{label(actor)} lists the pending changes ({data.get('pending', 0)})"
-    elif action == "contract.import":
-        summary = (
-            f"{label(actor)} imports contract {data.get('version_id', '?')} "
-            f"({data.get('objects', 0)} objects)"
-        )
-    elif action == "contract.apply_reserved":
-        summary = f"{label(actor)} applies a reserved change as {data.get('version_id', '?')}"
-    elif action == "acceptance.put":
-        summary = f"{label(actor)} stores acceptance test {data.get('path', '?')}"
-    else:
-        summary = f"{label(actor)} {action}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=action,
-        category="contract",
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
-    )
+def _failure(data: Mapping[str, Any]) -> str:
+    return str(data.get("error") or data.get("detail") or "no detail logged")
 
 
-def _turn_event(record: LogRecord, actor: str) -> Event:
-    data = kept(record.parameters)
-    who = label(str(data.get("side") or actor))
-    if record.action == "instance.start":
-        summary = (
-            f"{label(actor)} starts the {who} instance ({data.get('prompt_chars', 0)} prompt chars)"
-        )
-    elif record.action == "turn.start":
-        summary = f"{who} turn begins ({data.get('prompt_chars', 0)} prompt chars)"
-    else:
-        summary = f"{who} turn ends: {data.get('result', '?')}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=record.action,
-        category="turn",
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
-    )
-
-
-def _delivery_event(
-    record: LogRecord, actor: str, deliveries: Mapping[str, Mapping[str, Any]]
-) -> Event:
-    data = kept(record.parameters)
-    action = record.action
-    delivery_id = delivery_id_of(record.parameters)
-    body = deliveries.get(delivery_id, {})
-    data.pop("delivery", None)
-    if delivery_id:
-        data["delivery_id"] = delivery_id
-    if body:
-        if body.get("branch") is not None:
-            data.setdefault("branch", body["branch"])
-        if body.get("changed_paths"):
-            data["changed_paths"] = list(body["changed_paths"])
-        if body.get("pull_request"):
-            data.setdefault("url", body["pull_request"])
-    if action == "delivery.push":
-        summary = (
-            f"{label(actor)} pushes {delivery_id} on {data.get('branch', '?')} "
-            f"({data.get('changed', 0)} paths)"
-        )
-    elif action == "delivery.declare":
-        summary = f"{label(actor)} declares delivery {delivery_id}"
-    elif action == "delivery.status":
-        if body:
-            data["state"] = body.get("state")
-            data["decision"] = body.get("decision")
-        summary = f"{label(actor)} reads the state of {delivery_id}"
+def _refused(action: str, reason: str, data: Mapping[str, Any]) -> str:
+    if data.get("detail"):
+        what = str(data["detail"])
     elif action == "delivery.check":
-        summary = f"Hub checks delivery {delivery_id} ({data.get('flagged', 0)} flagged paths)"
-    elif action == "staging.prepare":
-        if record.outcome == OUTCOME_OK:
-            summary = (
-                f"Hub prepares staging for {data.get('repository', '?')} "
-                f"{data.get('branch', '?')} at {data.get('base', '?')}"
-            )
-        else:
-            summary = f"Hub cannot prepare staging: {data.get('error', '?')}"
-    elif action == "staging.read":
-        summary = f"{label(actor)} reads the staging area ({data.get('bytes', 0)} bytes)"
-    elif action == "verification.run":
-        summary = (
-            f"Verification: {data.get('passed', 0)}/{data.get('tests', 0)} acceptance tests "
-            f"passed for {delivery_id}"
-        )
-    elif action == "pull_request.open":
-        summary = f"Hub opens pull request #{data.get('number')} for {delivery_id}"
+        files = plural(data.get("paths", "?"), "acceptance test file")
+        what = f"delivery {data.get('delivery_id', '?')} changes {files}"
+    elif action == "egress.refused":
+        what = f"{data.get('purpose', 'a connection')} to {data.get('host', '?')}"
     else:
-        summary = f"Hub comments on pull request #{data.get('number')} for {delivery_id}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=action,
-        category="delivery",
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
+        what = action
+    return f"Refused ({reason}): {what}"
+
+
+def _contract_read(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    number = version_number(data.get("version_id"))
+    if number is not None:
+        data["version"] = number
+    named = number if number is not None else data.get("version_id", "?")
+    return f"{label(actor)} reads contract version {named}"
+
+
+def _contract_propose(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    operations = plural(data.get("operations", "?"), "operation")
+    return (
+        f"{label(actor)} proposes change {data.get('change_id', '?')} ({operations}): "
+        f"{data.get('summary') or ''}"
     )
 
 
-def _gate_event(
-    record: LogRecord, actor: str, deliveries: Mapping[str, Mapping[str, Any]]
-) -> Event:
-    data = kept(record.parameters)
-    delivery_id = delivery_id_of(record.parameters)
-    data["delivery_id"] = delivery_id
-    data.pop("delivery", None)
-    outcomes = deliveries.get(delivery_id, {}).get("outcomes")
-    if outcomes:
-        data["outcomes"] = dict(outcomes)
-    decision = str(data.get("decision") or "?")
+def _contract_approve(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    number = version_number(data.get("version_id"))
+    named = f"version {number}" if number is not None else data.get("version_id", "?")
+    return f"{label(actor)} approves change {data.get('change_id', '?')}: contract {named}"
+
+
+def _contract_import(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    number = version_number(data.get("version_id"))
+    named = f"version {number}" if number is not None else data.get("version_id", "?")
+    objects = plural(data.get("objects", "?"), "object")
+    return f"{label(actor)} imports the contract as {named} ({objects})"
+
+
+def _contract_apply_reserved(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    number = version_number(data.get("version_id"))
+    named = f"version {number}" if number is not None else data.get("version_id", "?")
+    return f"{label(actor)} applies a reserved change as {named}: {data.get('summary') or ''}"
+
+
+def _turn_side(actor: str, data: Mapping[str, Any]) -> str:
+    return label(str(data.get("side") or actor))
+
+
+def _instance_start(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    chars = plural(data.get("prompt_chars", "?"), "prompt char")
+    return f"{label(actor)} starts the {_turn_side(actor, data)} instance ({chars})"
+
+
+def _instance_stop(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    return f"{label(actor)} stops the {_turn_side(actor, data)} instance"
+
+
+def _turn_start(actor: str, outcome: str, data: dict[str, Any]) -> str:
+    if outcome == OUTCOME_ERROR:
+        return f"{_turn_side(actor, data)} turn cannot start: {_failure(data)}"
+    chars = plural(data.get("prompt_chars", "?"), "prompt char")
+    return f"{_turn_side(actor, data)} turn begins ({chars})"
+
+
+def _turn_end(actor: str, outcome: str, data: dict[str, Any]) -> str:
+    ends = "ends in error" if outcome == OUTCOME_ERROR else "ends"
+    return f"{_turn_side(actor, data)} turn {ends}: {data.get('result', '?')}"
+
+
+def _delivery_push(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    return (
+        f"{label(actor)} pushes {data.get('delivery_id', '?')} on {data.get('branch', '?')} "
+        f"({plural(data.get('changed', '?'), 'changed path')})"
+    )
+
+
+def _delivery_check(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    paths = plural(data.get("flagged", "?"), "protected path")
+    return f"Hub flags delivery {data.get('delivery_id', '?')}: it changes {paths}"
+
+
+def _staging_prepare(_actor: str, outcome: str, data: dict[str, Any]) -> str:
+    if outcome == OUTCOME_ERROR:
+        return f"Hub cannot prepare the staging area: {_failure(data)}"
+    return (
+        f"Hub prepares the staging area from {data.get('repository', '?')} "
+        f"{data.get('branch', '?')} at {data.get('base', '?')}"
+    )
+
+
+def _staging_read(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    what = f"delivery {data['delivery_id']}" if data.get("delivery_id") else "the base"
+    size = plural(data.get("bytes", "?"), "byte")
+    return f"{label(actor)} reads {what} from the staging area ({size})"
+
+
+def _project_prepare(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    return (
+        f"{label(actor)} asks for a staging area from {data.get('repository', '?')} "
+        f"{data.get('branch', '?')}"
+    )
+
+
+def _verification_run(_actor: str, outcome: str, data: dict[str, Any]) -> str:
+    delivery = data.get("delivery_id", "?")
+    if outcome == OUTCOME_ERROR:
+        return f"Verification of {delivery} failed: {_failure(data)}"
+    return (
+        f"Verification: {data.get('passed', '?')}/{data.get('tests', '?')} acceptance tests "
+        f"passed for {delivery}"
+    )
+
+
+def _pull_request(verb: str, failed: str) -> Summary:
+    def summary(_actor: str, outcome: str, data: dict[str, Any]) -> str:
+        delivery = data.get("delivery_id", "?")
+        if outcome == OUTCOME_ERROR:
+            return f"Hub cannot {failed} for {delivery}: {_failure(data)}"
+        return f"Hub {verb} pull request #{data.get('number', '?')} for {delivery}"
+
+    return summary
+
+
+def _gate_decision(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
     version = data.get("contract_version")
     suffix = "" if version is None else f" (contract v{version})"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=record.action,
-        category="gate",
-        outcome=record.outcome,
-        summary=shorten(f"Gate: {decision} for {delivery_id}{suffix}", MAX_SUMMARY),
-        data=data,
+    summary = f"Gate: {data.get('decision', '?')} for {data.get('delivery_id', '?')}{suffix}"
+    if data.get("after"):
+        summary += f", after an {data['after']}"
+        if data.get("previous"):
+            summary += f"; it was {data['previous']}"
+    return summary
+
+
+def _inspection_record(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    return (
+        f"{label(actor)} records the inspection of {data.get('object_id', '?')} on "
+        f"{data.get('delivery_id', '?')}: {data.get('verdict', '?')}"
     )
 
 
-def _judgment_event(
-    record: LogRecord, actor: str, deliveries: Mapping[str, Mapping[str, Any]]
-) -> Event:
-    data = kept(record.parameters)
-    delivery_id = delivery_id_of(record.parameters)
-    data["delivery_id"] = delivery_id
-    body = deliveries.get(delivery_id, {})
-    if record.action == "inspection.record":
-        object_id = str(data.get("object_id") or "?")
-        observations = body.get("inspections") or {}
-        found = observations.get(object_id)
-        if isinstance(found, Mapping) and found.get("observation") is not None:
-            data["observation"] = str(found["observation"])
-        summary = (
-            f"{label(actor)} records the inspection of {object_id} on {delivery_id}: "
-            f"{data.get('verdict', '?')}"
-        )
-    else:
-        review = body.get("review")
-        if isinstance(review, Mapping) and review.get("reasons") is not None:
-            data["reasons"] = str(review["reasons"])
-        summary = f"{label(actor)} reviews {delivery_id}: {data.get('verdict', '?')}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=record.action,
-        category="judgment",
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
-    )
+def _delivery_review(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    return f"{label(actor)} reviews {data.get('delivery_id', '?')}: {data.get('verdict', '?')}"
 
 
-def _other_event(record: LogRecord, actor: str) -> Event:
-    data = kept(record.parameters)
-    action = record.action
-    if action == "token.issue":
-        summary = f"Hub issues a token to the {data.get('side', '?')} side"
-    elif action == "notification.sent":
-        summary = (
-            f"Hub notifies the operator: {data.get('event', action)} "
-            f"for {data.get('delivery_id', '?')} ({data.get('decision', '?')})"
-        )
-    else:
-        summary = f"{label(actor)} {action}"
-    return Event(
-        when=record.time,
-        sequence=record.seq,
-        source=SOURCE_LOG,
-        actor=actor,
-        action=action,
-        category=CATEGORY_BY_ACTION.get(action, DEFAULT_CATEGORY),
-        outcome=record.outcome,
-        summary=shorten(summary, MAX_SUMMARY),
-        data=data,
-    )
+def _token(verb: str, preposition: str) -> Summary:
+    def summary(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
+        count = data.get("count")
+        tokens = plural(count, "token") if count is not None else "a token"
+        why = f" ({data['why']})" if data.get("why") else ""
+        return f"Hub {verb} {tokens} {preposition} the {_turn_side('hub', data)} side{why}"
+
+    return summary
 
 
-def hub_log_event(
-    record: LogRecord,
-    deliveries: Mapping[str, Mapping[str, Any]],
-    version_numbers: Mapping[str, int],
-    prices: Prices,
-) -> Event:
-    """One record of the log as one event of the replay."""
+def _notified(data: Mapping[str, Any]) -> str:
+    """What a notification was about: an event of the delivery loop, or a continuity step."""
+    if data.get("event"):
+        subject = str(data["event"])
+        if data.get("delivery_id"):
+            subject += f" for {data['delivery_id']}"
+            if data.get("decision"):
+                subject += f" ({data['decision']})"
+        elif data.get("branch"):
+            subject += f" on {data['branch']}"
+        return subject
+    if data.get("step"):
+        return _continuity("hub", OUTCOME_OK, dict(data)).removeprefix("Continuity: ")
+    return "an event"
+
+
+def _notification(_actor: str, outcome: str, data: dict[str, Any]) -> str:
+    if outcome == OUTCOME_ERROR:
+        return f"Hub cannot notify the operator of {_notified(data)}: {_failure(data)}"
+    return f"Hub notifies the operator: {_notified(data)}"
+
+
+def _continuity(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    step = str(data.get("step", "?")).replace("_", " ")
+    task = data.get("task", "?")
+    return f"Continuity: {step}, {_turn_side('hub', data)} side, {task} awaited"
+
+
+SUMMARIES: dict[str, Summary] = {
+    "project.create": _says("{actor} creates project {name}"),
+    "project.prepare": _project_prepare,
+    "contract.read": _contract_read,
+    "contract.propose": _contract_propose,
+    "contract.approve": _contract_approve,
+    "contract.reject": _says("{actor} rejects change {change_id}"),
+    "contract.pending": _says("{actor} reads the pending changes ({pending})"),
+    "contract.import": _contract_import,
+    "contract.apply_reserved": _contract_apply_reserved,
+    "acceptance.put": _says("{actor} stores acceptance test {path}"),
+    "instance.start": _instance_start,
+    "instance.stop": _instance_stop,
+    "turn.start": _turn_start,
+    "turn.end": _turn_end,
+    "delivery.push": _delivery_push,
+    "delivery.declare": _says("{actor} declares delivery {delivery_id}"),
+    "delivery.status": _says("{actor} reads the state of {delivery_id}"),
+    "delivery.check": _delivery_check,
+    "staging.prepare": _staging_prepare,
+    "staging.read": _staging_read,
+    "verification.run": _verification_run,
+    "gate.decision": _gate_decision,
+    "pull_request.open": _pull_request("opens", "open a pull request"),
+    "pull_request.comment": _pull_request("comments on", "comment on the pull request"),
+    "pull_request.retitle": _pull_request("retitles", "retitle the pull request"),
+    "inspection.record": _inspection_record,
+    "delivery.review": _delivery_review,
+    "token.issue": _token("issues", "to"),
+    "token.revoke": _token("revokes", "of"),
+    "notification.sent": _notification,
+    "continuity.step": _continuity,
+}
+
+
+def _model_call(actor: str, outcome: str, data: dict[str, Any], prices: Prices) -> str:
+    """A call to the gateway, with its indicative cost when it was answered."""
+    data["side"] = actor
+    if outcome != OUTCOME_OK:
+        return f"Model call failed: {_failure(data)}"
+    prompt = data["prompt_tokens"] = int(data.get("prompt_tokens") or 0)
+    completion = data["completion_tokens"] = int(data.get("completion_tokens") or 0)
+    tool_calls = data["tool_calls"] = int(data.get("tool_calls") or 0)
+    data["cost_usd"] = prices.cost(prompt, completion)
+    return f"Model call: {prompt:,} in / {completion:,} out, {plural(tool_calls, 'tool call')}"
+
+
+def hub_log_event(record: LogRecord, prices: Prices) -> Event:
+    """One record of the log as one event of the replay: its data is what the record holds."""
     actor = actor_of(record.principal)
-    if record.outcome == OUTCOME_REFUSED:
-        return _refusal_event(record, actor)
+    data = kept(record.parameters)
     category = CATEGORY_BY_ACTION.get(record.action, DEFAULT_CATEGORY)
-    if category == "model":
-        return _model_event(record, actor, prices)
-    if category == "contract":
-        return _contract_event(record, actor, version_numbers)
-    if category == "turn":
-        return _turn_event(record, actor)
-    if category == "delivery":
-        return _delivery_event(record, actor, deliveries)
-    if category == "gate":
-        return _gate_event(record, actor, deliveries)
-    if category == "judgment":
-        return _judgment_event(record, actor, deliveries)
-    return _other_event(record, actor)
+    if record.outcome == OUTCOME_REFUSED:
+        category = CATEGORY_REFUSAL
+        data.update(reason=record.reason, action=record.action)
+        data.setdefault("detail", None)
+        summary = _refused(record.action, record.reason, data)
+    elif category == "model":
+        summary = _model_call(actor, record.outcome, data, prices)
+    elif record.action in SUMMARIES:
+        summary = SUMMARIES[record.action](actor, record.outcome, data)
+    elif record.outcome == OUTCOME_ERROR:
+        summary = f"{label(actor)} {record.action} failed: {_failure(data)}"
+    else:
+        summary = f"{label(actor)} {record.action}"
+    return Event(
+        when=record.time,
+        sequence=record.seq,
+        source=SOURCE_LOG,
+        actor=actor,
+        action=record.action,
+        category=category,
+        outcome=record.outcome,
+        summary=shorten(summary, MAX_SUMMARY),
+        data=data,
+    )
+
+
+def _judged(
+    stored: object, name: str, key: tuple[str, ...], when: str, placed: set[tuple[str, ...]]
+) -> dict[str, Any] | None:
+    """The `name` field of a stored inspection or review, for the first record of it at or after
+    the time the row gives (the hub dates the row, then logs the record), and for no other."""
+    if not isinstance(stored, Mapping) or stored.get(name) is None or key in placed:
+        return None
+    at = stored.get("at")
+    if not isinstance(at, str) or parse_moment(at) > parse_moment(when):
+        return None
+    placed.add(key)
+    return {name: str(stored[name])}
+
+
+def state_of(
+    event: Event, body: Mapping[str, Any], placed: set[tuple[str, ...]]
+) -> dict[str, Any] | None:
+    """What the delivery's row adds to `event` and held at its time, or None.
+
+    The row keeps the last state of the delivery. What never changes once written holds for
+    every event after it: the paths a push changed, the paths the check flagged, the outcomes of
+    the verification (an inspection changes the decision, not them), the URL of the pull
+    request. An inspection or a review can be recorded again and the row keeps the last one, so
+    it belongs to one event only.
+    """
+    action = event.action
+    delivery_id = str(event.data.get("delivery_id") or "")
+    if action == "delivery.push" and body.get("changed_paths"):
+        return {"changed_paths": [str(path) for path in body["changed_paths"]]}
+    if action == "delivery.check" and body.get("flagged_paths"):
+        return {"paths": [str(path) for path in body["flagged_paths"]]}
+    if action == "gate.decision" and body.get("outcomes"):
+        return {"outcomes": dict(body["outcomes"])}
+    if action in PULL_REQUEST_ACTIONS and body.get("pull_request"):
+        return {"url": str(body["pull_request"])}
+    if action == "inspection.record":
+        object_id = str(event.data.get("object_id") or "")
+        stored = (body.get("inspections") or {}).get(object_id)
+        return _judged(stored, "observation", (action, delivery_id, object_id), event.when, placed)
+    if action == "delivery.review":
+        return _judged(body.get("review"), "reasons", (action, delivery_id), event.when, placed)
+    return None
+
+
+def complete_from_state(
+    events: Sequence[Event], deliveries: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Give each accepted `hub-log` event of a delivery its `hub_state`, in the order of the log."""
+    placed: set[tuple[str, ...]] = set()
+    for event in events:
+        body = deliveries.get(str(event.data.get("delivery_id") or ""))
+        if event.source != SOURCE_LOG or event.outcome != OUTCOME_OK or not body:
+            continue
+        found = state_of(event, body, placed)
+        if found is not None:
+            event.hub_state = found
 
 
 def version_event(version: Mapping[str, Any]) -> Event:
@@ -823,21 +965,18 @@ def version_event(version: Mapping[str, Any]) -> Event:
 def flagged_event(
     delivery_id: str, body: Mapping[str, Any], protected: Sequence[str]
 ) -> Event | None:
-    """The protected paths a delivery changes: what the hub flagged, or what the exporter finds.
+    """The protected paths a delivery changed when the hub did not flag such paths yet.
 
-    The hub flags them (`by: "hub"`) when its own rule was in force; a run older than the rule
-    carries none, and the exporter derives them from the delivered paths (`by: "exporter"`).
+    A hub that flags them records a `delivery.check` when it verifies the delivery, and keeps
+    the paths in the delivery's row: that record is the flag, and this function adds nothing. A
+    run older than the rule carries neither, and the exporter finds the paths among the
+    delivered ones, at the time the delivery was received (`by: "exporter"`).
     """
     received = body.get("received_at")
-    if received is None:
+    if received is None or body.get("flagged_paths"):
         return None
-    announced = [str(path) for path in body.get("flagged_paths") or ()]
-    if announced:
-        by, paths = "hub", announced
-    else:
-        changed = [str(path) for path in body.get("changed_paths") or ()]
-        paths = protected_paths_in(changed, protected)
-        by = "exporter"
+    changed = tuple(str(path) for path in body.get("changed_paths") or ())
+    paths = list(flagged_paths(changed, tuple(protected)))
     if not paths:
         return None
     return Event(
@@ -849,7 +988,12 @@ def flagged_event(
         category=CATEGORY_FLAG,
         outcome=OUTCOME_OK,
         summary=f"Delivery {delivery_id} changes a protected path: {', '.join(paths)}",
-        data={"delivery_id": delivery_id, "paths": paths, "rule": "protected-path", "by": by},
+        data={
+            "delivery_id": delivery_id,
+            "paths": paths,
+            "rule": "protected-path",
+            "by": "exporter",
+        },
     )
 
 
@@ -905,6 +1049,8 @@ def transcript_events(
 
 # ----------------------------------------------------------------------------- totals
 def totals_of(events: Sequence[Event], started: datetime, ended: datetime) -> dict[str, Any]:
+    """The sums of the run. A model call counts once it was answered, as the hub counts it in
+    its evidence report; a refusal counts for whoever was refused, the hub included."""
     model_calls: dict[str, int] = {}
     tokens: dict[str, dict[str, int]] = {}
     cost_usd: dict[str, float] = {}
@@ -912,7 +1058,7 @@ def totals_of(events: Sequence[Event], started: datetime, ended: datetime) -> di
     decisions: list[dict[str, Any]] = []
     verdicts: list[dict[str, Any]] = []
     for event in events:
-        if event.category == "model":
+        if event.category == "model" and event.outcome == OUTCOME_OK:
             side = str(event.data.get("side") or event.actor)
             model_calls[side] = model_calls.get(side, 0) + 1
             counted = tokens.setdefault(side, {"input": 0, "output": 0})
@@ -922,7 +1068,7 @@ def totals_of(events: Sequence[Event], started: datetime, ended: datetime) -> di
             cost_usd[side] = round(cost_usd.get(side, 0.0) + cost, 6)
         elif event.category == CATEGORY_REFUSAL:
             refusals[event.actor] = refusals.get(event.actor, 0) + 1
-        if event.action == "gate.decision":
+        if event.action == "gate.decision" and event.outcome == OUTCOME_OK:
             decisions.append(
                 {
                     "delivery_id": event.data.get("delivery_id"),
@@ -930,7 +1076,11 @@ def totals_of(events: Sequence[Event], started: datetime, ended: datetime) -> di
                     "t": event.when,
                 }
             )
-        elif event.action == "delivery.review" and event.data.get("verdict"):
+        elif (
+            event.action == "delivery.review"
+            and event.outcome == OUTCOME_OK
+            and event.data.get("verdict")
+        ):
             verdicts.append(
                 {
                     "delivery_id": event.data.get("delivery_id"),
@@ -938,32 +1088,19 @@ def totals_of(events: Sequence[Event], started: datetime, ended: datetime) -> di
                     "t": event.when,
                 }
             )
-    sides = sorted(set(model_calls) | set(refusals))
+    sides = sorted(model_calls)
     return {
         "events": len(events),
-        "model_calls": {side: model_calls.get(side, 0) for side in sides},
-        "tokens": {side: tokens.get(side, {"input": 0, "output": 0}) for side in sides},
+        "model_calls": {side: model_calls[side] for side in sides},
+        "tokens": {side: tokens[side] for side in sides},
         "cost_usd": {
-            **{side: cost_usd.get(side, 0.0) for side in sides},
+            **{side: cost_usd[side] for side in sides},
             "total": round(float(sum(cost_usd.values())), 6),
         },
-        "refusals": {side: refusals.get(side, 0) for side in sides},
+        "refusals": dict(sorted(refusals.items())),
         "decisions": decisions,
         "verdicts": verdicts,
         "duration_ms": round((ended - started).total_seconds() * 1000),
-    }
-
-
-def empty_totals(events: Sequence[Event]) -> dict[str, Any]:
-    return {
-        "events": len(events),
-        "model_calls": {},
-        "tokens": {},
-        "cost_usd": {"total": 0.0},
-        "refusals": {},
-        "decisions": [],
-        "verdicts": [],
-        "duration_ms": 0,
     }
 
 
@@ -988,12 +1125,13 @@ class Options:
     message_chars: int = DEFAULT_MESSAGE_CHARS
     input_price: float = DEFAULT_INPUT_PRICE
     output_price: float = DEFAULT_OUTPUT_PRICE
-    price_note: str = DEFAULT_PRICE_NOTE
+    price_note: str | None = None
 
 
 def replay_document(options: Options, exported_at: str | None = None) -> dict[str, Any]:
     """Build the whole replay document for one project and one range of its log."""
-    prices = Prices(options.input_price, options.output_price, options.price_note)
+    note = price_note(options.input_price, options.output_price, options.price_note)
+    prices = Prices(options.input_price, options.output_price, note)
     renames = list(options.renames)
     if options.rename_file is not None:
         renames.extend(read_renames(options.rename_file))
@@ -1007,15 +1145,17 @@ def replay_document(options: Options, exported_at: str | None = None) -> dict[st
         versions = hub.versions(options.project)
         deliveries = hub.deliveries(options.project)
         integrity = verify_chain(options.project, records)
-        version_numbers = {str(item["version_id"]): int(item["number"]) for item in versions}
         window = (
             (parse_moment(records[0].time), parse_moment(records[-1].time)) if records else None
         )
-        events = [hub_log_event(record, deliveries, version_numbers, prices) for record in records]
+        events = [hub_log_event(record, prices) for record in records]
+        complete_from_state(events, deliveries)
         named_versions = {
             str(record.parameters["version_id"])
             for record in records
-            if record.action in VERSION_ACTIONS and record.parameters.get("version_id")
+            if record.action in VERSION_ACTIONS
+            and record.outcome == OUTCOME_OK
+            and record.parameters.get("version_id")
         }
         events.extend(
             version_event(version)
@@ -1035,7 +1175,6 @@ def replay_document(options: Options, exported_at: str | None = None) -> dict[st
             parse_moment(event.when),
             0 if event.sequence is not None else 1,
             event.sequence if event.sequence is not None else 0,
-            event.order,
         )
     )
     events = [redact_event(event, redactor) for event in events]
@@ -1061,13 +1200,29 @@ def replay_document(options: Options, exported_at: str | None = None) -> dict[st
         },
         "integrity": integrity,
         "pricing": prices.document(),
-        "contract": redactor.value(contract_of(versions, ended)),
+        "contract_at_start": redactor.value(contract_at(versions, started, before=True))
+        if started is not None
+        else contract_document(None),
+        "contract": redactor.value(contract_at(versions, ended, before=False)),
         "events": [event.render(index, started) for index, event in enumerate(events)]
-        if started
+        if started is not None
         else [],
         "totals": totals_of(events, started, ended)
         if started is not None and ended is not None
-        else empty_totals(events),
+        else empty_totals(),
+    }
+
+
+def empty_totals() -> dict[str, Any]:
+    return {
+        "events": 0,
+        "model_calls": {},
+        "tokens": {},
+        "cost_usd": {"total": 0.0},
+        "refusals": {},
+        "decisions": [],
+        "verdicts": [],
+        "duration_ms": 0,
     }
 
 
@@ -1083,23 +1238,9 @@ def redact_event(event: Event, redactor: Redactor) -> Event:
     """Replace what must not be published, in the summary and in the details."""
     event.summary = redactor.text(event.summary)
     event.data = redactor.value(event.data)
+    if event.hub_state is not None:
+        event.hub_state = redactor.value(event.hub_state)
     return event
-
-
-def contract_of(versions: Sequence[Mapping[str, Any]], ended: datetime | None) -> dict[str, Any]:
-    """The contract as it stood at the end of the exported range."""
-    chosen: Mapping[str, Any] | None = None
-    for version in versions:
-        if ended is None or parse_moment(str(version["time"])) <= ended:
-            chosen = version
-    if chosen is None:
-        return {"version": None, "version_id": None, "objects": []}
-    objects = chosen["objects"]
-    return {
-        "version": chosen["number"],
-        "version_id": chosen["version_id"],
-        "objects": contract_objects(objects if isinstance(objects, Mapping) else {}),
-    }
 
 
 def document_text(document: Mapping[str, Any]) -> str:
@@ -1109,10 +1250,14 @@ def document_text(document: Mapping[str, Any]) -> str:
 
 # ----------------------------------------------------------------------------- the player
 def player_document(template: str, payload: str) -> str:
-    """The player with the replay inside it, every `</` of the JSON escaped."""
+    """The player with the replay inside it.
+
+    Every `<` of the JSON is written `\\u003c`, which JSON reads back as `<`: no text of the
+    replay can then close the element, open a comment or start a script inside the page.
+    """
     if template.count(PLAYER_DATA) != 1:
         raise ReplayError(f"the player must hold exactly one {PLAYER_DATA!r} element")
-    escaped = payload.replace("</", "<\\/")
+    escaped = payload.replace("<", "\\u003c")
     inner = f'<script type="application/json" id="replay-data">{escaped}</script>'
     return template.replace(PLAYER_DATA, inner)
 
@@ -1148,7 +1293,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--db", required=True, type=Path, help="the hub's SQLite file")
     parser.add_argument("--project", required=True, help="the project identifier (the stream)")
-    parser.add_argument("--kind", choices=("real", "scripted"), default="real")
+    parser.add_argument("--kind", choices=KINDS, default="real")
     parser.add_argument("--attack", dest="attacks", action="append", metavar="ATK-ID")
     parser.add_argument("--title", default=None)
     parser.add_argument("--model", default=None)
@@ -1184,7 +1329,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-price", dest="output_price", type=float, default=DEFAULT_OUTPUT_PRICE
     )
-    parser.add_argument("--price-note", dest="price_note", default=DEFAULT_PRICE_NOTE)
+    parser.add_argument("--price-note", dest="price_note", default=None)
     parser.add_argument("--protected-path", dest="protected_paths", action="append", metavar="PATH")
     parser.add_argument(
         "--message-chars", dest="message_chars", type=int, default=DEFAULT_MESSAGE_CHARS

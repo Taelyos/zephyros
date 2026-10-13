@@ -43,7 +43,7 @@ A failing workflow does not stop a merge by itself. Once the repository has a re
 | --- | --- |
 | `src/zephyros/core/` | The hub core: pure code, standard library only |
 | `src/zephyros/adapters/` | Container runtime, storage, HTTP, agent engine, model provider |
-| `tools/` | The repository checks (pins, suppressions, core purity). Not part of the hub |
+| `tools/` | The repository checks (pins, suppressions, core purity) and the replay tools (`tools/replay/`, [replay format](replay-format.md)). Not part of the hub |
 | `tests/unit/` | Unit tests, no container runtime |
 | `tests/runtime/` | Tests that need a container runtime (`scripts/acceptance.sh`) |
 | `tests/acceptance/` | The executable attack catalog |

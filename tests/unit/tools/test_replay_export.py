@@ -7,7 +7,9 @@ and the chain in the tests are the real ones.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -15,15 +17,10 @@ from typing import Any
 import pytest
 from tools.replay import export
 
-from zephyros.adapters.memory.clock import FakeClock
-from zephyros.adapters.sqlite.contract_store import SqliteContractStore
-from zephyros.adapters.sqlite.database import Database
-from zephyros.adapters.sqlite.delivery_store import SqliteDeliveryStore
-from zephyros.adapters.sqlite.log_store import SqliteLogStore
-from zephyros.adapters.sqlite.project_store import SqliteProjectStore
-from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
-from zephyros.core.clock import parse_time
-from zephyros.core.contract import ContractVersion, content_hash, version_id
+from tests.unit.tools.replay_example import EXAMPLE, example_text
+from tests.unit.tools.replay_hub import HubFile, write_transcript
+from zephyros.core.audit import Action, Outcome, Reason
+from zephyros.core.contract import content_hash, version_id
 from zephyros.core.deliveries import DeliveryRecord, DeliveryState
 from zephyros.core.projects import Project
 
@@ -213,19 +210,6 @@ RECORDS: list[Audit] = [
     ),
     (Action.PULL_REQUEST_OPEN, Outcome.OK, "hub", Reason.NONE, {"delivery": "d1", "number": 7}),
     (
-        Action.INSPECTION_RECORD,
-        Outcome.OK,
-        OWNER,
-        Reason.NONE,
-        {
-            "decision": "CONCERNS",
-            "delivery_id": "d1",
-            "object_id": "CTR-01",
-            "verdict": "conforms",
-            "source": OWNER_ADDRESS,
-        },
-    ),
-    (
         Action.GATE_DECISION,
         Outcome.OK,
         "hub",
@@ -236,6 +220,19 @@ RECORDS: list[Audit] = [
             "decision": "PASS",
             "delivery": "d1",
             "previous": "CONCERNS",
+        },
+    ),
+    (
+        Action.INSPECTION_RECORD,
+        Outcome.OK,
+        OWNER,
+        Reason.NONE,
+        {
+            "decision": "PASS",
+            "delivery_id": "d1",
+            "object_id": "CTR-01",
+            "verdict": "conforms",
+            "source": OWNER_ADDRESS,
         },
     ),
     (
@@ -262,56 +259,36 @@ NOTE = (
 )
 FINAL = "Done: the delivery is in and the gate reads PASS."
 INSIDE_RUN = "a message from outside the exported range"
-PUSH_TIME = 11  # the record that carried the delivery, one second per record from 09:00:00
+PUSH = 11  # the record that carried the delivery, one second per record from 09:00:00
+INSPECTED = 16  # the gate decided again, then the inspection was logged: the row's time
+REVIEWED = 18
 
 
 def unix(second: int) -> float:
     return datetime(2026, 3, 4, 9, 0, second, tzinfo=UTC).timestamp()
 
 
+def project(name: str = "alpha-svc") -> Project:
+    return Project(PROJECT, name, "https://example.invalid/alpha-svc", START, "operator")
+
+
 def build_hub(tmp_path: Path) -> Path:
     """A small hub database, where every record really was hashed by the hub's own log."""
     path = tmp_path / "hub.db"
-    database = Database(path)
-    clock = FakeClock(START)
-    audit = AuditLog(SqliteLogStore(database), clock)
-    SqliteProjectStore(database).add(
-        Project(
-            id=PROJECT,
-            name="alpha-svc",
-            repository_url="https://example.invalid/alpha-svc",
-            created_at=clock.now(),
-            created_by="operator",
-        )
-    )
-    contracts = SqliteContractStore(database)
-    times: list[str] = []
-    for action, outcome, principal, reason, parameters in RECORDS:
-        times.append(
-            audit.append(AuditEvent(PROJECT, principal, action, outcome, reason, parameters)).time
-        )
-        clock.advance(1)
-    digest = content_hash(OBJECTS)
-    contracts.append(
-        PROJECT,
-        ContractVersion(
-            number=1,
-            id=version_id(1, digest),
-            parent=None,
-            content_hash=digest,
-            objects=OBJECTS,
-            author="operator",
-            time=parse_time(times[1]),
-            operator_written=True,
-        ),
-    )
-    SqliteDeliveryStore(database).put_record(
+    hub = HubFile(path, project())
+    times = [
+        hub.log(0 if index == 0 else 1, principal, action, parameters, outcome, reason)
+        for index, (action, outcome, principal, reason, parameters) in enumerate(RECORDS)
+    ]
+    hub.clock.set(datetime.fromisoformat(times[1]))
+    hub.version(1, OBJECTS, "operator")
+    hub.delivery(
         DeliveryRecord(
             project_id=PROJECT,
             delivery_id="d1",
             branch="feature",
             state=DeliveryState.PROPOSED,
-            received_at=times[PUSH_TIME],
+            received_at=times[PUSH],
             changed_paths=("alpha_svc/app.py", "CONTRACT.md"),
             decision="PASS",
             outcomes={"test_x.py::test_a": "passed", "test_x.py::test_b": "passed"},
@@ -324,29 +301,26 @@ def build_hub(tmp_path: Path) -> Path:
                     "verdict": "conforms",
                     "observation": f"stdlib only, checked on {address(10, 0, 0, 5)}",
                     "by": OWNER,
-                    "at": times[16],
+                    "at": times[INSPECTED],
                 }
             },
             review={
                 "verdict": "accept_with_reservations",
                 "reasons": f"all accepted; the probe came from {address(100, 64, 12, 7)}",
                 "by": OWNER,
-                "at": times[18],
+                "at": times[REVIEWED],
             },
         )
     )
-    database.close()
+    hub.close()
     return path
 
 
 def build_transcript(path: Path) -> Path:
     """A tiny Hermes state database: the Owner's conversation, with two answers in the run."""
-    with sqlite3.connect(path) as db:
-        db.execute(
-            "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, "
-            "content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL)"
-        )
-        rows = [
+    return write_transcript(
+        path,
+        [
             ("s1", "user", "make the delivery", unix(0)),
             ("s1", "assistant", NOTE, unix(2)),
             ("s1", "tool", "ok", unix(3)),
@@ -355,13 +329,8 @@ def build_transcript(path: Path) -> Path:
             ("s1", "user", "thank you", unix(6)),
             ("s1", "assistant", INSIDE_RUN, unix(0) - 3600),
             ("s1", "assistant", INSIDE_RUN, unix(0) + 3600),
-        ]
-        db.executemany(
-            "INSERT INTO messages (session_id, role, content, tool_calls, tool_name, timestamp) "
-            "VALUES (?, ?, ?, NULL, NULL, ?)",
-            rows,
-        )
-    return path
+        ],
+    )
 
 
 @pytest.fixture
@@ -391,7 +360,7 @@ def only(document: dict[str, Any], action: str) -> dict[str, Any]:
 
 def tamper(path: Path, sql: str) -> None:
     """An attacker who owns the file drops a trigger and edits or removes a record."""
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute("DROP TRIGGER audit_records_no_update")
         db.execute("DROP TRIGGER audit_records_no_delete")
         db.execute(sql)
@@ -434,6 +403,106 @@ def test_only_hub_log_events_are_numbered_by_the_log(hub: Path) -> None:
         assert (event["seq"] is not None) == (event["source"] == "hub-log")
 
 
+# ----------------------------------------------------------------------------- data and hub_state
+DERIVED = {"reason", "action", "detail", "side", "cost_usd", "version"}
+"""What the exporter adds to a record's parameters, from the record alone."""
+
+
+def test_the_data_of_a_log_event_is_what_its_record_holds(hub: Path) -> None:
+    """Nothing the tables hold reaches `data`: a reader can check it against the chain."""
+    document = replay(hub)
+    with export.Hub(hub) as view:
+        records = {record.seq: record for record in view.records(PROJECT, None, None)}
+    clean = export.Redactor.of(())
+    for event in document["events"]:
+        if event["source"] != "hub-log":
+            continue
+        parameters = clean.value(export.kept(records[event["seq"]].parameters))
+        assert set(event["data"]) - set(parameters) <= DERIVED, event["type"]
+        for key, value in parameters.items():
+            assert event["data"][key] == value, (event["type"], key)
+
+
+def test_what_the_tables_add_goes_to_hub_state(hub: Path) -> None:
+    document = replay(hub)
+    assert only(document, "delivery.push")["hub_state"] == {
+        "changed_paths": ["alpha_svc/app.py", "CONTRACT.md"]
+    }
+    outcomes = {"test_x.py::test_a": "passed", "test_x.py::test_b": "passed"}
+    assert [event["hub_state"] for event in of_type(document, "gate.decision")] == [
+        {"outcomes": outcomes},
+        {"outcomes": outcomes},
+    ]
+    assert only(document, "inspection.record")["hub_state"] == {
+        "observation": "stdlib only, checked on [redacted]"
+    }
+    assert only(document, "delivery.review")["hub_state"] == {
+        "reasons": "all accepted; the probe came from [redacted]"
+    }
+    url = {"url": "https://example.invalid/alpha-svc/pull/7"}
+    assert only(document, "pull_request.open")["hub_state"] == url
+    assert only(document, "pull_request.comment")["hub_state"] == url
+
+
+def test_an_event_before_a_state_was_written_gets_none_of_it(hub: Path) -> None:
+    """The row keeps the last state of a delivery: an earlier event must not show it."""
+    document = replay(hub)
+    for action in ("delivery.declare", "verification.run", "turn.end"):
+        assert "hub_state" not in only(document, action), action
+    push = only(document, "delivery.push")
+    assert "url" not in push["hub_state"]
+
+
+def test_a_state_read_does_not_show_the_final_state(tmp_path: Path) -> None:
+    hub = HubFile(tmp_path / "hub.db", project())
+    hub.log(0, CONTRACTOR, Action.DELIVERY_STATUS, {"project_id": PROJECT, "delivery_id": "d1"})
+    hub.delivery(
+        DeliveryRecord(PROJECT, "d1", "feature", DeliveryState.PROPOSED, hub.now(), decision="PASS")
+    )
+    hub.close()
+    event = only(replay(tmp_path / "hub.db"), "delivery.status")
+    assert event["data"] == {"project_id": PROJECT, "delivery_id": "d1"}
+    assert "hub_state" not in event
+
+
+def inspected_twice(tmp_path: Path, last_at: int) -> Path:
+    """Two inspections of CTR-01 on d1; the row keeps the one dated `last_at` seconds in."""
+    path = tmp_path / "hub.db"
+    hub = HubFile(path, project())
+    parameters = {"delivery_id": "d1", "object_id": "CTR-01", "verdict": "does_not_conform"}
+    hub.log(0, OWNER, Action.INSPECTION_RECORD, parameters)
+    hub.log(10, OWNER, Action.INSPECTION_RECORD, {**parameters, "verdict": "conforms"})
+    hub.log(10, "hub", Action.TURN_END, {"side": "owner", "result": "completed"})
+    stored = {"verdict": "conforms", "observation": "the second look", "by": OWNER}
+    hub.delivery(
+        DeliveryRecord(
+            PROJECT,
+            "d1",
+            "feature",
+            DeliveryState.PROPOSED,
+            hub.now(),
+            decision="PASS",
+            contract_version=1,
+            inspections={"CTR-01": {**stored, "at": f"2026-03-04T09:00:{last_at:02d}.000000Z"}},
+        )
+    )
+    hub.close()
+    return path
+
+
+def test_an_inspection_recorded_again_lends_its_observation_to_its_own_record(
+    tmp_path: Path,
+) -> None:
+    first, second = of_type(replay(inspected_twice(tmp_path, last_at=10)), "inspection.record")
+    assert "hub_state" not in first
+    assert second["hub_state"] == {"observation": "the second look"}
+
+
+def test_an_inspection_recorded_after_the_range_lends_nothing(tmp_path: Path) -> None:
+    for event in of_type(replay(inspected_twice(tmp_path, last_at=25)), "inspection.record"):
+        assert "hub_state" not in event
+
+
 # ----------------------------------------------------------------------------- actors and refusals
 def test_each_principal_becomes_its_actor(hub: Path) -> None:
     document = replay(hub)
@@ -465,6 +534,276 @@ def test_the_caller_address_and_the_token_identifiers_are_dropped(hub: Path) -> 
         assert "source" not in event["data"]
 
 
+# ----------------------------------------------------------------------------- summaries
+PRICES = export.Prices(1.0, 2.0, "test rates")
+
+
+def record(
+    action: str,
+    parameters: dict[str, object],
+    outcome: str = "ok",
+    principal: str = "hub",
+    reason: str = "none",
+) -> export.LogRecord:
+    return export.LogRecord(
+        seq=1,
+        time="2026-03-04T09:00:00.000000Z",
+        principal=principal,
+        action=action,
+        outcome=outcome,
+        reason=reason,
+        parameters=parameters,
+        parameters_text=json.dumps(parameters),
+        previous="0" * 64,
+        hash="0" * 64,
+    )
+
+
+SUMMARIES: list[tuple[export.LogRecord, str, str]] = [
+    (
+        record("verification.run", {"delivery": "d2", "error": "the kit timed out"}, "error"),
+        "delivery",
+        "Verification of d2 failed: the kit timed out",
+    ),
+    (
+        record("pull_request.open", {"delivery": "d2", "error": "HTTP 502"}, "error"),
+        "delivery",
+        "Hub cannot open a pull request for d2: HTTP 502",
+    ),
+    (
+        record("pull_request.comment", {"delivery": "d2", "error": "HTTP 502"}, "error"),
+        "delivery",
+        "Hub cannot comment on the pull request for d2: HTTP 502",
+    ),
+    (
+        record("pull_request.retitle", {"delivery": "d2", "number": 12}),
+        "delivery",
+        "Hub retitles pull request #12 for d2",
+    ),
+    (
+        record("pull_request.retitle", {"delivery": "d2", "error": "HTTP 404"}, "error"),
+        "delivery",
+        "Hub cannot retitle the pull request for d2: HTTP 404",
+    ),
+    (
+        record("turn.start", {"side": "owner", "error": "image_missing"}, "error"),
+        "turn",
+        "Owner turn cannot start: image_missing",
+    ),
+    (
+        record("turn.start", {"side": "contractor", "prompt_chars": 12_345}),
+        "turn",
+        "Contractor turn begins (12,345 prompt chars)",
+    ),
+    (
+        record("turn.end", {"side": "owner", "result": "guard_lost"}, "error"),
+        "turn",
+        "Owner turn ends in error: guard_lost",
+    ),
+    (
+        record("instance.stop", {"side": "contractor"}, principal="operator"),
+        "other",
+        "Operator stops the Contractor instance",
+    ),
+    (
+        record(
+            "notification.sent",
+            {"event": "delivery.decided", "delivery_id": "d2", "decision": "PASS"},
+        ),
+        "other",
+        "Hub notifies the operator: delivery.decided for d2 (PASS)",
+    ),
+    (
+        record(
+            "notification.sent",
+            {"event": "delivery.decided", "delivery_id": "d2", "error": "status 500"},
+            "error",
+        ),
+        "other",
+        "Hub cannot notify the operator of delivery.decided for d2: status 500",
+    ),
+    (
+        record(
+            "notification.sent",
+            {"event": "delivery.loop", "branch": "feature", "rejections": 3},
+        ),
+        "other",
+        "Hub notifies the operator: delivery.loop on feature",
+    ),
+    (
+        record(
+            "notification.sent",
+            {"side": "owner", "step": "alert_human", "task": "decision", "error": "egress"},
+            "error",
+        ),
+        "other",
+        "Hub cannot notify the operator of alert human, Owner side, decision awaited: egress",
+    ),
+    (
+        record("continuity.step", {"side": "contractor", "step": "wake", "task": "delivery"}),
+        "other",
+        "Continuity: wake, Contractor side, delivery awaited",
+    ),
+    (
+        record("token.issue", {"token_id": "t_1", "side": "owner"}),
+        "other",
+        "Hub issues a token to the Owner side",
+    ),
+    (
+        record("token.revoke", {"side": "owner", "count": 2, "why": "stop"}),
+        "other",
+        "Hub revokes 2 tokens of the Owner side (stop)",
+    ),
+    (
+        record("staging.prepare", {"error": "the forge answered HTTP 404"}, "error"),
+        "delivery",
+        "Hub cannot prepare the staging area: the forge answered HTTP 404",
+    ),
+    (
+        record("staging.prepare", {"repository": "r", "branch": "main", "base": "0a0a0a0a0a0a"}),
+        "delivery",
+        "Hub prepares the staging area from r main at 0a0a0a0a0a0a",
+    ),
+    (
+        record("staging.read", {"bytes": 18_432}, principal=CONTRACTOR),
+        "delivery",
+        "Contractor reads the base from the staging area (18,432 bytes)",
+    ),
+    (
+        record("staging.read", {"delivery_id": "d2", "bytes": 1}, principal=OWNER),
+        "delivery",
+        "Owner reads delivery d2 from the staging area (1 byte)",
+    ),
+    (
+        record("delivery.status", {"delivery_id": "d2"}, principal=OWNER),
+        "delivery",
+        "Owner reads the state of d2",
+    ),
+    (
+        record("delivery.check", {"delivery": "d2", "flagged": 1}),
+        "flag",
+        "Hub flags delivery d2: it changes 1 protected path",
+    ),
+    (
+        record(
+            "delivery.check",
+            {"delivery": "d1", "paths": 2},
+            "refused",
+            reason="protected_path",
+        ),
+        "refusal",
+        "Refused (protected_path): delivery d1 changes 2 acceptance test files",
+    ),
+    (
+        record(
+            "egress.refused",
+            {"host": "hooks.example.invalid", "purpose": "notification"},
+            "refused",
+            reason="egress",
+        ),
+        "refusal",
+        "Refused (egress): notification to hooks.example.invalid",
+    ),
+    (
+        record("contract.read", {"version_id": "v3-0a0a0a0a0a0a"}, principal=CONTRACTOR),
+        "contract",
+        "Contractor reads contract version 3",
+    ),
+    (
+        record(
+            "contract.approve",
+            {"change_id": "c_1", "version_id": "v2-0a0a0a0a0a0a"},
+            principal="main-agent",
+        ),
+        "contract",
+        "Main agent approves change c_1: contract version 2",
+    ),
+    (
+        record("contract.reject", {"change_id": "c_1"}, principal="operator"),
+        "contract",
+        "Operator rejects change c_1",
+    ),
+    (
+        record("contract.pending", {"pending": 2}, principal=OWNER),
+        "contract",
+        "Owner reads the pending changes (2)",
+    ),
+    (
+        record(
+            "contract.apply_reserved",
+            {"version_id": "v4-0a0a0a0a0a0a", "summary": "P0 floor"},
+            principal="operator",
+        ),
+        "contract",
+        "Operator applies a reserved change as version 4: P0 floor",
+    ),
+    (
+        record(
+            "contract.import", {"version_id": "v1-0a0a0a0a0a0a", "objects": 1}, principal="operator"
+        ),
+        "contract",
+        "Operator imports the contract as version 1 (1 object)",
+    ),
+    (
+        record("project.create", {"name": "alpha-svc"}, principal="operator"),
+        "other",
+        "Operator creates project alpha-svc",
+    ),
+    (
+        record("project.prepare", {"repository": "r", "branch": "main"}, principal="operator"),
+        "other",
+        "Operator asks for a staging area from r main",
+    ),
+    (
+        record("gate.decision", {"delivery": "d2", "decision": "FAIL"}),
+        "gate",
+        "Gate: FAIL for d2",
+    ),
+    (
+        record("log.read", {"stream": "hub"}, principal="operator"),
+        "other",
+        "Operator log.read",
+    ),
+    (
+        record("log.verify", {"error": "the store is locked"}, "error", principal="operator"),
+        "other",
+        "Operator log.verify failed: the store is locked",
+    ),
+    (
+        record("pull_request.open", {"delivery": "d2"}),
+        "delivery",
+        "Hub opens pull request #? for d2",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("logged", "category", "summary"),
+    SUMMARIES,
+    ids=[f"{item[0].action}-{item[0].outcome}-{index}" for index, item in enumerate(SUMMARIES)],
+)
+def test_each_record_says_what_happened(
+    logged: export.LogRecord, category: str, summary: str
+) -> None:
+    event = export.hub_log_event(logged, PRICES)
+    assert (event.category, event.summary) == (category, summary)
+    assert event.outcome == logged.outcome
+
+
+def test_a_failed_model_call_has_no_tokens_and_no_cost() -> None:
+    logged = record("gateway.call", {"model": "m", "detail": "HTTP 503"}, "error", OWNER)
+    event = export.hub_log_event(logged, PRICES)
+    assert event.summary == "Model call failed: HTTP 503"
+    assert event.data == {"model": "m", "detail": "HTTP 503", "side": "owner"}
+
+
+def test_a_decision_after_an_inspection_says_what_it_was(hub: Path) -> None:
+    second = of_type(replay(hub), "gate.decision")[1]
+    assert second["summary"] == (
+        "Gate: PASS for d1 (contract v1), after an inspection; it was CONCERNS"
+    )
+
+
 # ----------------------------------------------------------------------------- pricing and totals
 def test_the_cost_of_every_model_call_and_the_totals(hub: Path) -> None:
     document = replay(hub)
@@ -481,7 +820,7 @@ def test_the_cost_of_every_model_call_and_the_totals(hub: Path) -> None:
         "Model call failed: the provider answered HTTP 400",
         "Model call: 500 in / 250 out, 0 tool calls",
     ]
-    assert document["totals"]["model_calls"] == {"contractor": 1, "owner": 3}
+    assert document["totals"]["model_calls"] == {"contractor": 1, "owner": 2}
     assert document["totals"]["tokens"] == {
         "contractor": {"input": 500, "output": 250},
         "owner": {"input": 3000, "output": 600},
@@ -491,7 +830,21 @@ def test_the_cost_of_every_model_call_and_the_totals(hub: Path) -> None:
         "owner": 0.00081,
         "total": 0.001035,
     }
-    assert document["totals"]["refusals"] == {"contractor": 0, "owner": 1}
+    assert document["totals"]["refusals"] == {"owner": 1}
+
+
+def test_the_totals_name_the_sides_that_called_and_every_actor_refused(tmp_path: Path) -> None:
+    """A refusal of the hub or of the operator adds no empty side to the costs."""
+    hub = HubFile(tmp_path / "hub.db", project())
+    hub.log(0, "hub", Action.EGRESS, {"host": "h"}, Outcome.REFUSED, Reason.EGRESS)
+    hub.log(1, "operator", Action.CONTRACT_APPROVE, {}, Outcome.REFUSED, Reason.NOT_PENDING)
+    hub.log(1, CONTRACTOR, Action.GATEWAY_CALL, {"prompt_tokens": 10, "completion_tokens": 1})
+    hub.close()
+    totals = replay(tmp_path / "hub.db")["totals"]
+    assert totals["model_calls"] == {"contractor": 1}
+    assert set(totals["tokens"]) == {"contractor"}
+    assert set(totals["cost_usd"]) == {"contractor", "total"}
+    assert totals["refusals"] == {"hub": 1, "operator": 1}
 
 
 def test_the_pricing_comes_from_the_command_line(hub: Path) -> None:
@@ -503,6 +856,11 @@ def test_the_pricing_comes_from_the_command_line(hub: Path) -> None:
         "note": "a price list",
     }
     assert document["totals"]["cost_usd"]["owner"] == 0.018
+
+
+def test_the_price_note_says_where_the_rates_come_from(hub: Path) -> None:
+    assert replay(hub)["pricing"]["note"] == export.DEFAULT_PRICE_NOTE
+    assert replay(hub, input_price=1.0)["pricing"]["note"] == export.GIVEN_PRICE_NOTE
 
 
 def test_the_decisions_and_the_verdicts_are_totalled_in_order(hub: Path) -> None:
@@ -519,7 +877,7 @@ def test_the_decisions_and_the_verdicts_are_totalled_in_order(hub: Path) -> None
     ]
 
 
-# ----------------------------------------------------------------------------- hub-state events
+# ----------------------------------------------------------------------------- the contract
 def test_the_contract_versions_become_events(hub: Path) -> None:
     document = replay(hub)
     event = only(document, "contract.version")
@@ -542,11 +900,30 @@ def test_the_contract_versions_become_events(hub: Path) -> None:
 
 
 def test_the_contract_is_the_one_in_force_at_the_end(hub: Path) -> None:
-    assert replay(hub)["contract"]["version"] == 1
-    assert replay(hub)["contract"]["version_id"] == version_id(1, content_hash(OBJECTS))
-    assert len(replay(hub)["contract"]["objects"]) == len(OBJECTS)
+    contract = replay(hub)["contract"]
+    assert contract["version"] == 1
+    assert contract["version_id"] == version_id(1, content_hash(OBJECTS))
+    assert len(contract["objects"]) == len(OBJECTS)
 
 
+def test_the_contract_at_the_start_is_the_one_before_the_first_event(hub: Path) -> None:
+    """The run imports its contract after its first record: it starts with none."""
+    assert replay(hub)["contract_at_start"] == {"version": None, "version_id": None, "objects": []}
+    later = replay(hub, from_seq=5)
+    assert later["contract_at_start"]["version"] == 1
+    assert later["contract_at_start"] == later["contract"]
+
+
+def test_an_empty_range_has_no_event_and_the_last_contract(hub: Path) -> None:
+    document = replay(hub, from_seq=1000)
+    assert document["events"] == []
+    assert document["totals"] == export.empty_totals()
+    assert document["contract_at_start"]["version"] is None
+    assert document["contract"]["version"] == 1
+    assert document["integrity"]["records"] == 0
+
+
+# ----------------------------------------------------------------------------- flags
 def test_a_delivery_of_a_run_older_than_the_rule_is_flagged_by_the_exporter(hub: Path) -> None:
     event = only(replay(hub), "delivery.flag")
     assert event["category"] == "flag"
@@ -559,14 +936,29 @@ def test_a_delivery_of_a_run_older_than_the_rule_is_flagged_by_the_exporter(hub:
     }
 
 
-def test_a_flag_the_hub_announced_names_the_hub() -> None:
-    body: dict[str, Any] = {
-        "received_at": "2026-03-04T09:00:11.000000Z",
-        "flagged_paths": ["CONTRACT.md"],
-    }
-    event = export.flagged_event("d1", body, ("CONTRACT.md",))
-    assert event is not None
-    assert event.data["by"] == "hub"
+def test_a_flag_of_the_hub_is_its_check_record_and_nothing_more(tmp_path: Path) -> None:
+    """The hub records the flag when it verifies: the exporter adds no second one at the push."""
+    hub = HubFile(tmp_path / "hub.db", project())
+    pushed = hub.log(0, CONTRACTOR, Action.DELIVERY_PUSH, {"delivery_id": "d1", "changed": 1})
+    hub.log(5, "hub", Action.DELIVERY_CHECK, {"delivery": "d1", "flagged": 1})
+    hub.delivery(
+        DeliveryRecord(
+            PROJECT,
+            "d1",
+            "feature",
+            DeliveryState.DECIDED,
+            pushed,
+            changed_paths=("CONTRACT.md",),
+            flagged_paths=("CONTRACT.md",),
+        )
+    )
+    hub.close()
+    document = replay(tmp_path / "hub.db")
+    assert of_type(document, "delivery.flag") == []
+    check = only(document, "delivery.check")
+    assert check["category"] == "flag"
+    assert check["data"] == {"delivery_id": "d1", "flagged": 1}
+    assert check["hub_state"] == {"paths": ["CONTRACT.md"]}
 
 
 def test_a_delivery_that_touches_nothing_protected_is_not_flagged() -> None:
@@ -588,28 +980,6 @@ def test_a_protected_directory_covers_what_is_under_it() -> None:
     assert event.data["paths"] == ["acceptance/test_a.py"]
 
 
-def test_the_delivery_details_are_enriched_from_the_hub_tables(hub: Path) -> None:
-    document = replay(hub)
-    push = only(document, "delivery.push")
-    assert push["data"]["branch"] == "feature"
-    assert push["data"]["changed_paths"] == ["alpha_svc/app.py", "CONTRACT.md"]
-    gate = of_type(document, "gate.decision")[0]
-    assert gate["data"]["outcomes"] == {
-        "test_x.py::test_a": "passed",
-        "test_x.py::test_b": "passed",
-    }
-    assert gate["summary"] == "Gate: CONCERNS for d1 (contract v1)"
-    inspection = only(document, "inspection.record")
-    assert inspection["data"]["observation"] == "stdlib only, checked on [redacted]"
-    assert inspection["category"] == "judgment"
-    review = only(document, "delivery.review")
-    assert review["data"]["reasons"] == "all accepted; the probe came from [redacted]"
-    assert review["data"]["verdict"] == "accept_with_reservations"
-    opened = only(document, "pull_request.open")
-    assert opened["data"]["number"] == 7
-    assert opened["data"]["url"] == "https://example.invalid/alpha-svc/pull/7"
-
-
 # ----------------------------------------------------------------------------- redaction
 def test_private_addresses_are_replaced_and_listed(hub: Path) -> None:
     document = replay(hub)
@@ -620,10 +990,13 @@ def test_private_addresses_are_replaced_and_listed(hub: Path) -> None:
     assert document["run"]["redactions"] == ["private IPv4 addresses"]
 
 
-def test_a_pattern_of_the_command_line_is_replaced_too(hub: Path) -> None:
-    document = replay(hub, redact=("no such path",))
-    assert document["run"]["redactions"] == ["pattern no such path", "private IPv4 addresses"]
+def test_a_pattern_of_the_command_line_is_replaced_and_never_written(hub: Path) -> None:
+    """`run.redactions` names the kind; the pattern itself may be the very name to hide."""
+    pattern = r"no\s+such\s+path"
+    document = replay(hub, redact=(pattern,))
+    assert document["run"]["redactions"] == ["--redact patterns", "private IPv4 addresses"]
     assert only(document, "unknown")["summary"] == "Refused (not_found): [redacted] [redacted]"
+    assert pattern not in export.document_text(document)
 
 
 def test_the_carrier_grade_range_is_private_too() -> None:
@@ -634,6 +1007,60 @@ def test_the_carrier_grade_range_is_private_too() -> None:
     assert redactor.replaced == {"private IPv4 addresses"}
 
 
+def token(prefix: str, length: int = 24) -> str:
+    """A string shaped like a token, built here so that no literal one is in the source."""
+    return prefix + "a" * length
+
+
+def test_a_token_shaped_secret_is_masked_in_every_text(tmp_path: Path) -> None:
+    """The hub masks its log (EXG-49); a transcript, an observation or a contract it never
+    logged goes through the same mask."""
+    path = tmp_path / "hub.db"
+    hub = HubFile(path, project())
+    hub.log(0, OWNER, Action.INSPECTION_RECORD, {"delivery_id": "d1", "object_id": "CTR-01"})
+    hub.version(1, {"EXG-01": {**OBJECTS["EXG-01"], "text": f"key {token('sk-')}"}}, "operator")
+    hub.delivery(
+        DeliveryRecord(
+            PROJECT,
+            "d1",
+            "feature",
+            DeliveryState.PROPOSED,
+            hub.now(),
+            inspections={
+                "CTR-01": {"observation": f"saw {token('ghp_')}", "at": hub.now(), "by": OWNER}
+            },
+        )
+    )
+    hub.close()
+    transcript = write_transcript(
+        tmp_path / "state.db",
+        [("s1", "assistant", f"the key is {token('AKIA', 16).upper()}", unix(0))],
+    )
+    document = replay(path, transcripts=(("owner", transcript),))
+    text = export.document_text(document)
+    for prefix in ("sk-", "ghp_", "AKIA"):
+        assert prefix not in text, prefix
+    assert document["run"]["redactions"] == ["token-shaped secrets"]
+    assert only(document, "inspection.record")["hub_state"] == {"observation": "saw [masked]"}
+
+
+def test_the_keys_of_a_dictionary_are_redacted_and_renamed() -> None:
+    redactor = export.Redactor.of((), (("alpha-svc", "service-1"),))
+    outcomes = {
+        f"test_reach[{address(10, 0, 0, 1)}]": "passed",
+        f"test_reach[{address(10, 0, 0, 2)}]": "failed",
+        "test_alpha-svc_up": "passed",
+    }
+    assert redactor.value({"outcomes": outcomes}) == {
+        "outcomes": {
+            "test_reach[[redacted]]": "passed",
+            "test_reach[[redacted]] (2)": "failed",
+            "test_service-1_up": "passed",
+        }
+    }
+    assert redactor.replaced == {"private IPv4 addresses", "renamed names"}
+
+
 # ----------------------------------------------------------------------------- renaming
 def test_a_name_is_replaced_by_a_neutral_one(hub: Path) -> None:
     document = replay(hub, renames=(("alpha-svc", "service-1"), ("feature", "branch-1")))
@@ -642,7 +1069,8 @@ def test_a_name_is_replaced_by_a_neutral_one(hub: Path) -> None:
     assert "feature" not in text
     assert document["run"]["project"]["name"] == "service-1"
     assert (
-        only(document, "delivery.push")["summary"] == "Contractor pushes d1 on branch-1 (2 paths)"
+        only(document, "delivery.push")["summary"]
+        == "Contractor pushes d1 on branch-1 (2 changed paths)"
     )
     assert only(document, "delivery.push")["data"]["branch"] == "branch-1"
     assert "renamed names" in document["run"]["redactions"]
@@ -654,8 +1082,16 @@ def test_a_rename_is_case_insensitive_and_matches_whole_words() -> None:
     assert redactor.text("Alpha-Svc, ALPHA-SVC and alpha-svc") == (
         "service-1, service-1 and service-1"
     )
-    assert redactor.text("myalpha-svc") == "myalpha-svc"
+    assert redactor.text("myalpha-svc alpha-svc2") == "myalpha-svc alpha-svc2"
     assert redactor.replaced == {"renamed names"}
+
+
+def test_an_underscore_ends_a_name_for_a_rename() -> None:
+    """A test identifier or a variable carries a name between underscores: it is replaced."""
+    redactor = export.Redactor.of((), (("prometheus", "service-1"),))
+    assert redactor.text("test_prometheus_status PROMETHEUS_URL _prometheus") == (
+        "test_service-1_status service-1_URL _service-1"
+    )
 
 
 def test_a_rename_reaches_the_transcript(hub: Path, transcript: Path) -> None:
@@ -766,11 +1202,12 @@ def test_a_range_keeps_only_its_records_and_its_window(hub: Path) -> None:
     assert of_type(document, "delivery.flag") == []
 
 
-def test_a_scripted_run_names_its_attacks_and_a_real_run_has_none(hub: Path) -> None:
+def test_only_a_scripted_run_names_attacks(hub: Path) -> None:
     scripted = replay(hub, kind="scripted", attacks=("ATK-91", "ATK-92"))
     assert scripted["run"]["kind"] == "scripted"
     assert scripted["run"]["attacks"] == ["ATK-91", "ATK-92"]
     assert replay(hub)["run"]["attacks"] == []
+    assert replay(hub, kind="synthetic", attacks=("ATK-91",))["run"]["attacks"] == []
 
 
 def test_the_run_carries_its_title_model_and_stream(hub: Path) -> None:
@@ -780,7 +1217,7 @@ def test_the_run_carries_its_title_model_and_stream(hub: Path) -> None:
     assert run["stream"] == PROJECT
     assert run["project"]["name"] == "alpha-svc"
     assert run["exported_at"] == EXPORTED_AT
-    assert run["exporter"] == "tools.replay.export 1.0.0"
+    assert run["exporter"] == f"tools.replay.export {export.VERSION}"
     assert run["started_at"] == replay(hub)["events"][0]["t"]
 
 
@@ -801,24 +1238,28 @@ def test_the_offsets_start_at_zero_and_never_go_back(hub: Path) -> None:
     assert offsets == sorted(offsets)
 
 
-# ----------------------------------------------------------------------------- the player
+# ----------------------------------------------------------------------------- the player page
 PLAYER = '<html><body><script type="application/json" id="replay-data"></script></body></html>'
+
+
+def embedded(html: str) -> str:
+    start = html.index(">", html.index('id="replay-data"')) + 1
+    return html[start : html.index("</script>", start)]
 
 
 def test_the_player_carries_the_replay_as_json(hub: Path, transcript: Path) -> None:
     document = replay(hub, transcripts=(("owner", transcript),))
     html = export.player_document(PLAYER, export.document_text(document))
-    start = html.index('id="replay-data"')
-    start = html.index(">", start) + 1
-    end = html.index("</script>", start)
-    assert json.loads(html[start:end].replace("<\\/", "</")) == document
+    assert json.loads(embedded(html)) == document
     assert html.count("</script>") == 1
 
 
-def test_the_end_of_a_script_tag_inside_a_message_is_escaped() -> None:
-    html = export.player_document(PLAYER, '{"text": "</script>"}')
-    assert "<\\/script>" in html
-    assert html.count("</script>") == 1
+@pytest.mark.parametrize("text", ["</script>", "<!--", "<script>", "</SCRIPT >", "a < b"])
+def test_no_text_of_the_replay_can_end_or_hide_the_element(text: str) -> None:
+    payload = json.dumps({"text": text})
+    inside = embedded(export.player_document(PLAYER, payload))
+    assert "<" not in inside
+    assert json.loads(inside) == {"text": text}
 
 
 def test_a_template_without_the_element_is_refused() -> None:
@@ -836,6 +1277,12 @@ def test_the_player_template_must_exist(
         )
         == 2
     )
+
+
+def test_the_command_line_writes_the_player_with_the_replay(hub: Path, tmp_path: Path) -> None:
+    page = tmp_path / "player.html"
+    assert export.main(["--db", str(hub), "--project", PROJECT, "--html", str(page)]) == 0
+    assert json.loads(embedded(page.read_text(encoding="utf-8")))["format"] == "zephyros-replay"
 
 
 # ----------------------------------------------------------------------------- the command line
@@ -861,6 +1308,13 @@ def test_the_command_line_prints_to_stdout_by_default(
 def test_an_unknown_project_is_reported(hub: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert export.main(["--db", str(hub), "--project", "p_missing"]) == 2
     assert "p_missing" in capsys.readouterr().err
+
+
+def test_a_database_that_cannot_be_read_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert export.main(["--db", str(tmp_path / "absent.db"), "--project", PROJECT]) == 2
+    assert "cannot read" in capsys.readouterr().err
 
 
 def test_an_unusable_redaction_pattern_is_reported(
@@ -894,27 +1348,36 @@ def test_the_transcript_option_is_parsed(hub: Path) -> None:
 
 
 # ----------------------------------------------------------------------------- the example
-def example_document() -> dict[str, Any]:
-    """The synthetic example the repository ships, next to the exporter."""
-    path = Path(export.__file__).with_name("example.replay.json")
-    document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return document
+def test_the_example_is_what_the_exporter_makes_of_its_run(tmp_path: Path) -> None:
+    """The example is never edited by hand. After a change of the exporter or of its run:
+    `uv run --locked python -m tests.unit.tools.replay_example` writes it again."""
+    assert EXAMPLE.read_text(encoding="utf-8") == example_text(tmp_path)
 
 
-def test_the_example_is_a_replay_document_the_player_accepts() -> None:
-    document = example_document()
-    assert document["format"] == "zephyros-replay"
-    assert document["version"].startswith("1.")
-    assert document["run"]["kind"] == "scripted"
+def test_the_example_says_it_is_synthetic_and_verifies() -> None:
+    document = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    assert document["version"] == export.VERSION
+    assert document["run"]["kind"] == "synthetic"
+    assert document["run"]["attacks"] == []
+    assert document["integrity"]["chain"] == "verified"
     assert [event["id"] for event in document["events"]] == list(range(len(document["events"])))
 
 
-def test_the_example_names_the_objects_of_its_contract_version_in_full() -> None:
-    events = example_document()["events"]
-    version = next(event for event in events if event["type"] == "contract.version")
-    assert version["source"] == "hub-state"
-    objects = version["data"]["objects"]
-    assert objects, "the version must carry its objects, not bare identifiers"
-    assert all(
-        set(item) == {"id", "type", "title", "text", "priority", "verification"} for item in objects
-    )
+# ----------------------------------------------------------------------------- the format page
+FORMAT_PAGE = Path(__file__).parents[3] / "docs" / "replay-format.md"
+
+
+def test_the_format_page_names_the_version_the_exporter_writes() -> None:
+    assert f"Current version: **{export.VERSION}**." in FORMAT_PAGE.read_text(encoding="utf-8")
+
+
+def test_the_format_page_documents_every_option_of_the_command_line() -> None:
+    text = FORMAT_PAGE.read_text(encoding="utf-8")
+    documented = set(re.findall(r"^\| `(--[a-z-]+)", text, re.MULTILINE))
+    options = {
+        option
+        for action in export.build_parser()._actions  # reason: argparse lists them nowhere else
+        for option in action.option_strings
+        if option.startswith("--") and option != "--help"
+    }
+    assert documented == options
