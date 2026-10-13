@@ -91,10 +91,10 @@ def service(
     forge: Any = "default",
     specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
     store: InMemoryDeliveryStore | None = None,
-    events: list[tuple[str, Mapping[str, object]]] | None = None,
+    events: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
-    """A delivery service on a project with a contract; `events`, when given, collects what
-    the service tells the hub."""
+    """A delivery service on a project with a contract; `events` hears what the service tells
+    the hub."""
     clock = FakeClock()
     audit = AuditLog(InMemoryLogStore(), clock)
     projects = ProjectService(InMemoryProjectStore(), clock, new_id=lambda: "p_service1")
@@ -122,7 +122,7 @@ def service(
         audit,
         clock,
         kit="assertions",
-        events=None if events is None else lambda event, payload: events.append((event, payload)),
+        events=events,
     )
     return made, project, audit, store
 
@@ -551,7 +551,9 @@ def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_loc
 def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_changes() -> None:
     """ADR 0020: a reject is the main agent's to act on; a new decision is a transition."""
     events: list[tuple[str, Mapping[str, object]]] = []
-    made, project, _audit, _store = service(events=events)
+    made, project, _audit, _store = service(
+        events=lambda event, payload: events.append((event, payload))
+    )
     with_constraint(made, project)
     ready(made, project)
     delivery = delivered(made, project)
@@ -743,13 +745,18 @@ def test_an_inspection_recorded_while_the_pull_request_opens_is_kept_posted_and_
     meanwhile must survive the worker's next write, and reach the pull request once it exists:
     its comment, and the title of the decision it leads to."""
     forge = busy_forge()
-    made, project, _audit, _store = service(forge=forge)
+    told: list[Mapping[str, object]] = []
+    made, project, _audit, _store = service(
+        forge=forge,
+        events=lambda event, payload: told.append(payload) if event == "delivery.decided" else None,
+    )
     with_constraint(made, project)
     ready(made, project)
     forge.meanwhile = lambda: made.record_inspection(
         "operator", project, "d1", "CTR-01", Inspected.CONFORMS, "stdlib only"
     )
     delivery = delivered(made, project)
+    assert told[-1]["decision"] == "PASS"  # the last decision the main agent hears of is in force
     record = made.status(project, delivery)
     assert record.inspections["CTR-01"]["verdict"] == "conforms"
     assert (record.state, record.decision, record.pull_number) == (
@@ -865,10 +872,35 @@ def test_the_main_agent_hears_once_of_what_became_of_a_delivery(
 ) -> None:
     """T03: a refusal and an error are told like a decision of the gate, once each."""
     events: list[tuple[str, Mapping[str, object]]] = []
-    made, project, _audit, _store = service(runner=runner, events=events)
+    made, project, _audit, _store = service(
+        runner=runner, events=lambda event, payload: events.append((event, payload))
+    )
     ready(made, project)
     delivery = delivered(made, project, files)
     told = [payload for event, payload in events if event == "delivery.decided"]
     assert told == [
         {"project_id": project, "delivery_id": delivery, "branch": "work", "decision": decision}
     ]
+
+
+def test_a_receiver_that_fails_keeps_neither_the_decision_nor_the_pull_request_back() -> None:
+    """The worker tells of a decision once the forge has answered: a notification that fails
+    leaves the record decided, and its pull request open."""
+
+    def unreachable(event: str, payload: Mapping[str, object]) -> None:
+        if event == "delivery.decided":
+            raise ConnectionError("the receiver is down")
+
+    forge = calc_forge()
+    made, project, _audit, _store = service(forge=forge, events=unreachable)
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "w")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(ConnectionError):
+        made.step()  # the worker's loop reports it and goes on
+    record = made.status(project, pushed.delivery_id)
+    assert (record.state, record.decision, record.pull_number) == (
+        DeliveryState.PROPOSED,
+        "PASS",
+        1,
+    )

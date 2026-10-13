@@ -16,7 +16,7 @@ delivery says about itself.
    verified; CONCERNS when the rules are met only with them, or when there are reservations;
    PASS otherwise. WAIVED is never computed.
 4. A rule with nothing to count is met, but a decision is never PASS for want of anything to
-   judge (T10): a contract with no requirement or constraint, or a delivery where no acceptance
+   judge: a contract with no requirement or constraint, or a delivery where no acceptance
    test passed, holds a reservation that says so, and is CONCERNS at best.
 """
 
@@ -173,7 +173,7 @@ NOTHING_PASSED = "no acceptance test passed"
 
 
 def _vacuous(judged: tuple[Judged, ...]) -> tuple[str, ...]:
-    """What keeps a decision from PASS for want of evidence (T10): nothing to judge, or no
+    """What keeps a decision from PASS for want of evidence: nothing to judge, or no
     acceptance test of the judged objects that passed. Failed or broken tests say so apart
     from tests that did not run, so that running a failing test never improves a decision."""
     if not judged:

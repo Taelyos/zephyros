@@ -66,9 +66,9 @@ ACCEPTANCE_PATH = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$")
 LOGGED_PATHS = 20
 """The most paths a record of the log names: each is short, and a record stays small."""
 WRITE_ATTEMPTS = 10
-"""How many times a change is applied again to a record that others keep writing (T05)."""
+"""How many times a change is applied again to a record that others keep writing."""
 REFUSED = "REFUSED"
-"""What `delivery.decided` tells of a delivery the checks refused before any run (T03)."""
+"""What `delivery.decided` tells of a delivery the checks refused before any run."""
 ERROR = "ERROR"
 """What `delivery.decided` tells of a delivery whose verification could not run to an end."""
 
@@ -108,7 +108,7 @@ class DeliveryRecord:
     gate_report: str | None = None
     """The evidence report as the gate wrote it, once and for all."""
     contractor_gate_report: str | None = None
-    """The same, without the output of the run: what the Contractor reads (T07)."""
+    """The same, without the output of the run: what the Contractor reads."""
     pull_request: str | None = None
     detail: str | None = None
     pull_number: int | None = None
@@ -123,10 +123,11 @@ class DeliveryRecord:
     """The protected paths the delivery changes: flagged, never refused (ADR 0020)."""
     revision: int = 0
     """How many times the record was written. A write made from an older read is refused, so
-    that no update is lost (T05)."""
+    that no update is lost."""
     addendum: str | None = None
     """The inspections recorded after the gate and the decision now, written whole at each
-    inspection, apart from the report of the gate (T11)."""
+    inspection, apart from the report of the gate (ATK-23: nothing is looked for in a text the
+    delivery partly chose)."""
 
     @property
     def report(self) -> str | None:
@@ -139,7 +140,7 @@ class DeliveryRecord:
     @property
     def contractor_report(self) -> str | None:
         """The evidence report now as the Contractor reads it: the outcome of each test, never
-        the output of the run (T07). None for a record kept before there was one."""
+        the output of the run. None for a record kept before there was one."""
         if self.contractor_gate_report is None:
             return None
         return with_addendum(self.contractor_gate_report, self.addendum)
@@ -152,7 +153,7 @@ FULL_REPORT_READERS = frozenset(
 
 
 def report_for(record: DeliveryRecord, principal: Principal) -> str | None:
-    """The evidence report of `record` that `principal` may read (T07): whole for the Owner
+    """The evidence report of `record` that `principal` may read: whole for the Owner
     side, the operator and the main agent; without the output of the run for anyone else, the
     Contractor first, since that output shows the Owner side's acceptance tests. Wherever a
     report is shown to a caller (`delivery.status`), it is this one."""
@@ -398,8 +399,6 @@ class DeliveryService:
             contract_version=updated.contract_version,
             after="inspection",
         )
-        if updated.decision != before.decision:
-            self._tell_decision(updated, str(updated.decision))
         self._post_later(
             updated,
             "comment",
@@ -411,6 +410,7 @@ class DeliveryService:
         )
         if updated.decision != before.decision:
             self._post_later(updated, "retitle")
+            self._tell_decision(updated, str(updated.decision))
         return updated
 
     def record_review(
@@ -428,6 +428,13 @@ class DeliveryService:
         _before, updated = self._update(
             project_id, delivery_id, lambda current: replace(current, review=review)
         )
+        self._post_later(
+            updated,
+            "comment",
+            f"**Review of the Owner side** ({by}): **{verdict.value.replace('_', ' ')}**, "
+            f"on a gate decision {updated.decision}.\n\n{reasons}\n\n"
+            "The merge stays a human decision.",
+        )
         self._events(
             "delivery.reviewed",
             {
@@ -438,13 +445,6 @@ class DeliveryService:
                 "verdict": verdict.value,
                 "reasons": mask(reasons, self._secrets()),
             },
-        )
-        self._post_later(
-            updated,
-            "comment",
-            f"**Review of the Owner side** ({by}): **{verdict.value.replace('_', ' ')}**, "
-            f"on a gate decision {updated.decision}.\n\n{reasons}\n\n"
-            "The merge stays a human decision.",
         )
         return updated
 
@@ -460,7 +460,7 @@ class DeliveryService:
     def _post_later(self, record: DeliveryRecord, kind: str, body: str = "") -> None:
         """Ask the worker to comment on the pull request of the delivery, or to bring its title
         to the decision: a forge call never runs on a request. The job looks for the pull
-        request when it runs, so one the worker was opening meanwhile gets it too (T05)."""
+        request when it runs, so one the worker was opening meanwhile gets it too."""
         if self._forge is not None:
             self._enqueue(_Job(kind, record.project_id, record.delivery_id, body))
 
@@ -509,7 +509,7 @@ class DeliveryService:
     ) -> tuple[DeliveryRecord, DeliveryRecord]:
         """Apply `change` to the record as it is stored now, and write the result. When another
         writer got there first, read the record again and apply `change` again: no update is
-        lost (T05). A change that returns the record it was given writes nothing. Returns the
+        lost. A change that returns the record it was given writes nothing. Returns the
         record before and after the change."""
         for _attempt in range(WRITE_ATTEMPTS):
             before = self._record(project_id, delivery_id)
@@ -592,7 +592,7 @@ class DeliveryService:
     def _do_verify(self, project_id: str, delivery_id: str) -> None:
         record = self._record(project_id, delivery_id)
         try:
-            verified = self._verify(record)
+            checked, delivery = self._verify(record)
         except Exception as error:  # reason: a job must not stop the worker
             detail = (
                 str(error)
@@ -617,15 +617,17 @@ class DeliveryService:
             if after is not before:
                 self._tell_decision(after, ERROR)
             return
-        if verified is None:
+        if checked.state is DeliveryState.REFUSED:
+            self._tell_decision(checked, REFUSED)
             return
-        decided, delivery = verified
-        # The main agent hears of the decision before the forge is called: an inspection
-        # recorded while the pull request opens tells of the decision it leads to after this.
-        self._tell_decision(decided, str(decided.decision))
-        if decided.decision != Decision.FAIL.value:
-            self._propose(decided, delivery)
-        if decided.decision == Decision.FAIL.value and self._rejections_alert is not None:
+        if checked.decision != Decision.FAIL.value:
+            self._propose(checked, delivery)
+        # Told once the forge has answered, so that a receiver that fails cannot keep the pull
+        # request from opening; and told as it stands now, an inspection recorded meanwhile
+        # included, so that the last decision the main agent hears of is the one in force.
+        now = self._record(project_id, delivery_id)
+        self._tell_decision(now, str(now.decision))
+        if checked.decision == Decision.FAIL.value and self._rejections_alert is not None:
             # EXG-23: the loop the Owner and the Contractor may fall into — a streak of
             # refused deliveries that a pass breaks. Counted per project, not per branch:
             # the areas take one delivery per branch, so a branch cannot refuse twice.
@@ -639,14 +641,14 @@ class DeliveryService:
                     "delivery.loop",
                     {
                         "project_id": project_id,
-                        "branch": decided.branch,
+                        "branch": checked.branch,
                         "rejections": streak,
                     },
                 )
 
-    def _verify(self, record: DeliveryRecord) -> tuple[DeliveryRecord, Delivery] | None:
-        """Check, run and decide a declared delivery. Returns the record as decided, or None
-        when the checks refused the delivery."""
+    def _verify(self, record: DeliveryRecord) -> tuple[DeliveryRecord, Delivery]:
+        """Check, run and decide a declared delivery. Returns the record as the checks left it
+        (refused) or as the gate decided it, and the delivery."""
         project_id = record.project_id
         delivery = self._area.get(project_id, record.delivery_id)
         version = self._contracts.read(OPERATOR, project_id)
@@ -657,7 +659,7 @@ class DeliveryService:
         acceptance = self._store.acceptance(project_id)
         # Every file a criterion the gate runs names, and every file the Owner side put, belongs
         # to the Owner side: the tree that is verified never holds the delivery's version of one
-        # (T02). A delivery that changes one the hub or the base holds is refused. One that
+        # (ATK-16). A delivery that changes one the hub or the base holds is refused. One that
         # neither holds is missing: whatever the delivery put there is set aside, so its tests
         # cannot pass, and the report says so.
         protected = named_files | set(acceptance)
@@ -679,8 +681,7 @@ class DeliveryService:
                 paths=touched[:LOGGED_PATHS],
                 count=len(touched),
             )
-            self._tell_decision(refused, REFUSED)
-            return None
+            return refused, delivery
         files = dict(self._area.tree(project_id, delivery.delivery_id).files)
         set_aside = tuple(path for path in missing if path in files)
         for path in protected:
@@ -814,7 +815,7 @@ class DeliveryService:
             )
             return
         # Written on the record as it is now: an inspection or a verdict recorded while the
-        # forge worked stays (T05).
+        # forge worked stays.
         self._update(
             record.project_id,
             record.delivery_id,
@@ -836,7 +837,7 @@ class DeliveryService:
     def _tell_decision(self, record: DeliveryRecord, decision: str) -> None:
         """Tell the main agent what became of a delivery (`delivery.decided`): the decision of
         the gate, PASS, CONCERNS or FAIL; REFUSED when the checks refused it before any run, and
-        ERROR when its verification could not run to an end (T03)."""
+        ERROR when its verification could not run to an end."""
         self._events(
             "delivery.decided",
             {

@@ -56,7 +56,7 @@ def _record_body(record: DeliveryRecord) -> str:
 
 
 def _revision(body: dict[str, object]) -> int:
-    """The revision of a stored record. One written before revisions existed (T05) was
+    """The revision of a stored record. One written before records had a revision was
     written once at least."""
     revision = body.get("revision", 1)
     return revision if isinstance(revision, int) else 1
@@ -73,11 +73,11 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         changed_paths=tuple(body["changed_paths"]),
         decision=body["decision"],
         outcomes=body["outcomes"],
-        # Before T11 the report was kept whole, its addendum inside: it reads as the report of
+        # A record kept before had its report whole, the addendum inside: it reads as the report of
         # the gate, and a new inspection writes its addendum after it.
         gate_report=body["gate_report"] if "gate_report" in body else body.get("report"),
         addendum=body.get("addendum"),
-        # Before T07 there was no report for the Contractor: it reads none of those.
+        # A record kept before has no report for the Contractor: it gets none.
         contractor_gate_report=body.get("contractor_gate_report"),
         pull_request=body["pull_request"],
         detail=body["detail"],

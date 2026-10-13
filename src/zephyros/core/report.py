@@ -50,7 +50,7 @@ class ReportInput:
     unnamed_acceptance_files: tuple[str, ...] = ()
     """The acceptance test files of the Owner side that no criterion names: they never run."""
     missing_acceptance_files: tuple[str, ...] = ()
-    """The files a criterion names that neither the Owner side nor the base holds (T02)."""
+    """The files a criterion names that neither the Owner side nor the base holds (ATK-16)."""
     set_aside_paths: tuple[str, ...] = ()
     """Those of the missing files the delivery brought: its versions were set aside, unrun."""
 
@@ -80,7 +80,7 @@ def _plain(text: str) -> str:
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
     """The evidence report. Without the output of the run (`with_output` false), it is the
     report the Contractor reads: the output shows the Owner side's acceptance tests, the outcome
-    of each test does not (T07)."""
+    of each test does not."""
     gate = report.gate
     delivery = report.delivery
     lines = [
@@ -206,7 +206,7 @@ def inspection_addendum(
     """The addendum of a report: every inspection recorded after the gate, and the decision they
     lead to (ADR 0020). It is kept apart from the report the gate wrote and written whole at each
     inspection: nothing is ever looked for in the report, whose text the delivery partly chose
-    (T11)."""
+    (ATK-23)."""
     lines = [
         INSPECTIONS_HEADING,
         "",
