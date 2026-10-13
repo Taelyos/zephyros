@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
@@ -66,15 +67,23 @@ class RefusingForge(InMemoryForge):
         raise ForgeError("the forge is read-only today")
 
 
+ADD_ONLY = ((1, "P0", ("test",), ("checks/add.txt::test_add",)),)
+"""EXG-01 (P0), verified by checks/add.txt::test_add, which the base holds."""
+ADD_AND_SUB = (*ADD_ONLY, (2, "P1", ("test",), ("checks/sub.txt::test_sub",)))
+"""And EXG-02 (P1), verified by checks/sub.txt::test_sub, which nobody holds yet."""
+
+
 def service(
-    runner: Any = None, forge: Any = "default"
+    runner: Any = None,
+    forge: Any = "default",
+    specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     clock = FakeClock()
     audit = AuditLog(InMemoryLogStore(), clock)
     projects = ProjectService(InMemoryProjectStore(), clock, new_id=lambda: "p_service1")
     contracts = ContractService(InMemoryContractStore(), clock, new_change_id=lambda: "c_00000001")
     project = projects.create(OPERATOR, {"name": "Calc"}).id
-    objects = contract((1, "P0", ("test",), ("checks/add.txt::test_add",)))
+    objects = contract(*specs)
     change = parse_change(
         {"summary": "s", "operations": [{"op": "put", "object": o} for o in objects.values()]}
     )
@@ -632,3 +641,52 @@ def test_an_inspection_that_does_not_change_the_decision_does_not_retitle() -> N
     assert _title_of(forge, 1) == retitled
     retitles = [r for r in audit.read(project, 0, 1000) if r.action is Action.PULL_REQUEST_RETITLE]
     assert len(retitles) == 1
+
+
+# ----------------------------------------------------------------------------- T02, ATK-16
+def checks_logged(audit: AuditLog, project: str, outcome: Outcome) -> list[dict[str, Any]]:
+    return [
+        json.loads(r.parameters)
+        for r in audit.read(project, 0, 1000)
+        if r.action is Action.DELIVERY_CHECK and r.outcome is outcome
+    ]
+
+
+def test_a_named_test_file_nobody_holds_does_not_run_and_the_report_tells_the_owner() -> None:
+    """T02: a criterion names checks/sub.txt, the Owner side never put it and the delivery does
+    not bring it: its test cannot run, and the report says which file is missing."""
+    made, project, audit, _store = service(specs=ADD_AND_SUB)
+    ready(made, project)
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {
+        "checks/add.txt::test_add": "passed",
+        "checks/sub.txt::test_sub": "not_run",
+    }
+    assert record.decision == "FAIL"
+    assert record.report is not None
+    assert "- `checks/sub.txt`" in record.report.splitlines()  # not set aside: never delivered
+    [check] = checks_logged(audit, project, Outcome.OK)
+    assert (check["missing"], check["set_aside"], check["flagged"]) == (["checks/sub.txt"], [], 0)
+
+
+def test_a_named_test_file_the_base_holds_runs_in_the_version_of_the_base() -> None:
+    """The delivery leaves checks/add.txt alone; the tree verified holds the base's copy, and
+    nothing is flagged or logged as missing."""
+    made, project, audit, _store = service()
+    ready(made, project)
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {"checks/add.txt::test_add": "passed"}
+    assert checks_logged(audit, project, Outcome.OK) == []
+
+
+def test_a_refusal_names_twenty_paths_at_most_and_counts_them_all() -> None:
+    """ATK-16: the refusal names the paths the delivery touched. A record of the log holds 4 KiB
+    of parameters: thirty long paths would turn it into a bare "truncated" mark."""
+    made, project, audit, _store = service()
+    ready(made, project)
+    paths = [f"checks/{'x' * 130}{n:02d}.txt" for n in range(30)]
+    for path in paths:
+        made.put_acceptance(project, path, "test_x: pass\n")
+    delivered(made, project, {**BASE, **dict.fromkeys(paths, b"test_x: pass\n")})
+    [refusal] = checks_logged(audit, project, Outcome.REFUSED)
+    assert (refusal["paths"], refusal["count"]) == (sorted(paths)[:20], 30)

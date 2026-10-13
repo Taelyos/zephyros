@@ -105,11 +105,43 @@ def test_an_acceptance_file_that_no_criterion_names_is_flagged() -> None:
     assert "## Flags\n\nNone." in render(make())  # nothing unnamed, nothing flagged
 
 
-def test_both_kinds_of_flags_read_together() -> None:
+def test_a_named_file_nobody_holds_is_flagged_and_says_when_the_delivery_brought_it() -> None:
+    """T02: the delivered version of a file a criterion names is never run; the Owner side
+    learns which files it still has to put."""
     rendered = render(
-        make(flagged_paths=("CONTRACT.md",), unnamed_acceptance_files=("tests/extra.py",))
+        make(
+            missing_acceptance_files=("tests/a.py", "tests/b.py"),
+            set_aside_paths=("tests/b.py",),
+        )
+    ).splitlines()
+    assert (
+        "Acceptance test files that a criterion names and neither the Owner side nor the base "
+        "holds (their tests cannot pass):"
+    ) in rendered
+    assert "- `tests/a.py`" in rendered
+    assert "- `tests/b.py` (the delivered version was set aside)" in rendered
+
+
+def test_every_kind_of_flag_reads_together() -> None:
+    rendered = render(
+        make(
+            flagged_paths=("CONTRACT.md",),
+            unnamed_acceptance_files=("tests/extra.py",),
+            missing_acceptance_files=("tests/gone.py",),
+        )
     )
-    assert "The delivery changes the client's own files" in rendered
-    assert "- `CONTRACT.md`" in rendered
-    assert "Acceptance test files that no criterion names (they never run):" in rendered
-    assert "- `tests/extra.py`" in rendered
+    flags = rendered.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
+    assert flags == (
+        "The delivery changes the client's own files: the Owner side reviews these changes.\n"
+        "\n"
+        "- `CONTRACT.md`\n"
+        "\n"
+        "Acceptance test files that no criterion names (they never run):\n"
+        "\n"
+        "- `tests/extra.py`\n"
+        "\n"
+        "Acceptance test files that a criterion names and neither the Owner side nor the base "
+        "holds (their tests cannot pass):\n"
+        "\n"
+        "- `tests/gone.py`"
+    )

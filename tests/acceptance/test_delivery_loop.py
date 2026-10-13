@@ -189,7 +189,6 @@ def test_the_owner_side_sees_the_decision_and_the_contractor_sees_its_own(world:
 
 
 # ----------------------------------------------------------------------------- ATK-16, ATK-20
-@pytest.mark.xfail(strict=True, reason="T02: the attack works until the fix")
 @pytest.mark.parametrize(
     ("change", "what", "path"),
     [
@@ -222,7 +221,6 @@ def test_atk_16_20_a_delivery_that_touches_an_acceptance_test_is_refused_before_
     assert Action.VERIFICATION_RUN not in [r.action for r in world.records(world.project_a)]
 
 
-@pytest.mark.xfail(strict=True, reason="T02: the attack works until the fix")
 def test_atk_16_a_named_test_the_hub_does_not_hold_is_never_taken_from_the_delivery(
     world: World,
 ) -> None:

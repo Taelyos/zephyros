@@ -6,10 +6,10 @@ The steps of annex "Delivery steps", at the light process level:
 2. The Owner side puts its acceptance tests (`put_acceptance`); the Contractor never writes them.
 3. The Contractor pushes a branch (`push`) and declares it (`declare`).
 4. The worker verifies a declared delivery: it refuses one that touches an acceptance test, builds
-   the tree to verify (the delivery, with every acceptance test overlaid from the hub), runs the
-   kit of the project in the verification runner, computes the gate, writes the evidence report,
-   and for an accepted delivery pushes the branch to the forge and opens a pull request with the
-   report.
+   the tree to verify (the delivery, with every acceptance test overlaid from the hub or the base,
+   and taken out where neither holds it), runs the kit of the project in the verification runner,
+   computes the gate, writes the evidence report, and for an accepted delivery pushes the branch
+   to the forge and opens a pull request with the report.
 
 Nothing here waits on the thread of a caller: preparing and verifying are jobs, done one after the
 other by `step`, which an adapter calls on a thread of its own (like the instance manager).
@@ -56,6 +56,8 @@ from zephyros.core.report import Cost, ReportInput, mask, render, with_inspectio
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
 ACCEPTANCE_PATH = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$")
+LOGGED_PATHS = 20
+"""The most paths a record of the log names: each is short, and a record stays small."""
 
 
 class DeliveryState(StrEnum):
@@ -556,10 +558,17 @@ class DeliveryService:
         version = self._contracts.read(OPERATOR, project_id)
         objects = version.objects
         tests = every_acceptance_test(objects)
+        named_files = {test.partition("::")[0] for test in tests}
         base_files = dict(self._area.tree(project_id, "base").files)
         acceptance = self._store.acceptance(project_id)
-        protected = {t.partition("::")[0] for t in tests} & set(base_files) | set(acceptance)
-        touched = sorted(set(delivery.changed_paths) & protected)
+        # Every file a criterion the gate runs names, and every file the Owner side put, belongs
+        # to the Owner side: the tree that is verified never holds the delivery's version of one
+        # (T02). A delivery that changes one the hub or the base holds is refused. One that
+        # neither holds is missing: whatever the delivery put there is set aside, so its tests
+        # cannot pass, and the report says so.
+        protected = named_files | set(acceptance)
+        missing = tuple(sorted(protected - set(acceptance) - set(base_files)))
+        touched = sorted(set(delivery.changed_paths) & (protected - set(missing)))
         if touched:
             detail = "the delivery changes acceptance tests: " + ", ".join(touched[:10])
             self._store.put_record(replace(record, state=DeliveryState.REFUSED, detail=detail))
@@ -569,31 +578,35 @@ class DeliveryService:
                 Outcome.REFUSED,
                 Reason.PROTECTED_PATH,
                 delivery=record.delivery_id,
-                paths=len(touched),
+                paths=touched[:LOGGED_PATHS],
+                count=len(touched),
             )
             return
+        files = dict(self._area.tree(project_id, delivery.delivery_id).files)
+        set_aside = tuple(path for path in missing if path in files)
+        for path in protected:
+            if path in acceptance:
+                files[path] = acceptance[path]
+            elif path in base_files:
+                files[path] = base_files[path]
+            else:
+                files.pop(path, None)
         flagged = flagged_paths(delivery.changed_paths, self._protected_paths)
-        if flagged:
+        if flagged or missing:
             self._record_event(
                 project_id,
                 Action.DELIVERY_CHECK,
                 Outcome.OK,
                 delivery=record.delivery_id,
                 flagged=len(flagged),
+                missing=list(missing[:LOGGED_PATHS]),
+                set_aside=list(set_aside[:LOGGED_PATHS]),
             )
-        files = dict(self._area.tree(project_id, delivery.delivery_id).files)
-        for path in protected:
-            if path in acceptance:
-                files[path] = acceptance[path]
-            elif path in base_files:
-                files[path] = base_files[path]
         # Which version of each acceptance test ran: the Owner side may put a new one later.
         ran = tuple(
-            (path, hashlib.sha256(acceptance[path]).hexdigest()[:12])
-            for path in sorted(protected & set(acceptance))
+            (path, hashlib.sha256(acceptance[path]).hexdigest()[:12]) for path in sorted(acceptance)
         )
         # An acceptance test of the Owner side that no criterion names never runs: say so.
-        named_files = {test.partition("::")[0] for test in tests}
         unnamed = tuple(sorted(path for path in acceptance if path not in named_files))
         outcomes: dict[str, Any] = {}
         log = ""
@@ -639,6 +652,8 @@ class DeliveryService:
                 flagged_paths=flagged,
                 acceptance_files=ran,
                 unnamed_acceptance_files=unnamed,
+                missing_acceptance_files=missing,
+                set_aside_paths=set_aside,
             ),
             secrets=self._secrets(),
         )

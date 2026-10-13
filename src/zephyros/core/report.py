@@ -49,6 +49,10 @@ class ReportInput:
     """The acceptance tests of the Owner side the run used, with the digest of their content."""
     unnamed_acceptance_files: tuple[str, ...] = ()
     """The acceptance test files of the Owner side that no criterion names: they never run."""
+    missing_acceptance_files: tuple[str, ...] = ()
+    """The files a criterion names that neither the Owner side nor the base holds (T02)."""
+    set_aside_paths: tuple[str, ...] = ()
+    """Those of the missing files the delivery brought: its versions were set aside, unrun."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -136,24 +140,34 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
     excerpt = report.log[-LOG_EXCERPT:]
     lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
     lines += ["## Flags", ""]
-    if not report.flagged_paths and not report.unnamed_acceptance_files:
+    flags = [
+        (
+            "The delivery changes the client's own files: the Owner side reviews these changes.",
+            [_code(path) for path in report.flagged_paths],
+        ),
+        (
+            "Acceptance test files that no criterion names (they never run):",
+            [_code(path) for path in report.unnamed_acceptance_files],
+        ),
+        (
+            "Acceptance test files that a criterion names and neither the Owner side nor the "
+            "base holds (their tests cannot pass):",
+            [
+                _code(path)
+                + (
+                    " (the delivered version was set aside)"
+                    if path in report.set_aside_paths
+                    else ""
+                )
+                for path in report.missing_acceptance_files
+            ],
+        ),
+    ]
+    shown = [(intro, items) for intro, items in flags if items]
+    for number, (intro, items) in enumerate(shown):
+        lines += ([""] if number else []) + [intro, ""] + [f"- {item}" for item in items]
+    if not shown:
         lines += ["None."]
-    else:
-        if report.flagged_paths:
-            lines += [
-                "The delivery changes the client's own files: the Owner side reviews these "
-                "changes.",
-                "",
-            ]
-            lines += [f"- {_code(path)}" for path in report.flagged_paths]
-        if report.unnamed_acceptance_files:
-            if report.flagged_paths:
-                lines += [""]
-            lines += [
-                "Acceptance test files that no criterion names (they never run):",
-                "",
-            ]
-            lines += [f"- {_code(path)}" for path in report.unnamed_acceptance_files]
     lines += [
         "",
         "## Automated delivery checks",
