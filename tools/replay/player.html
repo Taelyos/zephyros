@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,13 +9,9 @@
   --bg:#0a0e15; --panel:#111927; --panel2:#0d1420; --line:#1e2a3c; --line2:#2c3b52;
   --fg:#e8eef7; --muted:#93a4ba; --dim:#5e7189; --white:#ffffff;
   --green:#34d399; --amber:#fbbf24; --red:#f87171; --blue:#60a5fa; --purple:#a78bfa;
-  --cyan:#22d3ee; --pink:#f472b6;
+  --cyan:#22d3ee; --pink:#f472b6; --orange:#fb923c;
   --owner:#60a5fa; --contractor:#34d399;
   --base:15px;
-}
-html[data-theme="light"]{
-  --bg:#eef2f7; --panel:#ffffff; --panel2:#f4f7fb; --line:#d8e0ea; --line2:#c2cddb;
-  --fg:#101826; --muted:#4a5b73; --dim:#8496ad;
 }
 *{box-sizing:border-box}
 [hidden]{display:none !important}
@@ -42,7 +38,6 @@ h2 .chip{
   display:flex; align-items:center; gap:14px; padding:7px 14px;
   background:linear-gradient(180deg,#131d2c,#0f1724); border-bottom:1px solid var(--line);
 }
-html[data-theme="light"] #topbar{background:linear-gradient(180deg,#ffffff,#eef2f7)}
 .brand{display:flex; align-items:center; gap:8px; flex:0 0 auto}
 .logo{
   width:26px; height:26px; border-radius:7px; display:grid; place-items:center; font-weight:800; font-size:15px;
@@ -63,6 +58,11 @@ html[data-theme="light"] #topbar{background:linear-gradient(180deg,#ffffff,#eef2
   color:#f6f0ff; background:repeating-linear-gradient(45deg,#6d28d9 0 9px,#7c3aed 9px 18px);
   border-color:#a78bfa; text-shadow:0 1px 2px rgba(0,0,0,.5);
 }
+.badge.kind.synthetic{
+  color:#e2e8f0; background:repeating-linear-gradient(45deg,#334155 0 9px,#3f4f66 9px 18px);
+  border-color:#94a3b8; text-shadow:0 1px 2px rgba(0,0,0,.5);
+}
+.badge.kind.unknown{color:var(--fg); background:var(--panel2); border-color:var(--line2)}
 .badge.attacks{color:#e9d5ff; background:rgba(124,58,237,.18); border-color:#7c3aed}
 .badge.integrity.ok{color:#04160f; background:var(--green)}
 .badge.integrity.bad{color:#fff; background:var(--red)}
@@ -103,6 +103,8 @@ html[data-theme="light"] #topbar{background:linear-gradient(180deg,#ffffff,#eef2
 .mk.ok{color:#04160f; background:var(--green)}
 .mk.bad{color:#fff; background:var(--red)}
 .citem.active{background:#172a41; border-color:var(--blue); box-shadow:0 0 0 1px var(--blue), 0 0 16px rgba(96,165,250,.28); transform:translateX(2px)}
+.citem.changed{animation:changed 2.4s ease-out}
+@keyframes changed{0%{background:rgba(167,139,250,.35); border-color:var(--purple)}100%{background:var(--panel2)}}
 .citem.ok{border-left-color:var(--green)}
 .citem.bad{border-left-color:var(--red)}
 details.stories{margin-top:12px; border-top:1px dashed var(--line); padding-top:8px}
@@ -135,6 +137,7 @@ details.stories[open]>summary{margin-bottom:8px}
 .counters{display:flex; gap:14px; padding:6px 11px; font-size:12.5px; color:var(--muted); border-bottom:1px solid var(--line)}
 .counters b{color:var(--fg); font-weight:700}
 .counters .ref{color:var(--red)}
+.counters .err{color:var(--orange)}
 .bubbles{flex:1 1 auto; overflow:auto; padding:9px; display:flex; flex-direction:column; gap:7px; min-height:0}
 .bubble{
   background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:7px 10px;
@@ -146,6 +149,8 @@ details.stories[open]>summary{margin-bottom:8px}
 .bubble .btag{display:block; font-size:10px; text-transform:uppercase; letter-spacing:.09em; color:var(--dim); margin-bottom:2px}
 .bubble.refused{border-color:var(--red); background:rgba(248,113,113,.08)}
 .bubble.refused .btag{color:var(--red)}
+.bubble.error{border-color:var(--orange); background:rgba(251,146,60,.08)}
+.bubble.error .btag{color:var(--orange)}
 .bubbles .empty{color:var(--dim); font-size:12.5px; font-style:italic; padding:2px 4px}
 
 /* ---------------- gate column ---------------- */
@@ -159,6 +164,7 @@ details.stories[open]>summary{margin-bottom:8px}
 }
 .gate-big.pass{color:#04160f; background:linear-gradient(180deg,#4ade80,#22c55e); border-color:#4ade80; box-shadow:0 0 22px rgba(52,211,153,.35)}
 .gate-big.concerns{color:#2a1a02; background:linear-gradient(180deg,#fbbf24,#f59e0b); border-color:#fbbf24; box-shadow:0 0 22px rgba(251,191,36,.3)}
+.gate-big.refused{color:var(--red); background:var(--panel2); border-color:var(--red)}
 .gate-big.fail{color:#fff; background:linear-gradient(180deg,#f87171,#dc2626); border-color:#f87171; box-shadow:0 0 22px rgba(248,113,113,.35)}
 .gate-tests{text-align:center; font-size:11.5px; color:var(--muted); margin-top:4px}
 .ghist{margin-top:6px; display:flex; flex-direction:column; gap:4px; max-height:40px; overflow:auto}
@@ -169,6 +175,7 @@ details.stories[open]>summary{margin-bottom:8px}
 .mini.PASS{color:#04160f; background:var(--green)}
 .mini.CONCERNS{color:#2a1a02; background:var(--amber)}
 .mini.FAIL{color:#fff; background:var(--red)}
+.mini.REFUSED{color:var(--red); border:1px solid var(--red)}
 .verdict{font-size:14px; font-weight:700; border-radius:8px; padding:5px 9px; border:1px solid var(--line2); color:var(--muted); background:var(--panel2)}
 .verdict.accept{color:#04160f; background:var(--green); border-color:var(--green)}
 .verdict.accept_with_reservations{color:#2a1a02; background:var(--amber); border-color:var(--amber)}
@@ -214,6 +221,7 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
 .tick.cat-contract{background:var(--purple)}
 .tick.cat-delivery{background:var(--green)}
 .tick.cat-model{background:#7c8aa0}
+.tick.out-error{background:var(--orange); opacity:1}
 #head{position:absolute; top:1px; width:3px; height:20px; background:var(--white); border-radius:2px; box-shadow:0 0 9px var(--white); transform:translateX(-1.5px)}
 #clock{font-size:12px; color:var(--muted); white-space:nowrap; min-width:126px; text-align:right}
 
@@ -224,16 +232,19 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
 .frow .fa{font-size:11.5px; color:var(--muted); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .frow .fs{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--fg)}
 .frow .fs.refused{color:var(--red)}
+.frow .fs.error{color:var(--orange)}
 .ficon{display:inline-grid; place-items:center; width:16px; height:16px; border-radius:5px; font-size:9.5px; font-weight:800; color:#08111c}
 .frow.cat-gate{background:rgba(251,191,36,.07)}
 .frow.cat-refusal{background:rgba(248,113,113,.09)}
 .frow.cat-flag{background:rgba(251,191,36,.06)}
+.frow.out-error{background:rgba(251,146,60,.09)}
 .frow.focus{animation:focusrow 1.4s ease-out; box-shadow:0 0 0 1px var(--blue)}
 @keyframes focusrow{0%{background:rgba(96,165,250,.4)}100%{background:transparent}}
 .actor-owner{color:var(--owner) !important}
 .actor-contractor{color:var(--contractor) !important}
 .actor-hub{color:var(--purple) !important}
 .actor-operator{color:var(--amber) !important}
+.actor-main-agent{color:var(--cyan) !important}
 
 /* ---------------- caption + overlay ---------------- */
 #caption{
@@ -373,7 +384,10 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
    *  Small helpers                                                      *
    * ------------------------------------------------------------------ */
   const $ = (s, r) => (r || document).querySelector(s);
-  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const part = (prefix, name) => document.getElementById(prefix + name);
+  const str = v => (v == null ? '' : String(v));
+  const isObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = str(text); return n; };
   const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
 
   const SVG = {
@@ -392,6 +406,15 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     contract: 'C', turn: 'T', model: 'M', refusal: 'R', delivery: 'D',
     gate: 'G', judgment: 'J', message: 'S', flag: 'F', other: '?'
   };
+  const KINDS = {
+    real: {badge: 'REAL RUN · real models', model: run => 'model: ' + (str(run.model) || 'unknown')},
+    scripted: {badge: 'SCRIPTED ATTACK · test code, no model', model: () => 'no model (scripted)'},
+    synthetic: {badge: 'SYNTHETIC · test data, not a run', model: () => 'synthetic data: no model ran'}
+  };
+  const LANES = ['owner', 'contractor'];      // the two sides that have a lane
+  const GATE_CLASS = {PASS: 'pass', CONCERNS: 'concerns', FAIL: 'fail', REFUSED: 'refused'};
+  const VERDICTS = ['accept', 'accept_with_reservations', 'reject'];
+  const MAJOR = '2';                          // the major version of the format this player reads
   const SPEEDS = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 200, 500, 1000];
   const GAP_THRESHOLD_MS = 6000;   // a real gap longer than this is compressed
   const GAP_PAUSE_MS = 600;        // …to this short playback pause
@@ -419,11 +442,13 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
   let loaded = false;
   let lastNow = 0;
   let rafId = 0;
+  let initialContract = null;     // the contract in force before the first event
+  let shownObjects = new Map();   // id -> JSON of each object the contract panel shows
+  const marks = new Map();        // id -> {good, observation}: the inspections recorded so far
+  const contractIndex = new Map();   // id -> element
 
-  const counters = {
-    owner: {calls: 0, tok: 0, cost: 0, refusals: 0},
-    contractor: {calls: 0, tok: 0, cost: 0, refusals: 0}
-  };
+  const freshCounters = () => ({calls: 0, tok: 0, cost: 0, refusals: 0, errors: 0});
+  const counters = {owner: freshCounters(), contractor: freshCounters()};
 
   /* ------------------------------------------------------------------ *
    *  Public API                                                         *
@@ -449,17 +474,20 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     const dataEl = document.getElementById('replay-data');
     const inline = dataEl && dataEl.textContent ? dataEl.textContent.trim() : '';
     if (inline) {
-      try { return loadDoc(JSON.parse(inline)); }
+      let parsed;
+      try { parsed = JSON.parse(inline); }
       catch (e) { return fatal('The embedded replay is not valid JSON: ' + e.message); }
+      return loadDoc(parsed);
     }
     const params = new URLSearchParams(location.search);
     const src = params.get('src');
     if (src) {
       fetch(src, {cache: 'no-store'})
         .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .catch(e => { throw new Error('Could not fetch ' + src + ' — ' + e.message +
+          '. If the page is opened from file://, put the replay in the page or pick the file.'); })
         .then(loadDoc)
-        .catch(e => fatal('Could not fetch ' + src + ' — ' + e.message +
-          '. If the page is opened from file://, put the replay in the page or pick the file.'));
+        .catch(e => fatal(e.message));
       return;
     }
     showDropzone();
@@ -480,29 +508,28 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
    *  load / validate                                                    *
    * ------------------------------------------------------------------ */
   function loadDoc(d) {
-    if (!d || typeof d !== 'object' || Array.isArray(d)) return fatal('The document is not a JSON object.');
+    if (!isObject(d)) return fatal('The document is not a JSON object.');
     if (d.format !== 'zephyros-replay') return fatal('Not a Zephyros replay: format is ' + JSON.stringify(d.format) + ', expected "zephyros-replay".');
-    const major = String(d.version == null ? '' : d.version).split('.')[0];
-    if (major !== '1') return fatal('Unsupported replay version ' + JSON.stringify(d.version) + ': this player knows major version 1.');
+    const major = str(d.version).split('.')[0];
+    if (major !== MAJOR) return fatal('Unsupported replay version ' + JSON.stringify(d.version) + ': this player reads major version ' + MAJOR + '.');
     if (!Array.isArray(d.events)) return fatal('The replay has no "events" array.');
 
     doc = d;
-    events = d.events.slice().sort((a, b) => {
-      const da = a.offset_ms || 0, db = b.offset_ms || 0;
+    events = d.events.filter(isObject).sort((a, b) => {
+      const da = Number(a.offset_ms) || 0, db = Number(b.offset_ms) || 0;
       if (da !== db) return da - db;
-      return ((a.seq == null ? 1e15 : a.seq) - (b.seq == null ? 1e15 : b.seq));
+      return ((a.seq == null ? 1e15 : Number(a.seq)) - (b.seq == null ? 1e15 : Number(b.seq)));
     });
     N = events.length;
     byId = new Map();
     events.forEach((e, i) => {
-      e._i = i;
-      const id = (typeof e.id === 'number') ? e.id : i;
-      e.id = id;
-      byId.set(id, i);
+      if (typeof e.id !== 'number') e.id = i;
+      if (!byId.has(e.id)) byId.set(e.id, i);
     });
 
-    const run = d.run || {};
+    const run = isObject(d.run) ? d.run : {};
     const params = new URLSearchParams(location.search);
+    initialContract = isObject(d.contract_at_start) ? d.contract_at_start : null;
 
     buildPb();
 
@@ -520,15 +547,14 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (params.has('speed')) { const s = parseFloat(params.get('speed')); if (isFinite(s) && s > 0) speed = s; }
 
     buildTopbar(run, d);
-    buildContract(d.contract);
     buildTicks();
     buildSpeedSelect();
-    if (params.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
 
     $('#overlay').hidden = true;
     $('#app').hidden = false;
     loaded = true;
 
+    curIdx = -1; playing = false; done = false; delete document.body.dataset.done;
     resetState();
     goTo(winStart);
     ph = startT;
@@ -543,7 +569,7 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (!N) return;
     pb[0] = 0;
     for (let i = 1; i < N; i++) {
-      let dt = (events[i].offset_ms || 0) - (events[i - 1].offset_ms || 0);
+      let dt = (Number(events[i].offset_ms) || 0) - (Number(events[i - 1].offset_ms) || 0);
       if (!(dt > 0)) dt = 0;
       if (compress && dt > GAP_THRESHOLD_MS) dt = GAP_PAUSE_MS;
       pb[i] = pb[i - 1] + dt;
@@ -555,8 +581,9 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
   function isKey(e) {
     const c = e.category;
     return c === 'gate' || c === 'judgment' || c === 'flag' || c === 'refusal' ||
-      c === 'message' || e.type === 'contract.propose' || e.type === 'pull_request.open' ||
-      e.type === 'delivery.declare';
+      c === 'message' || e.outcome === 'refused' || e.outcome === 'error' ||
+      e.type === 'contract.propose' || e.type === 'contract.version' ||
+      e.type === 'pull_request.open' || e.type === 'delivery.declare';
   }
 
   function pct(i) {
@@ -570,41 +597,45 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
   function fmtTok(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
   function fmtUsd(n) { return '$' + (n || 0).toFixed(3); }
   function fmtOff(ms) {
-    ms = Math.max(0, ms | 0);
+    ms = Math.max(0, Number(ms) | 0);
     const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
     const pad = v => String(v).padStart(2, '0');
     return '+' + (h > 0 ? h + ':' + pad(m) : pad(m)) + ':' + pad(ss);
   }
 
   function buildTopbar(run, d) {
-    const kind = run.kind === 'scripted' ? 'scripted' : 'real';
-    $('#run-title').textContent = run.title || 'Untitled run';
-    const proj = run.project || {};
-    $('#run-project').textContent = proj.name ? (proj.name + (proj.id ? ' (' + proj.id + ')' : '')) : '—';
-    $('#run-model').textContent = (kind === 'scripted') ? 'no model (scripted)' : ('model: ' + (run.model || 'unknown'));
-    const dur = (d.totals && d.totals.duration_ms != null) ? d.totals.duration_ms : 0;
+    const kind = Object.prototype.hasOwnProperty.call(KINDS, run.kind) ? KINDS[run.kind] : null;
+    $('#run-title').textContent = str(run.title) || 'Untitled run';
+    const proj = isObject(run.project) ? run.project : {};
+    $('#run-project').textContent = proj.name ? (str(proj.name) + (proj.id ? ' (' + str(proj.id) + ')' : '')) : '—';
+    $('#run-model').textContent = kind ? kind.model(run) : 'model: ' + (str(run.model) || 'unknown');
+    const dur = (isObject(d.totals) && d.totals.duration_ms != null) ? d.totals.duration_ms : 0;
     $('#run-duration').textContent = 'duration ' + fmtOff(dur).slice(1);
     $('#run-events').textContent = N + ' events';
 
+    // A kind this player does not know is shown as it is, never as a real run.
     const kb = $('#kind-badge');
-    kb.className = 'badge kind ' + kind;
-    kb.textContent = kind === 'real' ? 'REAL RUN · real models' : 'SCRIPTED ATTACK · test code, no model';
+    kb.className = 'badge kind ' + (kind ? run.kind : 'unknown');
+    kb.textContent = kind ? kind.badge : 'KIND · ' + (str(run.kind) || 'not given');
 
     const ab = $('#attacks');
-    const atk = Array.isArray(run.attacks) ? run.attacks : [];
-    if (kind === 'scripted' && atk.length) { ab.hidden = false; ab.textContent = atk.join(' · '); }
+    const atk = Array.isArray(run.attacks) ? run.attacks.map(str) : [];
+    if (run.kind === 'scripted' && atk.length) { ab.hidden = false; ab.textContent = atk.join(' · '); }
     else ab.hidden = true;
 
-    const integ = d.integrity || {};
+    const integ = isObject(d.integrity) ? d.integrity : {};
     const ib = $('#integrity');
     if (integ.chain === 'verified') {
       ib.className = 'badge integrity ok';
-      ib.textContent = 'log chain verified (' + (integ.records || 0) + ' records)';
-      ib.title = 'The hash chain of the hub log was verified for the exported records.';
+      ib.textContent = 'hash chain consistent (' + (Number(integ.records) || 0) + ' records)';
+      ib.title = 'Each exported record of the hub log matches its hash and links to the record ' +
+        'before it. Not checked here: the head and the anchor the hub keeps, so records cut ' +
+        'after the last exported one, or a log rewritten with its hashes recomputed, would not ' +
+        'show; log.verify on the hub checks those. Only events from the hub log are covered.';
     } else if (integ.chain === 'broken') {
       ib.className = 'badge integrity bad';
-      ib.textContent = 'chain broken';
-      ib.title = integ.detail || 'The hub log chain does not verify.';
+      ib.textContent = 'hash chain broken';
+      ib.title = str(integ.detail) || 'The exported records of the hub log do not match their hashes.';
     } else {
       ib.className = 'badge integrity none';
       ib.textContent = 'chain not checked';
@@ -612,48 +643,65 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     }
   }
 
-  const contractIndex = new Map();   // id -> element
-
-  function buildContract(contract) {
+  /* ---------------- the contract panel, version by version ---------------- */
+  function renderContract(contract, highlight) {
     const list = $('#contract-list');
+    const objs = (isObject(contract) && Array.isArray(contract.objects)) ? contract.objects.filter(isObject) : [];
+    const version = isObject(contract) ? contract.version : null;
+    $('#contract-version').textContent = version != null ? 'v' + str(version) : '—';
+    const before = shownObjects;
+    shownObjects = new Map();
     list.innerHTML = '';
     contractIndex.clear();
-    $('#contract-version').textContent = contract && contract.version != null ? 'v' + contract.version : '—';
-    const objs = (contract && Array.isArray(contract.objects)) ? contract.objects : [];
 
-    const reqs = objs.filter(o => o && /^EXG-/.test(o.id || ''));
-    const cons = objs.filter(o => o && /^CTR-/.test(o.id || ''));
-    const stories = objs.filter(o => o && /^US-/.test(o.id || ''));
-
-    if (reqs.length) { list.appendChild(el('div', 'grouphead', 'Requirements')); reqs.forEach(o => list.appendChild(contractItem(o))); }
-    if (cons.length) { list.appendChild(el('div', 'grouphead', 'Constraints')); cons.forEach(o => list.appendChild(contractItem(o))); }
+    const ofKind = rx => objs.filter(o => rx.test(str(o.id)));
+    const reqs = ofKind(/^EXG-/), cons = ofKind(/^CTR-/), stories = ofKind(/^US-/);
+    const item = o => {
+      const it = contractItem(o);
+      const id = str(o.id), shape = JSON.stringify(o);
+      shownObjects.set(id, shape);
+      if (highlight && before.get(id) !== shape) it.classList.add('changed');
+      if (marks.has(id)) applyMark(it, marks.get(id));
+      return it;
+    };
+    if (reqs.length) { list.appendChild(el('div', 'grouphead', 'Requirements')); reqs.forEach(o => list.appendChild(item(o))); }
+    if (cons.length) { list.appendChild(el('div', 'grouphead', 'Constraints')); cons.forEach(o => list.appendChild(item(o))); }
     if (stories.length) {
       const det = el('details', 'stories');
-      const sum = el('summary', null, 'Stories & criteria (' + stories.length + ')');
-      det.appendChild(sum);
-      stories.forEach(o => det.appendChild(contractItem(o)));
+      det.appendChild(el('summary', null, 'Stories & criteria (' + stories.length + ')'));
+      stories.forEach(o => det.appendChild(item(o)));
       list.appendChild(det);
     }
     if (!reqs.length && !cons.length && !stories.length) {
-      list.appendChild(el('div', 'muted', 'No contract objects in this replay.'));
+      list.appendChild(el('div', 'muted', version == null ? 'No contract yet.' : 'No contract objects in this version.'));
     }
   }
 
   function contractItem(o) {
     const it = el('div', 'citem');
-    it.dataset.id = o.id || '';
+    it.dataset.id = str(o.id);
     const head = el('div', 'chead');
-    head.appendChild(el('span', 'cid', o.id || '—'));
-    head.appendChild(el('span', 'ctitle', o.title || ''));
+    head.appendChild(el('span', 'cid', str(o.id) || '—'));
+    head.appendChild(el('span', 'ctitle', o.title));
     const mk = el('span', 'mk'); mk.hidden = true; head.appendChild(mk);
     it.appendChild(head);
     if (o.text) it.appendChild(el('div', 'ctext', o.text));
     const meta = el('div', 'cmeta');
-    if (o.verification) { const v = el('span', 'vchip', o.verification); v.dataset.m = o.verification; meta.appendChild(v); }
+    if (o.verification) { const v = el('span', 'vchip', o.verification); v.dataset.m = str(o.verification); meta.appendChild(v); }
     if (o.priority) meta.appendChild(el('span', 'pchip prio', o.priority));
     it.appendChild(meta);
-    contractIndex.set(o.id, it);
+    contractIndex.set(str(o.id), it);
     return it;
+  }
+
+  function applyMark(it, mark) {
+    it.classList.remove('ok', 'bad');
+    it.classList.add(mark.good ? 'ok' : 'bad');
+    const mk = it.querySelector('.mk');
+    mk.hidden = false;
+    mk.className = 'mk ' + (mark.good ? 'ok' : 'bad');
+    mk.textContent = mark.good ? '✓ conforms' : '✗ does not conform';
+    mk.title = mark.observation;
   }
 
   function buildTicks() {
@@ -672,10 +720,11 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     const frag = document.createDocumentFragment();
     for (const i of idxs) {
       const e = events[i];
-      const key = isKey(e);
-      let cls = 'tick cat-' + (e.category || 'other');
-      if (key) cls += ' key';
-      if (e.category === 'gate') cls += ' gate';
+      const cat = Object.prototype.hasOwnProperty.call(CAT_ICON, e.category) ? e.category : 'other';
+      let cls = 'tick cat-' + cat;
+      if (isKey(e)) cls += ' key';
+      if (cat === 'gate') cls += ' gate';
+      if (e.outcome === 'error') cls += ' out-error';
       const t = el('div', cls);
       t.style.left = pct(i) + '%';
       frag.appendChild(t);
@@ -690,7 +739,7 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (!present.includes(speed)) present.push(speed);
     present.sort((a, b) => a - b);
     for (const s of present) {
-      const o = el('option', null, (s >= 1 ? s + '×' : s + '×'));
+      const o = el('option', null, s + '×');
       o.value = String(s);
       sel.appendChild(o);
     }
@@ -701,26 +750,25 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
    *  state folding                                                      *
    * ------------------------------------------------------------------ */
   function resetState() {
-    for (const side of ['owner', 'contractor']) {
-      counters[side] = {calls: 0, tok: 0, cost: 0, refusals: 0};
+    for (const side of LANES) {
+      counters[side] = freshCounters();
       setActivity(side, '—');
       setRunning(side, false);
-      $('#cnt-' + side).innerHTML = '';
       renderCounters(side);
-      $('#bub-' + side).innerHTML = '';
-      $('#bub-' + side).appendChild(el('div', 'empty', 'no messages yet'));
+      const box = part('bub-', side);
+      box.innerHTML = '';
+      box.appendChild(el('div', 'empty', 'no messages yet'));
     }
-    $('#gate-big').className = 'gate-big none'; $('#gate-big').textContent = '—';
+    setGate('none', '—');
     $('#gate-tests').textContent = 'no delivery yet';
     $('#gate-history').innerHTML = '';
     $('#verdict-badge').className = 'verdict'; $('#verdict-badge').textContent = '—';
     $('#verdict-reasons').textContent = 'no verdict yet';
     const fl = $('#flags-list'); fl.className = 'flags muted'; fl.textContent = 'none';
-    for (const side of ['owner', 'contractor', 'total']) renderCostRow(side);
-    for (const it of contractIndex.values()) {
-      it.classList.remove('active', 'ok', 'bad');
-      const mk = it.querySelector('.mk'); if (mk) mk.hidden = true;
-    }
+    for (const side of [...LANES, 'total']) renderCostRow(side);
+    marks.clear();
+    shownObjects = new Map();
+    renderContract(initialContract, false);
     const feed = $('#feed'); feed.innerHTML = ''; feedStick = true;
   }
 
@@ -730,190 +778,214 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (idx < curIdx) { resetState(); curIdx = -1; }
     const bulk = (idx - curIdx) > 30;
     if (bulk) feedFrag = document.createDocumentFragment();
-    for (let i = curIdx + 1; i <= idx; i++) applyEvent(events[i]);
-    if (bulk) {
-      const feed = $('#feed');
-      feed.appendChild(feedFrag); feedFrag = null;
-      while (feed.childElementCount > FEED_CAP) feed.removeChild(feed.firstChild);
-      if (feedStick) feed.scrollTop = feed.scrollHeight;
+    try {
+      while (curIdx < idx) { curIdx++; showEvent(events[curIdx]); }
+    } finally {
+      if (bulk) {
+        const feed = $('#feed');
+        feed.appendChild(feedFrag); feedFrag = null;
+        while (feed.childElementCount > FEED_CAP) feed.removeChild(feed.firstChild);
+        if (feedStick) feed.scrollTop = feed.scrollHeight;
+      }
     }
-    curIdx = idx;
+  }
+
+  // One event the player cannot show is said in the console and skipped: the replay goes on.
+  function showEvent(e) {
+    try { applyEvent(e); }
+    catch (err) { console.error('replay: event ' + str(e.id) + ' (' + str(e.type) + ') could not be shown: ' + (err && err.message)); }
+  }
+
+  // The lane of an event: the side it names, or the side that acted. The hub, the operator and
+  // the main agent have no lane: their events go to the feed and to the panels.
+  function laneOf(e, data) {
+    if (LANES.includes(data.side)) return data.side;
+    if (LANES.includes(e.actor)) return e.actor;
+    return null;
   }
 
   function applyEvent(e) {
-    const cat = e.category || 'other';
-    const data = (e.data && typeof e.data === 'object') ? e.data : {};
-    const side = (data.side === 'owner' || data.side === 'contractor') ? data.side
-      : ((e.actor === 'owner' || e.actor === 'contractor') ? e.actor : null);
+    const cat = str(e.category) || 'other';
+    const data = isObject(e.data) ? e.data : {};
+    const state = isObject(e.hub_state) ? e.hub_state : {};   // from the hub's tables, not the chain
+    const lane = laneOf(e, data);
 
-    feedAdd(e);
+    feedAdd(e, cat);
+    if (lane && LANES.includes(e.actor)) setActivity(lane, e.summary);
 
-    if (side && (e.actor === 'owner' || e.actor === 'contractor')) setActivity(side, e.summary || '');
-
-    if (cat === 'turn') {
-      if (e.type === 'instance.start' || e.type === 'turn.start') setRunning(side, true);
-      else if (e.type === 'turn.end') setRunning(side, false);
-    }
-    if (cat === 'model') addModel(side || e.actor, data);
-    if (cat === 'message') addBubble(side || e.actor, data);
-    if (cat === 'refusal') addRefusal(e, side || e.actor);
+    if (cat === 'refusal' || e.outcome === 'refused') { onRefusal(e, data, lane); markMentions(e, data, state); return; }
+    if (e.outcome === 'error') onError(e, data, lane);
+    if (cat === 'turn') onTurn(e, lane);
+    if (cat === 'model' && e.outcome === 'ok') addModel(lane, data);
+    if (cat === 'message') addBubble(lane, data);
     if (cat === 'contract') onContract(e, data);
     if (cat === 'delivery') onDelivery(e, data);
-    if (cat === 'gate') onGate(e, data);
-    if (cat === 'judgment') onJudgment(e, data);
-    if (cat === 'flag') onFlag(e, data);
-    markMentions(e);
+    if (cat === 'gate') onGate(e, data, state);
+    if (cat === 'judgment') onJudgment(e, data, state);
+    if (cat === 'flag') onFlag(e, data, state);
+    markMentions(e, data, state);
   }
 
   /* ---------------- lanes ---------------- */
   function setActivity(side, text) {
-    if (!side) return;
-    const a = $('#act-' + side);
-    if (a) a.querySelector('.txt').textContent = text || '—';
+    const a = part('act-', side);
+    if (a) a.querySelector('.txt').textContent = str(text) || '—';
   }
   function setRunning(side, on) {
-    if (!side) return;
-    const l = $('#lane-' + side);
+    const l = part('lane-', side);
     if (l) l.classList.toggle('running', !!on);
+  }
+  function flashLane(side) {
+    const l = part('lane-', side);
+    if (l) { l.classList.remove('refusal'); void l.offsetWidth; l.classList.add('refusal'); }
   }
   function renderCounters(side) {
     const c = counters[side];
-    const node = $('#cnt-' + side);
+    const node = part('cnt-', side);
     node.innerHTML = '';
     node.appendChild(el('span', null, 'calls ')).appendChild(el('b', null, String(c.calls)));
     node.appendChild(el('span', null, 'tok ')).appendChild(el('b', null, fmtTok(c.tok)));
     node.appendChild(el('span', null, 'cost ')).appendChild(el('b', null, fmtUsd(c.cost)));
-    if (c.refusals) {
-      const r = el('span', 'ref', 'refused ×' + c.refusals);
-      node.appendChild(r);
-    }
+    if (c.refusals) node.appendChild(el('span', 'ref', 'refused ×' + c.refusals));
+    if (c.errors) node.appendChild(el('span', 'err', 'errors ×' + c.errors));
   }
-  function addModel(side, data) {
-    if (!counters[side]) return;
-    const c = counters[side];
+  function onTurn(e, lane) {
+    if (!lane) return;
+    if (e.type === 'turn.end' || e.outcome === 'error') setRunning(lane, false);
+    else if (e.type === 'instance.start' || e.type === 'turn.start') setRunning(lane, true);
+  }
+  function addModel(lane, data) {
+    if (!lane) return;
+    const c = counters[lane];
     c.calls += 1;
-    c.tok += (data.prompt_tokens || 0) + (data.completion_tokens || 0);
-    c.cost += data.cost_usd || 0;
-    renderCounters(side);
-    renderCostRow(side); renderCostRow('total');
+    c.tok += (Number(data.prompt_tokens) || 0) + (Number(data.completion_tokens) || 0);
+    c.cost += Number(data.cost_usd) || 0;
+    renderCounters(lane);
+    renderCostRow(lane); renderCostRow('total');
   }
-  function addBubble(side, data) {
-    if (!side) return;
-    const box = $('#bub-' + side);
+  function addNote(lane, cls, tag, text) {
+    const box = part('bub-', lane);
     const empty = box.querySelector('.empty'); if (empty) empty.remove();
-    const b = el('div', 'bubble' + (data.role === 'final' ? ' final' : ''));
-    b.appendChild(el('span', 'btag', data.role === 'final' ? 'final answer' : 'message'));
-    b.appendChild(document.createTextNode(data.text || ''));
+    const b = el('div', 'bubble' + (cls ? ' ' + cls : ''));
+    b.appendChild(el('span', 'btag', tag));
+    b.appendChild(document.createTextNode(str(text)));
     box.appendChild(b);
     while (box.childElementCount > BUBBLE_CAP) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
   }
-  function addRefusal(e, side) {
-    const l = $('#lane-' + side);
-    if (l) { l.classList.remove('refusal'); void l.offsetWidth; l.classList.add('refusal'); }
-    if (counters[side]) { counters[side].refusals += 1; renderCounters(side); }
-    if (side) {
-      const box = $('#bub-' + side);
-      const empty = box.querySelector('.empty'); if (empty) empty.remove();
-      const b = el('div', 'bubble refused');
-      const reason = (e.data && e.data.reason) ? e.data.reason : 'refused';
-      b.appendChild(el('span', 'btag', 'refused · ' + reason));
-      b.appendChild(document.createTextNode(e.summary || (e.data && e.data.action) || 'refused action'));
-      box.appendChild(b);
-      while (box.childElementCount > BUBBLE_CAP) box.removeChild(box.firstChild);
-      box.scrollTop = box.scrollHeight;
+  function addBubble(lane, data) {
+    if (!lane) return;
+    const final = data.role === 'final';
+    addNote(lane, final ? 'final' : '', final ? 'final answer' : 'message', data.text);
+  }
+  function onRefusal(e, data, lane) {
+    if (lane) {
+      flashLane(lane);
+      counters[lane].refusals += 1;
+      renderCounters(lane);
+      addNote(lane, 'refused', 'refused · ' + (str(data.reason) || 'refused'), e.summary || data.action || 'refused action');
+    }
+    if (e.type === 'delivery.check') {
+      // The hub refused a delivery before its tests ran: no decision of the gate will come.
+      setGate('refused', 'REFUSED');
+      $('#gate-tests').textContent = (str(data.delivery_id) || 'a delivery') + ' refused before its tests (' + (str(data.reason) || 'refused') + ')';
+      addGateRow(data.delivery_id, 'REFUSED', e.t);
     }
   }
+  function onError(e, data, lane) {
+    if (lane) {
+      counters[lane].errors += 1;
+      renderCounters(lane);
+      addNote(lane, 'error', 'error · ' + (str(e.type) || 'error'), e.summary || data.error || data.detail || 'error');
+    }
+    if (e.type === 'verification.run') $('#gate-tests').textContent = str(e.summary) || 'the verification failed';
+  }
   function renderCostRow(side) {
-    let calls, tok, cost, row;
+    let c, row;
     if (side === 'total') {
-      const o = counters.owner, c = counters.contractor;
-      calls = o.calls + c.calls; tok = o.tok + c.tok; cost = o.cost + c.cost;
+      const o = counters.owner, k = counters.contractor;
+      c = {calls: o.calls + k.calls, tok: o.tok + k.tok, cost: o.cost + k.cost};
       row = $('#cost-total');
     } else {
-      const c = counters[side];
-      calls = c.calls; tok = c.tok; cost = c.cost;
-      row = $('#cost-' + side);
+      c = counters[side];
+      row = part('cost-', side);
     }
-    if (!row) return;
     const tds = row.querySelectorAll('.n');
-    tds[0].textContent = String(calls);
-    tds[1].textContent = fmtTok(tok);
-    tds[2].textContent = fmtUsd(cost);
+    tds[0].textContent = String(c.calls);
+    tds[1].textContent = fmtTok(c.tok);
+    tds[2].textContent = fmtUsd(c.cost);
   }
 
   /* ---------------- contract / gate / judgment / flags ---------------- */
   function onContract(e, data) {
-    if (data.version != null) $('#contract-version').textContent = 'v' + data.version;
-    if (e.type === 'contract.version' && data.number != null) $('#contract-version').textContent = 'v' + data.number;
-    if (e.type === 'contract.apply_reserved' || e.type === 'contract.approve') {
-      const cid = data.change_id;
-      if (cid) flashIds([cid]);
-    }
+    // Only a new version changes what the panel shows; a read or a proposal does not.
+    if (e.type === 'contract.version') renderContract({version: data.number, objects: data.objects}, true);
   }
   function onDelivery(e, data) {
-    if (e.type === 'verification.run') {
-      const p = data.passed, t = data.tests;
-      if (t != null) $('#gate-tests').textContent = (p != null ? p : '?') + '/' + t + ' acceptance tests passed';
+    if (e.type === 'verification.run' && e.outcome === 'ok' && data.tests != null) {
+      $('#gate-tests').textContent = (data.passed != null ? str(data.passed) : '?') + '/' + str(data.tests) + ' acceptance tests passed';
     }
   }
-  function onGate(e, data) {
-    const d = data.decision;
+  function setGate(cls, text) {
     const big = $('#gate-big');
-    big.className = 'gate-big ' + (d === 'PASS' ? 'pass' : d === 'CONCERNS' ? 'concerns' : d === 'FAIL' ? 'fail' : 'none');
-    big.textContent = d || '—';
-    if (data.outcomes && typeof data.outcomes === 'object') {
-      const keys = Object.keys(data.outcomes);
-      let ok = 0;
-      for (const k of keys) { const v = data.outcomes[k]; if (v === true || v === 'pass' || v === 'ok' || v === 'passed') ok++; }
-      $('#gate-tests').textContent = ok + '/' + keys.length + ' acceptance tests passed';
-    }
+    big.className = 'gate-big ' + cls;
+    big.textContent = text;
+  }
+  function addGateRow(delivery, decision, t) {
     const hist = $('#gate-history');
     const row = el('div', 'grow');
-    row.appendChild(el('span', 'd', data.delivery_id || '—'));
-    row.appendChild(el('span', 'mini ' + (d || ''), d || '—'));
-    row.appendChild(el('span', 'r', (e.t || '').slice(11, 19)));
+    row.appendChild(el('span', 'd', str(delivery) || '—'));
+    row.appendChild(el('span', 'mini' + (GATE_CLASS[decision] ? ' ' + decision : ''), decision || '—'));
+    row.appendChild(el('span', 'r', str(t).slice(11, 19)));
     hist.appendChild(row);
     while (hist.childElementCount > 4) hist.removeChild(hist.firstChild);
     hist.scrollTop = hist.scrollHeight;
   }
-  function onJudgment(e, data) {
+  function onGate(e, data, state) {
+    const d = str(data.decision);
+    setGate(GATE_CLASS[d] && d !== 'REFUSED' ? GATE_CLASS[d] : 'none', d || '—');
+    if (isObject(state.outcomes)) {
+      const results = Object.values(state.outcomes);
+      const passed = results.filter(v => v === 'passed').length;
+      $('#gate-tests').textContent = passed + '/' + results.length + ' acceptance tests passed';
+    }
+    addGateRow(data.delivery_id, d, e.t);
+  }
+  function onJudgment(e, data, state) {
     if (e.type === 'inspection.record' && data.object_id) {
-      const it = contractIndex.get(data.object_id);
+      const id = str(data.object_id);
+      const mark = {good: data.verdict === 'conforms', observation: str(state.observation)};
+      marks.set(id, mark);
+      const it = contractIndex.get(id);
       if (it) {
-        const good = data.verdict === 'conforms';
-        it.classList.remove('ok', 'bad', 'active');
-        it.classList.add(good ? 'ok' : 'bad', 'active');
-        const mk = it.querySelector('.mk');
-        if (mk) { mk.hidden = false; mk.className = 'mk ' + (good ? 'ok' : 'bad'); mk.textContent = good ? '✓ conforms' : '✗ not conforms'; }
-        setTimeout(() => it.classList.remove('active'), 2200);
+        applyMark(it, mark);
+        flashIds([id]);
       }
     }
     if (e.type === 'delivery.review') {
-      const v = data.verdict || '—';
+      const v = str(data.verdict);
       const vb = $('#verdict-badge');
-      vb.className = 'verdict ' + v;
-      vb.textContent = v.replace(/_/g, ' ');
-      $('#verdict-reasons').textContent = data.reasons || '';
+      vb.className = 'verdict' + (VERDICTS.includes(v) ? ' ' + v : '');
+      vb.textContent = v ? v.replace(/_/g, ' ') : '—';
+      $('#verdict-reasons').textContent = str(state.reasons);
     }
   }
-  function onFlag(e, data) {
+  function onFlag(e, data, state) {
     const fl = $('#flags-list');
     if (fl.classList.contains('muted')) { fl.classList.remove('muted'); fl.textContent = ''; }
+    const paths = Array.isArray(data.paths) ? data.paths : (Array.isArray(state.paths) ? state.paths : []);
     const row = el('div', 'flagrow');
-    const paths = Array.isArray(data.paths) ? data.paths.join(', ') : (data.paths || '—');
-    row.appendChild(el('div', 'fp', paths));
-    row.appendChild(el('div', 'fm', (data.rule || 'flag') + ' · by ' + (data.by || 'hub') +
-      (data.delivery_id ? ' · ' + data.delivery_id : '')));
+    row.appendChild(el('div', 'fp', paths.map(str).join(', ') || '—'));
+    row.appendChild(el('div', 'fm', (str(data.rule) || 'protected-path') + ' · by ' + (str(data.by) || 'hub') +
+      (data.delivery_id ? ' · ' + str(data.delivery_id) : '')));
     fl.appendChild(row);
     while (fl.childElementCount > 12) fl.removeChild(fl.firstChild);
     fl.scrollTop = fl.scrollHeight;
   }
 
-  function markMentions(e) {
-    const d = (e.data && typeof e.data === 'object') ? e.data : {};
-    const hay = [e.summary, d.text, d.observation, d.reasons, d.summary, d.object_id, d.change_id]
-      .filter(Boolean).join(' ');
+  function markMentions(e, data, state) {
+    const hay = [e.summary, data.text, data.summary, data.object_id, state.observation, state.reasons]
+      .map(str).join(' ');
     const rx = /\b(EXG-\d+|CTR-\d+|US-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:\.\d+)?)\b/g;
     let m, ids = [];
     while ((m = rx.exec(hay)) !== null) ids.push(m[1]);
@@ -926,26 +998,24 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
       const it = contractIndex.get(id);
       if (!it) continue;
       it.classList.add('active');
-      const node = it;
-      clearTimeout(node._t);
-      node._t = setTimeout(() => node.classList.remove('active'), 2200);
+      clearTimeout(it._t);
+      it._t = setTimeout(() => it.classList.remove('active'), 2200);
     }
   }
   /* ---------------- feed ---------------- */
   let feedStick = true;
   let feedFrag = null;
-  function feedAdd(e) {
+  function feedAdd(e, cat) {
     const feed = $('#feed');
-    const cat = e.category || 'other';
-    const row = el('div', 'frow cat-' + cat);
+    const known = Object.prototype.hasOwnProperty.call(CAT_ICON, cat) ? cat : 'other';
+    const row = el('div', 'frow cat-' + known + (e.outcome === 'error' ? ' out-error' : ''));
     row.appendChild(el('span', 'ft', fmtOff(e.offset_ms)));
-    const a = el('span', 'fa actor-' + (e.actor || 'other'), e.actor || '');
-    row.appendChild(a);
-    const ic = el('span', 'ficon', CAT_ICON[cat] || '?');
-    ic.style.background = CAT_COLOR[cat] || CAT_COLOR.other;
+    row.appendChild(el('span', 'fa actor-' + (str(e.actor) || 'other'), e.actor));
+    const ic = el('span', 'ficon', CAT_ICON[known]);
+    ic.style.background = CAT_COLOR[known];
     row.appendChild(ic);
-    const s = el('span', 'fs' + (e.outcome === 'refused' ? ' refused' : ''), e.summary || e.type || '');
-    row.appendChild(s);
+    const out = e.outcome === 'refused' ? ' refused' : (e.outcome === 'error' ? ' error' : '');
+    row.appendChild(el('span', 'fs' + out, e.summary || e.type));
     e._row = row;
     if (feedFrag) { feedFrag.appendChild(row); return; }
     feed.appendChild(row);
@@ -966,6 +1036,7 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
    *  playback                                                           *
    * ------------------------------------------------------------------ */
   function loop(now) {
+    rafId = requestAnimationFrame(loop);   // first: whatever happens below, the next frame comes
     if (!lastNow) lastNow = now;
     const dt = now - lastNow; lastNow = now;
     if (playing && loaded && N) {
@@ -978,7 +1049,6 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
       updateClock();
       if (ph >= endT && !done) finish();
     }
-    rafId = requestAnimationFrame(loop);
   }
 
   function updateHead() {
@@ -1029,9 +1099,10 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     clearDone();
     doSeekByIdx(idx);
     if (focus) {
-      focusFeedRow(events[idx]);
-      const l = $('#lane-' + ((events[idx].data && events[idx].data.side) || events[idx].actor));
-      if (l) { l.classList.remove('refusal'); void l.offsetWidth; }
+      const e = events[idx];
+      focusFeedRow(e);
+      const lane = laneOf(e, isObject(e.data) ? e.data : {});
+      if (lane) flashLane(lane);
     }
   }
   function doSetSpeed(n) {
@@ -1039,11 +1110,11 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (!isFinite(n) || n <= 0) return;
     speed = n;
     const sel = $('#speed');
-    if (sel && !Array.from(sel.options).some(o => parseFloat(o.value) === n)) {
-      const o = document.createElement('option'); o.value = String(n); o.textContent = n + '×';
+    if (!Array.from(sel.options).some(o => parseFloat(o.value) === n)) {
+      const o = el('option', null, n + '×'); o.value = String(n);
       sel.appendChild(o);
     }
-    if (sel) sel.value = String(n);
+    sel.value = String(n);
   }
 
   function step(dir) {
@@ -1133,8 +1204,10 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
   function readFile(file) {
     const fr = new FileReader();
     fr.onload = () => {
-      try { loadDoc(JSON.parse(fr.result)); }
-      catch (err) { fatal('The file is not valid JSON: ' + err.message); }
+      let parsed;
+      try { parsed = JSON.parse(fr.result); }
+      catch (err) { return fatal('The file is not valid JSON: ' + err.message); }
+      loadDoc(parsed);
     };
     fr.onerror = () => fatal('Could not read ' + file.name + '.');
     fr.readAsText(file);
