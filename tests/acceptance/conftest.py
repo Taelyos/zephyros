@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -23,12 +24,12 @@ def capture_world_database(source: Path, destination: Path) -> None:
     consistent snapshot of the file, its write-ahead log included, without locking the hub out.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    reader = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        with sqlite3.connect(str(destination)) as writer:
-            reader.backup(writer)
-    finally:
-        reader.close()
+    source_uri = source.resolve().as_uri() + "?mode=ro"
+    with (
+        closing(sqlite3.connect(source_uri, uri=True)) as reader,
+        closing(sqlite3.connect(str(destination))) as writer,
+    ):
+        reader.backup(writer)
 
 
 @pytest.fixture(autouse=True)
