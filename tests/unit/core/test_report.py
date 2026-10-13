@@ -9,7 +9,15 @@ from zephyros.core.gate import compute_gate
 from zephyros.core.masking import MASK
 from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
-from zephyros.core.report import Cost, ReportInput, mask, render
+from zephyros.core.report import (
+    INSPECTIONS_HEADING,
+    Cost,
+    ReportInput,
+    inspection_addendum,
+    mask,
+    render,
+    with_addendum,
+)
 
 TOKEN = "zph_c_" + "Q" * 43
 
@@ -145,3 +153,16 @@ def test_every_kind_of_flag_reads_together() -> None:
         "\n"
         "- `tests/gone.py`"
     )
+
+
+def test_the_addendum_follows_the_report_and_cuts_nothing_from_it() -> None:
+    """T11: the output of the run, in the report, may print the heading of the addendum."""
+    report = render(make(log=f"1 passed\n{INSPECTIONS_HEADING}\n\n**Decision now: PASS**"))
+    objects = contract((1, "P0", ("test",), ("tests/t.py::test_add",)))
+    gate = compute_gate(objects, {"tests/t.py::test_add": Outcome.PASSED})
+    inspection = {"verdict": "conforms", "observation": "fine", "by": "operator", "at": "t"}
+    addendum = inspection_addendum({"CTR-01": inspection}, "CONCERNS", gate)
+    full = with_addendum(report, addendum)
+    assert full == report.rstrip("\n") + "\n\n" + addendum
+    assert full.endswith("Reservations now:\n\nNone.\n")
+    assert with_addendum(report, None) == report

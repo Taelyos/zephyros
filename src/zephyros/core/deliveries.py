@@ -51,7 +51,14 @@ from zephyros.core.ports.verification import (
 )
 from zephyros.core.principals import OPERATOR
 from zephyros.core.projects import ProjectService
-from zephyros.core.report import Cost, ReportInput, mask, render, with_inspections
+from zephyros.core.report import (
+    Cost,
+    ReportInput,
+    inspection_addendum,
+    mask,
+    render,
+    with_addendum,
+)
 
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
@@ -94,7 +101,8 @@ class DeliveryRecord:
     changed_paths: tuple[str, ...] = ()
     decision: str | None = None
     outcomes: Mapping[str, str] = field(default_factory=dict)
-    report: str | None = None
+    gate_report: str | None = None
+    """The evidence report as the gate wrote it, once and for all."""
     pull_request: str | None = None
     detail: str | None = None
     pull_number: int | None = None
@@ -110,6 +118,17 @@ class DeliveryRecord:
     revision: int = 0
     """How many times the record was written. A write made from an older read is refused, so
     that no update is lost (T05)."""
+    addendum: str | None = None
+    """The inspections recorded after the gate and the decision now, written whole at each
+    inspection, apart from the report of the gate (T11)."""
+
+    @property
+    def report(self) -> str | None:
+        """The evidence report now: the report of the gate, then its addendum. What the pull
+        request carries, and what the Owner side reads."""
+        if self.gate_report is None:
+            return None
+        return with_addendum(self.gate_report, self.addendum)
 
 
 class StaleRecordError(Exception):
@@ -335,9 +354,7 @@ class DeliveryService:
                 current,
                 inspections=inspections,
                 decision=gate.decision.value,
-                report=with_inspections(
-                    current.report or "", inspections, current.decision, gate, self._secrets()
-                ),
+                addendum=inspection_addendum(inspections, current.decision, gate, self._secrets()),
             )
 
         before, updated = self._update(project_id, delivery_id, inspected)
@@ -730,7 +747,7 @@ class DeliveryService:
                 state=DeliveryState.DECIDED,
                 decision=gate.decision.value,
                 outcomes={k: v.value for k, v in outcomes.items()},
-                report=report,
+                gate_report=report,
                 contract_version=version.number,
                 flagged_paths=flagged,
             ),

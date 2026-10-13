@@ -30,10 +30,41 @@ def test_a_record_keeps_its_contract_version_inspections_review_and_flags() -> N
         },
         review={"verdict": "accept", "reasons": "fine", "by": "o", "at": "t"},
         flagged_paths=("CONTRACT.md",),
+        gate_report="# Evidence report\n",
+        addendum="## Inspections recorded after the gate\n",
     )
     written = store.put_record(record)
     assert written == replace(record, revision=1)
     assert store.get_record("p_store001", "d1") == written
+    assert written.report == (
+        "# Evidence report\n\n## Inspections recorded after the gate\n"
+    )  # T11: the report of the gate, then the addendum
+
+
+def test_a_report_kept_whole_before_t11_reads_as_the_report_of_the_gate() -> None:
+    """Before T11 a record kept its report with the addendum inside: it reads as it was."""
+    database = Database(":memory:")
+    store = SqliteDeliveryStore(database)
+    whole = "# Evidence report\n\n## Inspections recorded after the gate\n\n| CTR-01 |\n"
+    body: dict[str, object] = {
+        "branch": "work",
+        "state": "proposed",
+        "received_at": "2026-10-13T08:00:00Z",
+        "changed_paths": [],
+        "decision": "PASS",
+        "outcomes": {},
+        "report": whole,
+        "pull_request": None,
+        "detail": None,
+    }
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO deliveries (project_id, delivery_id, seq, body) VALUES (?, ?, ?, ?)",
+            ("p_store001", "d1", 1, json.dumps(body)),
+        )
+    found = store.get_record("p_store001", "d1")
+    assert found is not None
+    assert (found.gate_report, found.addendum, found.report) == (whole, None, whole)
 
 
 def test_a_record_written_before_adr_0020_reads_with_empty_additions() -> None:

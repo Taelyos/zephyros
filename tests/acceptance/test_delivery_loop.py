@@ -417,7 +417,6 @@ INSPECTED = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="T11: the report is cut until the fix")
 def test_output_that_prints_the_inspection_heading_cuts_nothing_from_the_report(
     echoing_world: World,
 ) -> None:

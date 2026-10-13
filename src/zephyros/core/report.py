@@ -191,21 +191,17 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
     return mask("\n".join(lines), secrets)
 
 
-def with_inspections(
-    report: str,
+def inspection_addendum(
     inspections: Mapping[str, Mapping[str, str]],
     previous: str | None,
     gate: GateResult,
     secrets: Iterable[str] = (),
 ) -> str:
-    """The report of a delivery with its inspections and the decision they lead to (ADR 0020).
-
-    The inspections come after the gate: the report keeps what the gate saw, and an addendum,
-    rewritten at each inspection, lists every inspection and the decision now."""
-    body = report.split("\n" + INSPECTIONS_HEADING + "\n", 1)[0].rstrip("\n")
+    """The addendum of a report: every inspection recorded after the gate, and the decision they
+    lead to (ADR 0020). It is kept apart from the report the gate wrote and written whole at each
+    inspection: nothing is ever looked for in the report, whose text the delivery partly chose
+    (T11)."""
     lines = [
-        body,
-        "",
         INSPECTIONS_HEADING,
         "",
         "| Object | Verdict | Observation | By | At |",
@@ -230,3 +226,10 @@ def with_inspections(
     lines += [f"- {_plain(r)}" for r in gate.reservations] or ["None."]
     lines.append("")
     return mask("\n".join(lines), secrets)
+
+
+def with_addendum(report: str, addendum: str | None) -> str:
+    """The report as the gate wrote it, then its addendum when there is one."""
+    if not addendum:
+        return report
+    return f"{report.rstrip(chr(10))}\n\n{addendum}"

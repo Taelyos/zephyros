@@ -39,7 +39,8 @@ def _record_body(record: DeliveryRecord) -> str:
             "changed_paths": list(record.changed_paths),
             "decision": record.decision,
             "outcomes": dict(record.outcomes),
-            "report": record.report,
+            "gate_report": record.gate_report,
+            "addendum": record.addendum,
             "pull_request": record.pull_request,
             "detail": record.detail,
             "pull_number": record.pull_number,
@@ -71,7 +72,10 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         changed_paths=tuple(body["changed_paths"]),
         decision=body["decision"],
         outcomes=body["outcomes"],
-        report=body["report"],
+        # Before T11 the report was kept whole, its addendum inside: it reads as the report of
+        # the gate, and a new inspection writes its addendum after it.
+        gate_report=body["gate_report"] if "gate_report" in body else body.get("report"),
+        addendum=body.get("addendum"),
         pull_request=body["pull_request"],
         detail=body["detail"],
         # Added by ADR 0020: a record written before has none of them.
