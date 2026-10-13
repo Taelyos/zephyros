@@ -3,6 +3,9 @@
 //
 //   node tools/replay/record.mjs PAGE.html SCRIPT.json OUT.mp4 [--gif OUT.gif --gif-width 960]
 //
+// Extra options: --width N --height N (default 1280x720); --gif-fps N --gif-colors N
+// --gif-speed N (GIF only: frames per second, palette size, time multiplier).
+//
 // PAGE.html is a player with its replay embedded (python -m tools.replay.export ... --html).
 // SCRIPT.json is a list of steps run in order against `window.replay`:
 //   {"caption": "text" | null}          show or hide the caption
@@ -32,6 +35,9 @@ const option = (name, fallback) => {
 };
 const gif = option("--gif", null);
 const gifWidth = Number(option("--gif-width", "960"));
+const gifFps = Number(option("--gif-fps", "12"));
+const gifColors = Number(option("--gif-colors", "256"));
+const gifSpeed = Number(option("--gif-speed", "1"));
 const width = Number(option("--width", "1280"));
 const height = Number(option("--height", "720"));
 const steps = JSON.parse(readFileSync(scriptPath, "utf8"));
@@ -72,6 +78,7 @@ await new Promise((r) => ws.addEventListener("open", r, { once: true }));
 let nextId = 1;
 const pending = new Map();
 const shots = [];
+let lastWall = 0;
 ws.addEventListener("message", (event) => {
   const message = JSON.parse(event.data);
   if (message.id && pending.has(message.id)) {
@@ -84,6 +91,7 @@ ws.addEventListener("message", (event) => {
     const name = join(frames, `f${String(shots.length).padStart(6, "0")}.jpg`);
     writeFileSync(name, Buffer.from(data, "base64"));
     shots.push({ name, t: metadata.timestamp });
+    lastWall = Date.now();
     send("Page.screencastFrameAck", { sessionId });
   }
 });
@@ -122,6 +130,15 @@ for (const step of steps) {
   }
 }
 await sleep(300);
+// A static page emits no screencast frame, so the trailing hold (the last `wait`) would be
+// lost. Capture one last frame now and date it from the wall clock, so the concat keeps it.
+try {
+  const shot = await send("Page.captureScreenshot", { format: "jpeg", quality: 92 });
+  const name = join(frames, `f${String(shots.length).padStart(6, "0")}.jpg`);
+  writeFileSync(name, Buffer.from(shot.data, "base64"));
+  const t = shots.length && lastWall ? shots.at(-1).t + Math.max((Date.now() - lastWall) / 1000, 0) : 0;
+  shots.push({ name, t });
+} catch { /* keep whatever frames we have */ }
 await send("Page.stopScreencast");
 ws.close();
 browser.kill();
@@ -144,8 +161,8 @@ run(["-f", "concat", "-safe", "0", "-i", list, "-vf", `fps=30,scale=${width}:${h
   "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-movflags", "+faststart", output]);
 if (gif) {
   const palette = join(profile, "palette.png");
-  const filters = `fps=12,scale=${gifWidth}:-1:flags=lanczos`;
-  run(["-i", output, "-vf", `${filters},palettegen=stats_mode=diff`, palette]);
+  const filters = `${gifSpeed > 1 ? `setpts=PTS/${gifSpeed},` : ""}fps=${gifFps},scale=${gifWidth}:-1:flags=lanczos`;
+  run(["-i", output, "-vf", `${filters},palettegen=max_colors=${gifColors}:stats_mode=diff`, palette]);
   run(["-i", output, "-i", palette, "-lavfi", `${filters}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`, gif]);
 }
 rmSync(profile, { recursive: true, force: true });
