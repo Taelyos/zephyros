@@ -98,6 +98,19 @@ class DirectoryForge:
                     return
         raise ForgeError(f"no pull request {number} in {repository.slug}")
 
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        self._repository(repository)
+        if not title.strip():
+            raise ForgeError("the title is empty")
+        async with self._lock:
+            pulls = self._pulls(repository)
+            for item in pulls:
+                if item["number"] == number:
+                    item["title"] = title
+                    self._save_pulls(repository, pulls)
+                    return
+        raise ForgeError(f"no pull request {number} in {repository.slug}")
+
     # ------------------------------------------------------------------ branches
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         path = self._repository(repository)

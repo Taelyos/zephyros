@@ -83,6 +83,7 @@ class Action(StrEnum):
     INSPECTION_RECORD = "inspection.record"
     DELIVERY_REVIEW = "delivery.review"
     PULL_REQUEST_COMMENT = "pull_request.comment"
+    PULL_REQUEST_RETITLE = "pull_request.retitle"
     STAGING_PREPARE = "staging.prepare"
     DELIVERY_CHECK = "delivery.check"
     VERIFICATION_RUN = "verification.run"

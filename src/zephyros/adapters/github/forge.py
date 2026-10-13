@@ -195,6 +195,16 @@ class GitHubForge:
         if response.status_code != 201:
             raise self._failure(response, f"cannot comment on pull request {number}")
 
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        self._validate(repository)
+        if not title.strip():
+            raise ForgeError("the title is empty")
+        response = await self._call(
+            "PATCH", f"/repos/{repository.slug}/pulls/{number}", {"title": title}
+        )
+        if response.status_code != 200:
+            raise self._failure(response, f"cannot retitle pull request {number}")
+
     # ------------------------------------------------------------------ branches
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         self._validate(repository)

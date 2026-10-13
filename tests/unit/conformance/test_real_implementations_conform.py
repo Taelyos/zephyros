@@ -173,6 +173,14 @@ def fake_github(
                     comments.append(json.loads(request.content)["body"])
                     return httpx.Response(201, json={"id": len(comments)})
             return httpx.Response(404, json={"message": "Not Found"})
+        if len(rest) == 2 and rest[0] == "pulls" and request.method == "PATCH":
+            number = int(rest[1])
+            body = json.loads(request.content)
+            for pull in state.get(slug, []):
+                if pull["number"] == number:
+                    pull["title"] = body["title"]
+                    return httpx.Response(200, json=pull)
+            return httpx.Response(404, json={"message": "Not Found"})
         if len(rest) == 2 and rest[0] == "pulls" and request.method == "GET":
             number = int(rest[1])
             for pull in state.get(slug, []):

@@ -5,7 +5,8 @@ Version 0.1 opened a pull request and read it back. Version 0.2 adds what the de
 needs: fetch a branch of a repository as a package, and push a branch from a package. A package
 is in the format of the delivery area (a git bundle for the default one). Version 0.3 adds a
 comment on a pull request: the hub posts there what the Owner side records after the gate
-(ADR 0020).
+(ADR 0020). Version 0.4 adds `update_title`: the hub retitles a pull request when an inspection
+changes the decision (ADR 0020).
 
 Version 0.x.
 """
@@ -15,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-INTERFACE_VERSION = "0.3.0"
+INTERFACE_VERSION = "0.4.0"
 
 
 class ForgeError(Exception):
@@ -75,6 +76,11 @@ class Forge(Protocol):
     async def comment(self, repository: RepositoryRef, number: int, body: str) -> None:
         """Add a comment to a pull request, or raise ForgeError: an unknown pull request and an
         empty body are refused. The body is text, kept verbatim."""
+        ...
+
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        """Change the title of a pull request, or raise ForgeError: an unknown pull request and
+        an empty title are refused."""
         ...
 
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:

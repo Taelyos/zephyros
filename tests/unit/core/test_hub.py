@@ -14,8 +14,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from tests.unit.core.contract_fixtures import note, put, requirement, wire
-from tests.unit.core.hub_fixtures import Env, make_env, seed_contract
+from tests.unit.core.contract_fixtures import note, put, requirement, story, wire
+from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
 from zephyros.core.audit import Action, Outcome, Reason
 from zephyros.core.hub import TOOL_SPECS
 from zephyros.core.rights import PERMISSIONS
@@ -727,3 +727,86 @@ def test_the_owner_learns_the_shape_of_a_change_from_the_tool_itself() -> None:
     assert '"op": "delete", "id"' in operations.description
     for shape in ("US-E1-01.1", "LNK:US-E1-01>EXG-01", "operator-reserved"):
         assert shape in spec.description
+
+
+# ----------------------------------------------------------------------------- C49
+def test_acceptance_put_names_the_criteria_that_use_the_file(env: Env) -> None:
+    """C49: a file runs only through the criteria that name it."""
+    attach_deliveries(env)
+    named = {
+        "type": "criterion",
+        "id": "US-E1-01.2",
+        "story": "US-E1-01",
+        "text": "The system shall add.",
+        "verification": "T",
+        "test": "checks/extra.txt::test_extra",
+    }
+    applied = env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="a criterion that names a test",
+        operations=[wire(put(named))],
+    )
+    assert applied.ok, applied.failure
+    response = env.call(
+        "owner_a", "acceptance.put", path="checks/extra.txt", content="test_extra: pass\n"
+    )
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == ["US-E1-01.2"]
+    assert "warning" not in response.data
+
+
+def test_acceptance_put_warns_when_no_criterion_names_the_file(env: Env) -> None:
+    """C49: the Owner side's file that no criterion names never runs — the tool says so."""
+    attach_deliveries(env)
+    response = env.call(
+        "owner_a", "acceptance.put", path="checks/orphan.txt", content="test_x: pass\n"
+    )
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == []
+    assert response.data["warning"] == _NOT_RUN
+
+
+_NOT_RUN = (
+    "no criterion of the current contract names this file in a story that covers a requirement "
+    "or a constraint: the gate does not run it"
+)
+
+
+def test_acceptance_put_warns_when_the_story_of_the_criterion_covers_nothing(env: Env) -> None:
+    """C49: the gate runs only the criteria of a story that covers a requirement or a constraint;
+    a criterion of a story that covers nothing names a file that never runs."""
+    attach_deliveries(env)
+    loose = {
+        "type": "criterion",
+        "id": "US-E3-01.1",
+        "story": "US-E3-01",
+        "text": "The system shall add.",
+        "verification": "T",
+        "test": "checks/loose.txt::test_loose",
+    }
+    proposed = env.call(
+        "owner_a",
+        "contract.propose",
+        summary="a story that covers nothing",
+        operations=[wire(put(story(3, 1))), wire(put(loose))],
+    )
+    assert proposed.ok, proposed.failure
+    assert proposed.data is not None
+    approved = env.call(
+        "operator",
+        "contract.approve",
+        project_id=env.project_a,
+        change_id=proposed.data["change_id"],
+    )
+    assert approved.ok, approved.failure
+    response = env.call(
+        "owner_a", "acceptance.put", path="checks/loose.txt", content="test_loose: pass\n"
+    )
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == []
+    assert response.data["warning"] == _NOT_RUN

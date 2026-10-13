@@ -65,9 +65,9 @@ Dummy: `ScriptedModelProvider`, which replays replies written in advance and rec
 
 ## Forge
 
-Version: `0.3.0`
+Version: `0.4.0`
 
-A forge hosts git repositories and pull requests (GitHub in version 1). It opens a pull request and reads it back, comments on it, fetches a branch as a package and pushes a branch from one. A package is in the format of the delivery area (a git bundle for the default one).
+A forge hosts git repositories and pull requests (GitHub in version 1). It opens a pull request and reads it back, comments on it, retitles it, fetches a branch as a package and pushes a branch from one. A package is in the format of the delivery area (a git bundle for the default one).
 
 | Operation | Meaning |
 | --- | --- |
@@ -75,6 +75,7 @@ A forge hosts git repositories and pull requests (GitHub in version 1). It opens
 | `open_pull_request(PullRequestRequest) -> PullRequest` | Raises `ForgeError` for an empty title, an unknown repository or an unknown branch |
 | `get_pull_request(RepositoryRef, number) -> PullRequest` | Raises `ForgeError` if there is none |
 | `comment(RepositoryRef, number, body)` | Add a comment, kept verbatim; `ForgeError` for an unknown pull request or an empty body (0.3: what the Owner side records after the gate, ADR 0020) |
+| `update_title(RepositoryRef, number, title)` | Change the title; `ForgeError` for an unknown pull request or an empty title (0.4: the hub retitles a pull request when an inspection changes the decision, ADR 0020) |
 | `fetch(RepositoryRef, branch) -> bytes` | The branch as a package; `ForgeError` for an unknown repository or branch |
 | `push(RepositoryRef, branch, package)` | Create the branch; an existing branch is refused (the hub never rewrites a branch of the user) |
 | `aclose()` | Release what the forge holds, once, in the event loop that used it |
@@ -83,7 +84,7 @@ Implementations: `InMemoryForge` (dummy), `DirectoryForge` (bare git repositorie
 
 The body of a pull request is text. The forge returns it exactly as it received it, markup and control characters included, and never interprets it (ATK-60 relies on this).
 
-What the suite checks: the major version; a pull request echoes the request and reads back unchanged; a hostile body comes back verbatim; each pull request has its own number and address; an empty title, an unknown repository, an unknown branch and an unknown pull request are refused; an existing branch can be fetched and an unknown one cannot; a pushed branch can be fetched and proposed; an existing branch is never pushed over.
+What the suite checks: the major version; a pull request echoes the request and reads back unchanged; a hostile body comes back verbatim; each pull request has its own number and address; an empty title, an unknown repository, an unknown branch and an unknown pull request are refused; a comment is added and an unknown pull request and an empty comment are refused; a pull request is retitled and an unknown one and an empty title are refused; an existing branch can be fetched and an unknown one cannot; a pushed branch can be fetched and proposed; an existing branch is never pushed over.
 
 Dummy: `InMemoryForge`, repositories, packages and pull requests in a dictionary.
 
