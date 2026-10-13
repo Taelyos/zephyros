@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 
+from zephyros.core.masking import mask_text
 from zephyros.core.ports.model_provider import (
     INTERFACE_VERSION,
     ChatMessage,
@@ -25,6 +26,8 @@ from zephyros.core.ports.model_provider import (
 )
 
 TIMEOUT_SECONDS = 600.0
+REASON_CHARACTERS = 300
+"""How much of the provider's reason for refusing a request (HTTP 400) the error carries."""
 
 
 class FileCredential:
@@ -55,6 +58,23 @@ def _wire_message(message: ChatMessage) -> dict[str, object]:
     if message.tool_call_id is not None:
         wire["tool_call_id"] = message.tool_call_id
     return wire
+
+
+def _refusal_reason(response: httpx.Response, credential: str) -> str:
+    """For a request the provider refuses as malformed (HTTP 400), the `error.message` of its
+    JSON answer, masked and bounded: without it, the third real run could not tell why a turn
+    failed. Every other status is reported alone — an authentication error may echo a key."""
+    if response.status_code != 400:
+        return ""
+    try:
+        error = response.json().get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    except (ValueError, AttributeError):
+        return ""
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    text = mask_text(" ".join(message.split()), [credential])[:REASON_CHARACTERS]
+    return f": {text}"
 
 
 class OpenAiCompatibleProvider:
@@ -113,7 +133,10 @@ class OpenAiCompatibleProvider:
                 f"the provider could not be reached ({type(error).__name__})"
             ) from None
         if response.status_code != 200:
-            raise ModelProviderError(f"the provider answered HTTP {response.status_code}")
+            raise ModelProviderError(
+                f"the provider answered HTTP {response.status_code}"
+                + _refusal_reason(response, credential)
+            )
         return self._parse(request, response)
 
     @staticmethod

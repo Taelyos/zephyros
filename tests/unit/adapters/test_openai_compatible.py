@@ -130,6 +130,23 @@ def test_tool_calls_from_the_upstream_are_returned(tmp_path: Path) -> None:
     assert run(provider, request()).message.tool_calls[0].name == "echo"
 
 
+def test_a_malformed_request_is_reported_with_the_providers_reason_masked_and_bounded(
+    tmp_path: Path,
+) -> None:
+    """The third real run lost two turns to an HTTP 400 that said nothing more."""
+    reason = f"Missing field at message index 7; key {KEY}; " + "x" * 1000
+    provider, _ = provider_for(
+        tmp_path,
+        lambda http: httpx.Response(400, json={"error": {"message": reason, "type": "invalid"}}),
+    )
+    with pytest.raises(ModelProviderError) as caught:
+        run(provider, request())
+    said = str(caught.value)
+    assert said.startswith("the provider answered HTTP 400: Missing field at message index 7;")
+    assert KEY not in said
+    assert len(said) < 400
+
+
 @pytest.mark.parametrize("status", [400, 401, 429, 500, 503])
 def test_an_upstream_error_is_reported_by_its_status_alone_never_its_body(
     tmp_path: Path, status: int
