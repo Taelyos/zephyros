@@ -767,4 +767,6 @@ def test_acceptance_put_warns_when_no_criterion_names_the_file(env: Env) -> None
     assert response.ok, response.failure
     assert response.data is not None
     assert response.data["named_by"] == []
-    assert response.data["warning"] == "no criterion names this file: the gate never runs it"
+    assert response.data["warning"] == (
+        "no criterion of the current contract names this file: the gate does not run it"
+    )

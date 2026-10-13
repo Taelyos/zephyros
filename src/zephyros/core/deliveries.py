@@ -593,9 +593,8 @@ class DeliveryService:
             for path in sorted(protected & set(acceptance))
         )
         # An acceptance test of the Owner side that no criterion names never runs: say so.
-        unnamed = tuple(
-            sorted(path for path in acceptance if path not in {t.partition("::")[0] for t in tests})
-        )
+        named_files = {test.partition("::")[0] for test in tests}
+        unnamed = tuple(sorted(path for path in acceptance if path not in named_files))
         outcomes: dict[str, Any] = {}
         log = ""
         if tests:

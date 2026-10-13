@@ -910,15 +910,16 @@ class Hub:
     def _acceptance_put(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
         path = str(arguments["path"])
-        digest = self._delivery_service().put_acceptance(
-            project_id, path, str(arguments["content"])
-        )
+        # The gate runs a file only through the criteria that name it: say which do, if any.
         version = self._contracts.read(caller.principal, project_id)
-        prefix = path + "::"
         named_by = sorted(
             str(item["id"])
             for item in version.objects.values()
-            if item.get("type") == "criterion" and str(item.get("test") or "").startswith(prefix)
+            if item.get("type") == "criterion"
+            and str(item.get("test") or "").startswith(path + "::")
+        )
+        digest = self._delivery_service().put_acceptance(
+            project_id, path, str(arguments["content"])
         )
         data: dict[str, object] = {
             "project_id": project_id,
@@ -927,7 +928,9 @@ class Hub:
             "named_by": named_by,
         }
         if not named_by:
-            data["warning"] = "no criterion names this file: the gate never runs it"
+            data["warning"] = (
+                "no criterion of the current contract names this file: the gate does not run it"
+            )
         audit: dict[str, object] = {
             "project_id": project_id,
             "path": path,
