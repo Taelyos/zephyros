@@ -8,7 +8,14 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- The configuration schema, version 1.13.0: the models the gateway may serve come from the
+  configuration alone (`gateway.models`); the code no longer holds a list of authorised models
+  (`AUTHORISED_MODELS`, which allowed DeepSeek V4.1 Flash alone, is gone). A configuration that
+  names one model authorises that one alone, as the real runs did. When the model sent to the
+  provider is not in the list, the refusal names the key that sets it, `gateway.upstream_model`,
+  or `gateway.model` when the file has no `gateway.upstream_model`, and lists the models it
+  allows. A file accepted by 1.12.0 is accepted by 1.13.0.
 
 ## [0.1.0] - 2026-10-13
 

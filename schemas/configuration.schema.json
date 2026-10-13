@@ -312,7 +312,7 @@
           },
           "maxItems": 8,
           "minItems": 1,
-          "description": "The models the gateway may serve at the provider, when it is openai-compatible: the configured model must be one of them, and the hub refuses to start for any other (the owner's model policy)"
+          "description": "The models the gateway may serve at the provider, when it is openai-compatible: the model it sends (gateway.upstream_model, or gateway.model when that is unset) must be one of them, and the hub refuses to start for any other. This list is the model policy of the hub: naming one model authorises that one alone"
         },
         "session_header": {
           "type": "string",
@@ -467,7 +467,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 50,
-          "description": "Rejected deliveries on one branch before the main agent is alerted (EXG-23)",
+          "description": "FAIL decisions in a row on one project before the main agent is alerted (EXG-23)",
           "default": 3
         }
       },
@@ -483,14 +483,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.12.0",
+  "x-zephyros-schema-version": "1.13.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port and hub.main_agent_port are three different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
     "network.instance_prefix is longer than the prefix of network.instance_pool",
     "network.resolvers holds no address of a protected network (the guard blocks them)",
     "forge.token_file is set when forge.provider is github",
-    "gateway.upstream_url and gateway.credential_file are set when gateway.provider is openai-compatible, and the model it serves is one of gateway.models",
+    "gateway.upstream_url and gateway.credential_file are set when gateway.provider is openai-compatible, and the model it sends to the provider (gateway.upstream_model, or gateway.model when that is unset) is one of gateway.models",
     "verification.kit_image is set when verification.runner is sandbox",
     "gateway.simulation runs only with the stub provider",
     "notifications.url and notifications.secret are set together, the url is http(s), and the secret is at least 16 characters"
