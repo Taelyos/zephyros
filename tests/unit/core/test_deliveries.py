@@ -19,12 +19,14 @@ from zephyros.adapters.memory.contract_store import InMemoryContractStore
 from zephyros.adapters.memory.delivery_store import InMemoryDeliveryStore
 from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
-from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
+from zephyros.core.audit import Action, AuditEvent, AuditLog, AuditRecord, LogError, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
 from zephyros.core.deliveries import (
+    WRITE_ATTEMPTS,
     DeliveryRecord,
     DeliveryService,
     DeliveryState,
+    StaleRecordError,
     Verdict,
     flagged_paths,
     report_for,
@@ -92,11 +94,12 @@ def service(
     specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
     store: InMemoryDeliveryStore | None = None,
     events: Callable[[str, Mapping[str, object]], None] | None = None,
+    log_store: InMemoryLogStore | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
     clock = FakeClock()
-    audit = AuditLog(InMemoryLogStore(), clock)
+    audit = AuditLog(log_store or InMemoryLogStore(), clock)
     projects = ProjectService(InMemoryProjectStore(), clock, new_id=lambda: "p_service1")
     contracts = ContractService(InMemoryContractStore(), clock, new_change_id=lambda: "c_00000001")
     project = projects.create(OPERATOR, {"name": "Calc"}).id
@@ -904,3 +907,52 @@ def test_a_receiver_that_fails_keeps_neither_the_decision_nor_the_pull_request_b
         "PASS",
         1,
     )
+
+
+class RefusalUnlogged(InMemoryLogStore):
+    """A log that cannot take the record of a refusal: the job fails once the refusal is kept."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.DELIVERY_CHECK and record.outcome is Outcome.REFUSED:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused() -> None:
+    """The job fails after the refusal is kept: the delivery stays refused, never ERROR."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, audit, _store = service(
+        events=lambda event, payload: events.append((event, payload)),
+        log_store=RefusalUnlogged(),
+    )
+    ready(made, project)
+    delivery = delivered(made, project, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"})
+    record = made.status(project, delivery)
+    assert record.state is DeliveryState.REFUSED
+    assert audit.read(project, 0, 1000)[-1].action is Action.VERIFICATION_RUN  # the error, logged
+    assert [payload for event, payload in events if event == "delivery.decided"] == []
+
+
+class Contended(InMemoryDeliveryStore):
+    """A store where, once `busy`, another writer always gets in first."""
+
+    busy = False
+    attempts = 0
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        if self.busy:
+            self.attempts += 1
+            raise StaleRecordError("written by someone else")
+        return super().put_record(record)
+
+
+def test_a_change_that_is_never_written_fails_after_a_bounded_number_of_attempts() -> None:
+    store = Contended()
+    made, project, _audit, _store = service(store=store)
+    ready(made, project)
+    delivery = delivered(made, project)
+    store.busy = True
+    with pytest.raises(StaleRecordError):
+        made.record_review("operator", project, delivery, Verdict.ACCEPT, "fine")
+    assert store.attempts == WRITE_ATTEMPTS
+    assert made.status(project, delivery).review is None
