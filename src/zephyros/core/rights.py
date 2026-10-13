@@ -61,6 +61,7 @@ PERMISSIONS: Mapping[Action, Mapping[PrincipalKind, Scope]] = MappingProxyType(
         Action.CONTRACT_PROPOSE: _row(_ALL, _ALL, _OWN, _NO),
         Action.CONTRACT_APPROVE: _row(_ALL, _ALL, _OWN, _NO),
         Action.CONTRACT_REJECT: _row(_ALL, _ALL, _OWN, _NO),
+        Action.CONTRACT_PENDING: _row(_ALL, _ALL, _OWN, _NO),
         Action.CONTRACT_APPLY_RESERVED: _row(_ALL, _NO, _NO, _NO),
         Action.CONTRACT_IMPORT: _row(_ALL, _NO, _NO, _NO),
         Action.GATEWAY_CALL: _row(_NO, _NO, _OWN, _OWN),

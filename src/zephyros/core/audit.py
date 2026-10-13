@@ -64,6 +64,7 @@ class Action(StrEnum):
     CONTRACT_REJECT = "contract.reject"
     CONTRACT_APPLY_RESERVED = "contract.apply_reserved"
     CONTRACT_IMPORT = "contract.import"
+    CONTRACT_PENDING = "contract.pending"
     CONTINUITY = "continuity.step"
     NOTIFICATION = "notification.sent"
     EGRESS = "egress.refused"

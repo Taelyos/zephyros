@@ -299,7 +299,18 @@ def test_reads_follow_the_rights() -> None:
     assert refusal_reason(service.read, FOREIGN_OWNER, PROJECT) is Reason.OTHER_PROJECT
     assert refusal_reason(service.read, CONTRACTOR, OTHER_PROJECT) is Reason.OTHER_PROJECT
     assert refusal_reason(service.read, OPERATOR, PROJECT, 9) is Reason.NOT_FOUND
-    assert refusal_reason(service.pending, CONTRACTOR, OTHER_PROJECT) is Reason.OTHER_PROJECT
+    assert refusal_reason(service.pending, FOREIGN_OWNER, PROJECT) is Reason.OTHER_PROJECT
+
+
+def test_who_may_decide_a_change_reads_it_first_and_the_contractor_does_not() -> None:
+    """ADR 0020: the second real run's operator could not read what it approved."""
+    service, _store, _clock = seeded()
+    change_id = propose(service, OWNER, put(criterion(1, 2, 1, "Reworded.")))
+    for reader in (OPERATOR, MAIN_AGENT, OWNER):
+        [found] = service.pending(reader, PROJECT)
+        assert found.id == change_id
+        assert [op.op for op in found.operations] == ["put"]
+    assert refusal_reason(service.pending, CONTRACTOR, PROJECT) is Reason.FORBIDDEN
 
 
 def test_a_project_without_a_contract_reads_as_empty() -> None:

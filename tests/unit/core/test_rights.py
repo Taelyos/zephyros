@@ -35,6 +35,7 @@ EXPECTED = {
     "contract.propose": ("any", "any", "own", "none"),
     "contract.approve": ("any", "any", "own", "none"),
     "contract.reject": ("any", "any", "own", "none"),
+    "contract.pending": ("any", "any", "own", "none"),
     "contract.apply_reserved": ("any", "none", "none", "none"),
     "contract.import": ("any", "none", "none", "none"),
     "gateway.call": ("none", "none", "own", "own"),

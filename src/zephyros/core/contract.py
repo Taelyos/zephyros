@@ -496,7 +496,8 @@ class ContractService:
         return version
 
     def pending(self, principal: Principal, project_id: str) -> list[PendingChange]:
-        self._allow(principal, Action.CONTRACT_READ, project_id)
+        """The changes that await a decision: whoever may decide reads them first (ADR 0020)."""
+        self._allow(principal, Action.CONTRACT_PENDING, project_id)
         return self._store.pending(project_id)
 
     # ------------------------------------------------------------------ writes

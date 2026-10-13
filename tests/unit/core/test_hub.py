@@ -45,6 +45,7 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
     reading = {"whoami", "project.list", "project.get", "contract.read", "delivery.status"}
     assert names("contractor_a") == reading | {"delivery.declare"}
     assert names("owner_a") == reading | {
+        "contract.pending",
         "contract.propose",
         "contract.approve",
         "contract.reject",
@@ -279,6 +280,26 @@ def test_an_instance_sees_only_its_own_project_in_the_list(env: Env) -> None:
 
 
 # ------------------------------------------------------------------ contract flow and log
+def test_the_approver_reads_the_pending_change_in_full_before_deciding(env: Env) -> None:
+    """ADR 0020: the second real run's operator had to open the database to read a proposal."""
+    proposed = env.call(
+        "owner_a", "contract.propose", summary="note", operations=[wire(put(note(2, "EXG-02")))]
+    )
+    assert proposed.ok and proposed.data is not None
+    read = env.call("main", "contract.pending", project_id=env.project_a)
+    assert read.ok and read.data is not None
+    [change] = cast("list[dict[str, object]]", read.data["changes"])
+    assert change["change_id"] == proposed.data["change_id"]
+    assert change["proposer"] == f"owner:{env.project_a}"
+    assert change["summary"] == "note"
+    assert change["operations"] == [wire(put(note(2, "EXG-02")))]
+    assert env.audit.read(env.project_a)[-1].action is Action.CONTRACT_PENDING
+    refused = env.call("contractor_a", "contract.pending", project_id=env.project_a)
+    assert not refused.ok
+    other = env.call("owner_b", "contract.pending", project_id=env.project_a)
+    assert not other.ok
+
+
 def test_every_action_on_the_contract_is_logged_with_author_action_and_time(env: Env) -> None:
     env.clock.advance(60)
     proposed = env.call(

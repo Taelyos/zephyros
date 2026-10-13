@@ -16,6 +16,7 @@ An agent reaches the hub through MCP on its agent endpoint, and the operator rea
 | `instance.stop` | Stop the instance of a side. | yes | yes | no | no |
 | `instance.status` | Describe the instance of a side. | yes | yes | no | no |
 | `contract.read` | Read a version of the contract (the current one by default) as data. | yes | yes | own project | own project |
+| `contract.pending` | Read the changes of the contract that await a decision, each in full: its proposer, the version it starts from, its summary and its operations. Read a change before approving or rejecting it. | yes | yes | own project | no |
 | `contract.propose` | Propose a change to the contract. Another principal approves or rejects it. A change that touches operator-reserved data (a requirement or constraint, a P0 criterion, a link to a P0 requirement) is refused: the operator applies those. Objects: story {type, id US-E1-01, epic E1, title, text}; criterion {type, id US-E1-01.1, story, text, verification, test file::function}; link {type, id LNK:US-E1-01>EXG-01, kind covers, source, target}; note {type, id NB-001, target, text}. | yes | yes | own project | no |
 | `contract.approve` | Approve a pending change of another principal: it becomes a new version. | yes | yes | own project | no |
 | `contract.reject` | Reject a pending change: the current version stays. | yes | yes | own project | no |

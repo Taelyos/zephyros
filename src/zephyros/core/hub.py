@@ -29,7 +29,7 @@ from zephyros.core.audit import (
     Reason,
     format_line,
 )
-from zephyros.core.clock import Clock, SystemClock
+from zephyros.core.clock import Clock, SystemClock, format_time
 from zephyros.core.continuity import Continuity, TaskState
 from zephyros.core.contract import (
     Change,
@@ -207,6 +207,15 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             scoped=True,
         ),
         _spec(
+            "contract.pending",
+            Action.CONTRACT_PENDING,
+            "Read the changes of the contract that await a decision, each in full: its proposer, "
+            "the version it starts from, its summary and its operations. Read a change before "
+            "approving or rejecting it.",
+            _PROJECT,
+            scoped=True,
+        ),
+        _spec(
             "contract.propose",
             Action.CONTRACT_PROPOSE,
             "Propose a change to the contract. Another principal approves or rejects it. A change "
@@ -360,6 +369,13 @@ def _problems_text(problems: list[Problem]) -> str:
     return "; ".join(str(problem) for problem in problems)
 
 
+def _operation_data(operation: Operation) -> dict[str, object]:
+    """One operation of a change, as a reader of the change sees it."""
+    if operation.op == "put" and operation.object is not None:
+        return {"op": "put", "object": dict(operation.object)}
+    return {"op": "delete", "id": operation.id}
+
+
 def _flagged_terms(change: Change) -> dict[str, list[str]]:
     """EXG-29: the requirements and criteria of a change whose text holds a forbidden term.
     A flag, never a refusal: the Owner decides what to do with it."""
@@ -412,6 +428,7 @@ class Hub:
             "instance.stop": self._instance_stop,
             "instance.status": self._instance_status,
             "contract.read": self._contract_read,
+            "contract.pending": self._contract_pending,
             "contract.propose": self._contract_propose,
             "contract.approve": self._contract_approve,
             "contract.reject": self._contract_reject,
@@ -978,6 +995,25 @@ class Hub:
             "objects": {key: dict(item) for key, item in version.objects.items()},
         }
         return ToolResult(data, {"project_id": project_id, "version_id": version.id}, project_id)
+
+    def _contract_pending(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
+        project_id = self._known_project(caller, arguments)
+        changes = self._contracts.pending(caller.principal, project_id)
+        data: dict[str, object] = {
+            "project_id": project_id,
+            "changes": [
+                {
+                    "change_id": change.id,
+                    "proposer": change.proposer,
+                    "base_version": change.base_version,
+                    "summary": change.summary,
+                    "operations": [_operation_data(op) for op in change.operations],
+                    "created_at": format_time(change.created_at),
+                }
+                for change in changes
+            ],
+        }
+        return ToolResult(data, {"project_id": project_id, "pending": len(changes)}, project_id)
 
     def _contract_propose(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
