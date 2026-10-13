@@ -256,7 +256,7 @@ def test_atk_16_a_named_test_the_hub_does_not_hold_is_never_taken_from_the_deliv
     delivery = deliver(world, {**ADD_SUB, NEW_ACCEPTANCE: b"test_sub: pass\n"}, branch="helpful")
     found = status(world, delivery)
     assert found["outcomes"]["checks/sub.txt::test_sub"] in ("not_run", "error")
-    assert found["decision"] != "PASS"
+    assert (found["decision"], found["pull_request"]) == ("FAIL", None)  # EXG-02 is unverified
     assert "- `checks/sub.txt` (the delivered version was set aside)" in found["report"]
     [check] = [
         json.loads(r.parameters)
