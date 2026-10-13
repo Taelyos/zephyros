@@ -74,6 +74,7 @@ PERMISSIONS: Mapping[Action, Mapping[PrincipalKind, Scope]] = MappingProxyType(
         Action.DELIVERY_DECLARE: _row(_NO, _NO, _NO, _OWN),
         Action.DELIVERY_STATUS: _row(_ALL, _ALL, _OWN, _OWN),
         Action.INSPECTION_RECORD: _row(_ALL, _ALL, _OWN, _NO),
+        Action.DELIVERY_REVIEW: _row(_ALL, _ALL, _OWN, _NO),
     }
 )
 

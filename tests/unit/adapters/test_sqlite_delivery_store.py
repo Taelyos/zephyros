@@ -1,4 +1,5 @@
-"""The SQLite store of deliveries keeps what ADR 0020 adds to a delivery, and reads what came before."""
+"""The SQLite store of deliveries keeps what ADR 0020 adds to a delivery, and reads the records
+written before."""
 
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ def test_a_record_keeps_its_contract_version_inspections_review_and_flags() -> N
 def test_a_record_written_before_adr_0020_reads_with_empty_additions() -> None:
     database = Database(":memory:")
     store = SqliteDeliveryStore(database)
-    body = {
+    body: dict[str, object] = {
         "branch": "work",
         "state": "decided",
         "received_at": "2026-10-12T08:00:00Z",

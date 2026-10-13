@@ -51,6 +51,7 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
         "contract.reject",
         "acceptance.put",
         "inspection.record",
+        "delivery.review",
     }
     assert names("main") == set(TOOL_SPECS) - {
         "contract.apply_reserved",
@@ -286,9 +287,11 @@ def test_the_approver_reads_the_pending_change_in_full_before_deciding(env: Env)
     proposed = env.call(
         "owner_a", "contract.propose", summary="note", operations=[wire(put(note(2, "EXG-02")))]
     )
-    assert proposed.ok and proposed.data is not None
+    assert proposed.ok
+    assert proposed.data is not None
     read = env.call("main", "contract.pending", project_id=env.project_a)
-    assert read.ok and read.data is not None
+    assert read.ok
+    assert read.data is not None
     [change] = cast("list[dict[str, object]]", read.data["changes"])
     assert change["change_id"] == proposed.data["change_id"]
     assert change["proposer"] == f"owner:{env.project_a}"

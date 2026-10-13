@@ -320,6 +320,27 @@ def test_the_owner_reads_the_delivered_branch_it_judges(world: World) -> None:
     assert world["owner_a"].http(token="").get(f"/staging/delivery/{delivery}").status_code == 401
 
 
+def test_the_owner_records_its_verdict_and_the_pull_request_shows_it(
+    world: World, forge_root: Path
+) -> None:
+    """ADR 0020: the verdict of the Owner side is a tool, kept, logged and posted; the
+    Contractor cannot give one, nor an Owner of another project."""
+    prepared(world)
+    delivery = deliver(world, ADD_SUB)
+    arguments = {"delivery_id": delivery, "verdict": "accept", "reasons": "EXG-01 and EXG-02 hold."}
+    reviewed = world["owner_a"].tool("delivery_review", arguments)
+    assert not reviewed.refused, reviewed.error
+    assert world["contractor_a"].tool("delivery_review", arguments).refused
+    assert world["owner_b"].tool("delivery_review", arguments).refused
+    world.run_jobs()
+    owner, _, name = REPOSITORY.partition("/")
+    pulls = json.loads((forge_root / owner / f"{name}.pulls.json").read_text())
+    [comment] = pulls[0]["comments"]
+    assert "**Review of the Owner side** (owner:" in comment
+    assert "EXG-01 and EXG-02 hold." in comment
+    assert status(world, delivery)["review"]["verdict"] == "accept"
+
+
 # ----------------------------------------------------------------------------- ATK-23, EXG-49
 def test_atk_23_hostile_text_in_the_delivery_changes_neither_the_decision_nor_the_report_shape(
     world: World,

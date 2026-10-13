@@ -202,7 +202,8 @@ def compute_gate(
     checks = checks_of(lambda j: j.verified)
     awaited = [j for j in judged if j.awaiting]
     every = tuple(reservations) + tuple(
-        f"{j.id} ({j.priority}) awaits a recorded judgment: {', '.join(m for m in j.methods if m != 'test')}"
+        f"{j.id} ({j.priority}) awaits a recorded judgment: "
+        + ", ".join(m for m in j.methods if m != "test")
         for j in awaited
     )
     if not all(check.met for check in checks_of(lambda j: j.verified or j.awaiting)):

@@ -185,6 +185,16 @@ class GitHubForge:
         data = response.json()
         return self._pull(repository, data)
 
+    async def comment(self, repository: RepositoryRef, number: int, body: str) -> None:
+        self._validate(repository)
+        if not body.strip():
+            raise ForgeError("the comment is empty")
+        response = await self._call(
+            "POST", f"/repos/{repository.slug}/issues/{number}/comments", {"body": body}
+        )
+        if response.status_code != 201:
+            raise self._failure(response, f"cannot comment on pull request {number}")
+
     # ------------------------------------------------------------------ branches
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         self._validate(repository)

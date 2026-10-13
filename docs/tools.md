@@ -27,6 +27,7 @@ An agent reaches the hub through MCP on its agent endpoint, and the operator rea
 | `delivery.declare` | Declare the delivery of the branch pushed to `POST /staging/delivery?branch=<name>`: the hub replays the acceptance tests, computes the gate and decides. The Contractor only. | no | no | no | own project |
 | `delivery.status` | Describe a delivery: its state, the decision, the evidence report, the pull request. | yes | yes | own project | own project |
 | `inspection.record` | Record your inspection of one requirement or constraint of a decided delivery, when its methods include one that tests cannot show (inspection, analysis, demonstration): verdict conforms or does_not_conform, and what you observed. The gate decides again from the same results; until an inspection is recorded, such an object keeps the delivery from PASS. Read the delivery first (GET /staging/delivery/<delivery_id>). | yes | yes | own project | no |
+| `delivery.review` | Record your verdict on a decided delivery, after reading it and its report: accept, accept_with_reservations or reject, with your reasons. It is kept with the delivery, logged, and posted on its pull request; the merge stays a human decision. | yes | yes | own project | no |
 | `log.read` | Read records of the log. The operator only. | yes | no | no | no |
 | `log.verify` | Verify the chain of a stream. The operator only. | yes | no | no | no |
 

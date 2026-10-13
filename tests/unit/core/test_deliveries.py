@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -18,7 +19,7 @@ from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
-from zephyros.core.deliveries import DeliveryService, DeliveryState, flagged_paths
+from zephyros.core.deliveries import DeliveryService, DeliveryState, Verdict, flagged_paths
 from zephyros.core.errors import Refusal
 from zephyros.core.gate import Inspected
 from zephyros.core.ports.forge import ForgeError, RepositoryRef
@@ -422,3 +423,88 @@ def test_the_flagged_paths_are_the_protected_files_and_directories() -> None:
     changed = ("CONTRACT.md", "docs/CONTRACT.md", "spec/a.md", "specs.md", "app.py")
     assert flagged_paths(changed, ("CONTRACT.md", "spec/")) == ("CONTRACT.md", "spec/a.md")
     assert flagged_paths(changed, ()) == ()
+
+
+def calc_forge() -> InMemoryForge:
+    return InMemoryForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+
+
+def test_the_owner_sides_verdict_is_kept_logged_and_posted_on_the_pull_request() -> None:
+    """ADR 0020: the second real run's verdicts lived in a scratch file."""
+    forge = calc_forge()
+    made, project, audit, store = service(forge=forge)
+    ready(made, project)
+    delivery = delivered(made, project)
+    assert made.status(project, delivery).pull_number == 1
+    record = made.record_review(
+        "owner:p_service1", project, delivery, Verdict.ACCEPT_WITH_RESERVATIONS, "EXG-01 holds."
+    )
+    assert record.review is not None
+    assert (record.review["verdict"], record.review["reasons"]) == (
+        "accept_with_reservations",
+        "EXG-01 holds.",
+    )
+    assert store.get_record(project, delivery) == record
+    assert forge.comments == {}  # posted by the worker, never on the request
+    assert made.step()
+    [comment] = forge.comments[("example/calc", 1)]
+    assert "**accept with reservations**, on a gate decision PASS" in comment
+    assert "EXG-01 holds." in comment
+    last = audit.read(project, 0, 1000)[-1]
+    assert (last.action, last.outcome) == (Action.PULL_REQUEST_COMMENT, Outcome.OK)
+
+
+def test_an_inspection_is_posted_on_the_pull_request_too() -> None:
+    forge = calc_forge()
+    made, project, _audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    assert made.step()
+    [comment] = forge.comments[("example/calc", 1)]
+    assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
+    assert "**Decision now: PASS** (it was CONCERNS)" in comment
+
+
+class CommentRefusingForge(InMemoryForge):
+    async def comment(self, repository: RepositoryRef, number: int, body: str) -> None:
+        del repository, number, body
+        raise ForgeError("comments are locked")
+
+
+def test_a_comment_the_forge_refuses_is_logged_and_the_verdict_stays() -> None:
+    forge = CommentRefusingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    made, project, audit, _store = service(forge=forge)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_review("operator", project, delivery, Verdict.REJECT, "CTR-01 fails.")
+    assert made.step()
+    last = audit.read(project, 0, 1000)[-1]
+    assert (last.action, last.outcome) == (Action.PULL_REQUEST_COMMENT, Outcome.ERROR)
+    assert "comments are locked" in last.parameters
+    review = made.status(project, delivery).review
+    assert review is not None
+    assert review["verdict"] == "reject"
+
+
+def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_local() -> None:
+    made, project, _audit, _store = service()
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w2")
+    with pytest.raises(Refusal) as caught:
+        made.record_review("operator", project, pushed.delivery_id, Verdict.ACCEPT, "too soon")
+    assert caught.value.reason is Reason.NOT_PENDING
+    made.declare(project, pushed.delivery_id)
+    while made.step():
+        pass
+    decided = replace(made.status(project, pushed.delivery_id), pull_number=None)
+    made._store.put_record(decided)
+    made.record_review("operator", project, pushed.delivery_id, Verdict.ACCEPT, "fine")
+    assert not made.step()  # no pull request: nothing to post

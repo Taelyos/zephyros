@@ -39,7 +39,7 @@ from zephyros.core.contract import (
     parse_change,
     validate_object,
 )
-from zephyros.core.deliveries import DeliveryRecord, DeliveryService
+from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict
 from zephyros.core.errors import Refusal, remedy
 from zephyros.core.gate import Inspected
 from zephyros.core.importer import import_markdown
@@ -361,6 +361,28 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             scoped=True,
         ),
         _spec(
+            "delivery.review",
+            Action.DELIVERY_REVIEW,
+            "Record your verdict on a decided delivery, after reading it and its report: accept, "
+            "accept_with_reservations or reject, with your reasons. It is kept with the "
+            "delivery, logged, and posted on its pull request; the merge stays a human decision.",
+            _PROJECT,
+            Field("delivery_id", Text(pattern=r"d[0-9]{1,6}"), "The delivery", required=True),
+            Field(
+                "verdict",
+                Choice(("accept", "accept_with_reservations", "reject")),
+                "Your verdict",
+                required=True,
+            ),
+            Field(
+                "reasons",
+                Text(min_length=1, max_length=4000, multiline=True),
+                "Why: what you checked, what holds, what does not",
+                required=True,
+            ),
+            scoped=True,
+        ),
+        _spec(
             "log.read",
             Action.LOG_READ,
             "Read records of the log. The operator only.",
@@ -476,6 +498,7 @@ class Hub:
             "delivery.declare": self._delivery_declare,
             "delivery.status": self._delivery_status,
             "inspection.record": self._inspection_record,
+            "delivery.review": self._delivery_review,
         }
         if set(self._handlers) != set(TOOL_SPECS):
             raise RuntimeError("the registry of tools and the specifications differ")
@@ -928,6 +951,30 @@ class Hub:
             "flagged_paths": list(record.flagged_paths),
         }
         audit: dict[str, object] = {"project_id": project_id, "delivery_id": record.delivery_id}
+        return ToolResult(data, audit, project_id)
+
+    def _delivery_review(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
+        project_id = self._known_project(caller, arguments)
+        verdict = Verdict(str(arguments["verdict"]))
+        record = self._delivery_service().record_review(
+            caller.principal.id,
+            project_id,
+            str(arguments["delivery_id"]),
+            verdict,
+            str(arguments["reasons"]),
+        )
+        data: dict[str, object] = {
+            "delivery_id": record.delivery_id,
+            "verdict": verdict.value,
+            "decision": record.decision,
+            "pull_request": record.pull_request,
+        }
+        audit: dict[str, object] = {
+            "project_id": project_id,
+            "delivery_id": record.delivery_id,
+            "verdict": verdict.value,
+            "decision": record.decision,
+        }
         return ToolResult(data, audit, project_id)
 
     def _inspection_record(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:

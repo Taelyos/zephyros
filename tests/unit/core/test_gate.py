@@ -124,7 +124,7 @@ def test_a_constraint_is_judged_like_a_requirement() -> None:
     assert [j.id for j in result.requirements] == ["CTR-01", "EXG-01"]
     assert result.decision is Decision.CONCERNS
     assert result.reservations == ("CTR-01 (P0) awaits a recorded judgment: inspection",)
-    assert result.checks[0].verified == 1 and result.checks[0].total == 2
+    assert (result.checks[0].verified, result.checks[0].total) == (1, 2)
 
 
 def test_a_recorded_inspection_decides_the_object_it_judges() -> None:

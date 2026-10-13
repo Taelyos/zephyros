@@ -337,7 +337,7 @@ def _made_up(request: PullRequestRequest, number: int = 1) -> PullRequest:
 
 
 class _ForgeVariant(InMemoryForge):
-    def __init__(self, *, interface: str = "0.2.0") -> None:
+    def __init__(self, *, interface: str = "0.3.0") -> None:
         super().__init__({"org/project": frozenset({"main", "feature"})})
         self._interface = interface
 
@@ -399,6 +399,11 @@ class _InventsPullRequests(_ForgeVariant):
             return _made_up(PullRequestRequest(repository, "feature", "main", "t", ""), number)
 
 
+class _CommentsAnywhere(_ForgeVariant):
+    async def comment(self, repository: RepositoryRef, number: int, body: str) -> None:
+        del repository, number, body
+
+
 class _FetchesAnything(_ForgeVariant):
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         del repository, branch
@@ -418,6 +423,10 @@ class _RewritesBranches(_ForgeVariant):
 
 
 FORGE_VARIANTS: dict[str, tuple[Callable[[], Forge], set[str]]] = {
+    "a comment on any pull request, or an empty one, that is accepted": (
+        _CommentsAnywhere,
+        {"test_comments_on_a_pull_request_and_refuses_an_unknown_one"},
+    ),
     "a later major version": (
         lambda: _ForgeVariant(interface="1.0.0"),
         {"test_follows_the_tested_major_version"},

@@ -164,6 +164,15 @@ def fake_github(
             }
             state[slug].append(pull)
             return httpx.Response(201, json=pull)
+        if len(rest) == 3 and rest[0] == "issues" and rest[2] == "comments":
+            number = int(rest[1])
+            for pull in state.get(slug, []):
+                if pull["number"] == number and request.method == "POST":
+                    comments = pull.setdefault("comments", [])
+                    assert isinstance(comments, list)
+                    comments.append(json.loads(request.content)["body"])
+                    return httpx.Response(201, json={"id": len(comments)})
+            return httpx.Response(404, json={"message": "Not Found"})
         if len(rest) == 2 and rest[0] == "pulls" and request.method == "GET":
             number = int(rest[1])
             for pull in state.get(slug, []):

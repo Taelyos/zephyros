@@ -26,6 +26,8 @@ class InMemoryForge:
         self._branches = {slug: set(branches) for slug, branches in repositories.items()}
         self._packages: dict[tuple[str, str], bytes] = dict(packages or {})
         self._pull_requests: dict[str, list[PullRequest]] = {slug: [] for slug in self._branches}
+        self.comments: dict[tuple[str, int], list[str]] = {}
+        """The comments of each pull request, by repository and number, in order."""
         self.closed = False
 
     @property
@@ -59,6 +61,13 @@ class InMemoryForge:
         if not 1 <= number <= len(pull_requests):
             raise ForgeError(f"no pull request {number} in {repository.slug}")
         return pull_requests[number - 1]
+
+    async def comment(self, repository: RepositoryRef, number: int, body: str) -> None:
+        if not 1 <= number <= len(self._pull_requests.get(repository.slug, [])):
+            raise ForgeError(f"no pull request {number} in {repository.slug}")
+        if not body.strip():
+            raise ForgeError("the comment is empty")
+        self.comments.setdefault((repository.slug, number), []).append(body)
 
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         if branch not in self._branches.get(repository.slug, set()):

@@ -65,15 +65,16 @@ Dummy: `ScriptedModelProvider`, which replays replies written in advance and rec
 
 ## Forge
 
-Version: `0.2.0`
+Version: `0.3.0`
 
-A forge hosts git repositories and pull requests (GitHub in version 1). It opens a pull request and reads it back, fetches a branch as a package and pushes a branch from one. A package is in the format of the delivery area (a git bundle for the default one).
+A forge hosts git repositories and pull requests (GitHub in version 1). It opens a pull request and reads it back, comments on it, fetches a branch as a package and pushes a branch from one. A package is in the format of the delivery area (a git bundle for the default one).
 
 | Operation | Meaning |
 | --- | --- |
 | `interface_version` | The version of this interface that the implementation follows |
 | `open_pull_request(PullRequestRequest) -> PullRequest` | Raises `ForgeError` for an empty title, an unknown repository or an unknown branch |
 | `get_pull_request(RepositoryRef, number) -> PullRequest` | Raises `ForgeError` if there is none |
+| `comment(RepositoryRef, number, body)` | Add a comment, kept verbatim; `ForgeError` for an unknown pull request or an empty body (0.3: what the Owner side records after the gate, ADR 0020) |
 | `fetch(RepositoryRef, branch) -> bytes` | The branch as a package; `ForgeError` for an unknown repository or branch |
 | `push(RepositoryRef, branch, package)` | Create the branch; an existing branch is refused (the hub never rewrites a branch of the user) |
 | `aclose()` | Release what the forge holds, once, in the event loop that used it |

@@ -450,8 +450,9 @@ def _verification() -> Table:
                     min_items=1,
                     max_items=32,
                 ),
-                "Paths of the client's own files (a path, or a directory ending with /): a delivery "
-                "that changes one is flagged in its report and its pull request, never refused",
+                "Paths of the client's own files (a path, or a directory ending with /): a "
+                "delivery that changes one is flagged in its report and its pull request, never "
+                "refused",
                 default=["CONTRACT.md"],
             ),
         )

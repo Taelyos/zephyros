@@ -51,7 +51,7 @@ from zephyros.core.ports.verification import (
 )
 from zephyros.core.principals import OPERATOR
 from zephyros.core.projects import ProjectService
-from zephyros.core.report import Cost, ReportInput, render, with_inspections
+from zephyros.core.report import Cost, ReportInput, mask, render, with_inspections
 
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
@@ -93,6 +93,8 @@ class DeliveryRecord:
     report: str | None = None
     pull_request: str | None = None
     detail: str | None = None
+    pull_number: int | None = None
+    """The number of its pull request on the forge, to comment there."""
     contract_version: int | None = None
     """The version of the contract the gate judged the delivery against."""
     inspections: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
@@ -129,11 +131,20 @@ def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple
     )
 
 
+class Verdict(StrEnum):
+    """The verdict of the Owner side on a delivery: recorded and posted, never a merge."""
+
+    ACCEPT = "accept"
+    ACCEPT_WITH_RESERVATIONS = "accept_with_reservations"
+    REJECT = "reject"
+
+
 @dataclass(frozen=True, slots=True)
 class _Job:
     kind: str
     project_id: str
     delivery_id: str = ""
+    body: str = ""
 
 
 def _run_async[R](coroutine: Coroutine[Any, Any, R]) -> R:
@@ -266,13 +277,8 @@ class DeliveryService:
         """Record the Owner side's inspection of one requirement or constraint of a decided
         delivery, and decide again from the same results (ADR 0020). A delivery that failed
         stays failed: an inspection only evidences what tests cannot show."""
-        record = self._record(project_id, delivery_id)
-        if record.contract_version is None or record.state not in (
-            DeliveryState.DECIDED,
-            DeliveryState.PROPOSED,
-        ):
-            raise Refusal(Reason.NOT_PENDING, "the gate has not decided this delivery yet")
-        version = self._contracts.read(OPERATOR, project_id, record.contract_version)
+        record = self._decided(project_id, delivery_id)
+        version = self._contracts.read(OPERATOR, project_id, record.contract_version or 0)
         item = version.objects.get(object_id)
         if item is None or item.get("type") not in JUDGED_TYPES:
             raise Refusal(Reason.NOT_FOUND, f"{object_id} is no requirement or constraint here")
@@ -313,7 +319,82 @@ class DeliveryService:
             contract_version=record.contract_version,
             after="inspection",
         )
+        self._comment_later(
+            updated,
+            f"**Inspection recorded** by {by}: {object_id} "
+            f"{'conforms' if verdict is Inspected.CONFORMS else 'does not conform'}.\n\n"
+            f"{observation}\n\n**Decision now: {gate.decision.value}** (it was "
+            f"{record.decision}), computed by the gate from the same results and the "
+            "inspections recorded.",
+        )
         return updated
+
+    def record_review(
+        self, by: str, project_id: str, delivery_id: str, verdict: Verdict, reasons: str
+    ) -> DeliveryRecord:
+        """Record the verdict of the Owner side on a decided delivery, with its reasons; it is
+        posted on the pull request. The merge stays a human act (ADR 0020)."""
+        record = self._decided(project_id, delivery_id)
+        review = {
+            "verdict": verdict.value,
+            "reasons": reasons,
+            "by": by,
+            "at": format_time(self._clock.now()),
+        }
+        updated = replace(record, review=review)
+        self._store.put_record(updated)
+        self._comment_later(
+            updated,
+            f"**Review of the Owner side** ({by}): **{verdict.value.replace('_', ' ')}**, "
+            f"on a gate decision {record.decision}.\n\n{reasons}\n\n"
+            "The merge stays a human decision.",
+        )
+        return updated
+
+    def _decided(self, project_id: str, delivery_id: str) -> DeliveryRecord:
+        record = self._record(project_id, delivery_id)
+        if record.contract_version is None or record.state not in (
+            DeliveryState.DECIDED,
+            DeliveryState.PROPOSED,
+        ):
+            raise Refusal(Reason.NOT_PENDING, "the gate has not decided this delivery yet")
+        return record
+
+    def _comment_later(self, record: DeliveryRecord, body: str) -> None:
+        """Post a comment on the pull request of the delivery, from the worker: a forge call
+        never runs on a request."""
+        if record.pull_number is not None and self._forge is not None:
+            self._enqueue(_Job("comment", record.project_id, record.delivery_id, body))
+
+    def _do_comment(self, job: _Job) -> None:
+        record = self._store.get_record(job.project_id, job.delivery_id)
+        source = self._store.get_source(job.project_id)
+        if record is None or record.pull_number is None or source is None or self._forge is None:
+            return
+        try:
+            self._run_async(
+                self._forge.comment(
+                    RepositoryRef(source.repository),
+                    record.pull_number,
+                    mask(job.body, self._secrets()),
+                )
+            )
+        except ForgeError as error:
+            self._record_event(
+                job.project_id,
+                Action.PULL_REQUEST_COMMENT,
+                Outcome.ERROR,
+                delivery=job.delivery_id,
+                error=str(error),
+            )
+            return
+        self._record_event(
+            job.project_id,
+            Action.PULL_REQUEST_COMMENT,
+            Outcome.OK,
+            delivery=job.delivery_id,
+            number=record.pull_number,
+        )
 
     def _record(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         record = self._store.get_record(project_id, delivery_id)
@@ -334,6 +415,8 @@ class DeliveryService:
             job = self._jobs.popleft()
         if job.kind == "prepare":
             self._do_prepare(job.project_id)
+        elif job.kind == "comment":
+            self._do_comment(job)
         else:
             self._do_verify(job.project_id, job.delivery_id)
         return True
@@ -554,7 +637,12 @@ class DeliveryService:
             )
             return
         self._store.put_record(
-            replace(record, state=DeliveryState.PROPOSED, pull_request=opened.url)
+            replace(
+                record,
+                state=DeliveryState.PROPOSED,
+                pull_request=opened.url,
+                pull_number=opened.number,
+            )
         )
         self._record_event(
             record.project_id,

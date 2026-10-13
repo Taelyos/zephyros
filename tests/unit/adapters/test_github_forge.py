@@ -243,3 +243,23 @@ def test_two_pushes_in_two_event_loops_work(tmp_path: Path) -> None:
             git("rev-parse", "--verify", f"refs/heads/{branch}", cwd=bare)
     finally:
         server.shutdown()
+
+
+def test_a_comment_is_posted_where_github_keeps_the_comments_of_a_pull_request(
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"], seen["path"] = request.method, request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json={"id": 1})
+
+    forge = make(tmp_path, handler)
+    asyncio.run(forge.comment(RepositoryRef("org/project"), 7, "The verdict."))
+    assert (seen["method"], seen["path"]) == ("POST", "/repos/org/project/issues/7/comments")
+    assert seen["body"] == {"body": "The verdict."}
+    with pytest.raises(ForgeError):
+        asyncio.run(make(tmp_path).comment(RepositoryRef("org/project"), 8, "x"))
+    with pytest.raises(ForgeError):
+        asyncio.run(forge.comment(RepositoryRef("org/project"), 7, " "))

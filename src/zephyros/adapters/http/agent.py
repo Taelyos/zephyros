@@ -44,6 +44,7 @@ METADATA_PROBES: Final = frozenset(
 
 DELIVERY_ID: Final = re.compile(r"d[0-9]{1,6}")
 
+
 async def mcp_endpoint(hub: Hub, request: Request, endpoint: Endpoint) -> Response:
     """POST, GET and DELETE on /mcp, for the agent endpoint and the main-agent endpoint."""
     caller = hub.authenticate(

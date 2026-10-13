@@ -97,7 +97,8 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         "",
         "## Requirements",
         "",
-        "| Requirement or constraint | Covered by | Priority | Methods | Acceptance tests | Verified | Why |",
+        "| Requirement or constraint | Covered by | Priority | Methods | Acceptance tests "
+        "| Verified | Why |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for judged in gate.requirements:

@@ -153,6 +153,20 @@ class ForgeConformance:
 
         self._with_fixture(scenario)
 
+    def test_comments_on_a_pull_request_and_refuses_an_unknown_one(self) -> None:
+        async def scenario(fixture: ForgeFixture) -> None:
+            opened = await fixture.forge.open_pull_request(self._request(fixture))
+            await fixture.forge.comment(fixture.repository, opened.number, "The verdict.")
+            await self._must_refuse(
+                fixture.forge.comment(fixture.repository, 10**6, "x"),
+                "a comment on an unknown pull request",
+            )
+            await self._must_refuse(
+                fixture.forge.comment(fixture.repository, opened.number, "  "), "an empty comment"
+            )
+
+        self._with_fixture(scenario)
+
     def test_fetches_an_existing_branch_and_refuses_an_unknown_one(self) -> None:
         async def scenario(fixture: ForgeFixture) -> None:
             await fixture.forge.fetch(fixture.repository, fixture.base)
