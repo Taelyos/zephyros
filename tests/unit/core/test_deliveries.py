@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -24,7 +24,12 @@ from zephyros.core.contract import ContractService, parse_change
 from zephyros.core.deliveries import DeliveryService, DeliveryState, Verdict, flagged_paths
 from zephyros.core.errors import Refusal
 from zephyros.core.gate import Inspected
-from zephyros.core.ports.forge import ForgeError, RepositoryRef
+from zephyros.core.ports.forge import (
+    ForgeError,
+    PullRequest,
+    PullRequestRequest,
+    RepositoryRef,
+)
 from zephyros.core.ports.verification import Outcome as VerificationOutcome
 from zephyros.core.ports.verification import (
     VerificationError,
@@ -690,3 +695,46 @@ def test_a_refusal_names_twenty_paths_at_most_and_counts_them_all() -> None:
     delivered(made, project, {**BASE, **dict.fromkeys(paths, b"test_x: pass\n")})
     [refusal] = checks_logged(audit, project, Outcome.REFUSED)
     assert (refusal["paths"], refusal["count"]) == (sorted(paths)[:20], 30)
+
+
+# ----------------------------------------------------------------------------- T05
+class BusyForge(InMemoryForge):
+    """A forge that takes its time to open a pull request: `meanwhile` runs while it does, as a
+    request that a thread of the hub serves while the worker waits on the network."""
+
+    meanwhile: Callable[[], object] = staticmethod(lambda: None)
+
+    async def open_pull_request(self, request: PullRequestRequest) -> PullRequest:
+        self.meanwhile()
+        return await super().open_pull_request(request)
+
+
+def busy_forge() -> BusyForge:
+    return BusyForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="T05: the update is lost until the fix")
+def test_an_inspection_recorded_while_the_pull_request_opens_is_kept_posted_and_retitled() -> None:
+    """T05: the worker wrote the decision, then waited on the forge. An inspection recorded
+    meanwhile must survive the worker's next write, and reach the pull request once it exists:
+    its comment, and the title of the decision it leads to."""
+    forge = busy_forge()
+    made, project, _audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    forge.meanwhile = lambda: made.record_inspection(
+        "operator", project, "d1", "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    delivery = delivered(made, project)
+    record = made.status(project, delivery)
+    assert record.inspections["CTR-01"]["verdict"] == "conforms"
+    assert (record.state, record.decision, record.pull_number) == (
+        DeliveryState.PROPOSED,
+        "PASS",
+        1,
+    )
+    [comment] = forge.comments[("example/calc", 1)]
+    assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
