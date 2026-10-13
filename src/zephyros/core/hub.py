@@ -300,7 +300,7 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             "acceptance.put",
             Action.ACCEPTANCE_PUT,
             "Keep an acceptance test of the Owner side. Every verification uses it, whatever a "
-            "delivery contains.",
+            "delivery contains. A file runs only through the criteria that name it.",
             _PROJECT,
             Field(
                 "path",
@@ -909,15 +909,31 @@ class Hub:
 
     def _acceptance_put(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
+        path = str(arguments["path"])
         digest = self._delivery_service().put_acceptance(
-            project_id, str(arguments["path"]), str(arguments["content"])
+            project_id, path, str(arguments["content"])
         )
+        version = self._contracts.read(caller.principal, project_id)
+        prefix = path + "::"
+        named_by = sorted(
+            str(item["id"])
+            for item in version.objects.values()
+            if item.get("type") == "criterion" and str(item.get("test") or "").startswith(prefix)
+        )
+        data: dict[str, object] = {
+            "project_id": project_id,
+            "path": path,
+            "sha256": digest,
+            "named_by": named_by,
+        }
+        if not named_by:
+            data["warning"] = "no criterion names this file: the gate never runs it"
         audit: dict[str, object] = {
             "project_id": project_id,
-            "path": str(arguments["path"]),
+            "path": path,
             "sha256": digest,
         }
-        return ToolResult(dict(audit), audit, project_id)
+        return ToolResult(data, audit, project_id)
 
     def _delivery_declare(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)

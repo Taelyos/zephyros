@@ -551,6 +551,10 @@ class DeliveryService:
             (path, hashlib.sha256(acceptance[path]).hexdigest()[:12])
             for path in sorted(protected & set(acceptance))
         )
+        # An acceptance test of the Owner side that no criterion names never runs: say so.
+        unnamed = tuple(
+            sorted(path for path in acceptance if path not in {t.partition("::")[0] for t in tests})
+        )
         outcomes: dict[str, Any] = {}
         log = ""
         if tests:
@@ -594,6 +598,7 @@ class DeliveryService:
                 simulation=self._simulation,
                 flagged_paths=flagged,
                 acceptance_files=ran,
+                unnamed_acceptance_files=unnamed,
             ),
             secrets=self._secrets(),
         )

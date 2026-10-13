@@ -548,3 +548,14 @@ def test_the_report_names_the_version_of_each_acceptance_test_that_ran() -> None
     report = made.status(project, delivered(made, project)).report
     assert report is not None
     assert f"`checks/add.txt` (`{digest}`)" in report
+
+
+def test_an_acceptance_file_no_criterion_names_is_flagged_in_the_report() -> None:
+    """C49: the Owner of the third real run put a test no criterion named; it never ran."""
+    made, project, _audit, _store = service()
+    ready(made, project)
+    made.put_acceptance(project, "checks/extra.txt", "test_extra: pass\n")
+    report = made.status(project, delivered(made, project)).report
+    assert report is not None
+    assert "Acceptance test files that no criterion names (they never run):" in report
+    assert "- `checks/extra.txt`" in report

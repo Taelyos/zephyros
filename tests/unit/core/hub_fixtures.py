@@ -7,8 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tests.unit.core.contract_fixtures import seed_operations
+from zephyros.adapters.dummy.delivery import InMemoryDeliveryArea
+from zephyros.adapters.dummy.verification import AssertionRunner
 from zephyros.adapters.memory.clock import FakeClock
 from zephyros.adapters.memory.contract_store import InMemoryContractStore
+from zephyros.adapters.memory.delivery_store import InMemoryDeliveryStore
 from zephyros.adapters.memory.instance_control import FakeInstanceControl
 from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
@@ -17,6 +20,7 @@ from zephyros.core.audit import AuditLog, AuditRecord
 from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.contract import ContractService
+from zephyros.core.deliveries import DeliveryService
 from zephyros.core.hub import Caller, Hub, ToolResponse
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import Principal, instance_principal
@@ -132,6 +136,23 @@ def _authenticate(hub: Hub, secret: str, address: str, endpoint: Endpoint) -> Ca
     caller = hub.authenticate(secret, peer_address=address, endpoint=endpoint)
     assert caller is not None
     return caller
+
+
+def attach_deliveries(env: Env) -> DeliveryService:
+    """Give the hub a delivery loop over the same services, for the tools that need one."""
+    service = DeliveryService(
+        InMemoryDeliveryArea(),
+        AssertionRunner(),
+        None,
+        env.contracts,
+        env.projects,
+        InMemoryDeliveryStore(),
+        env.audit,
+        env.clock,
+        kit="assertions",
+    )
+    env.hub._deliveries = service
+    return service
 
 
 def seed_contract(env: Env, project: str | None = None) -> None:

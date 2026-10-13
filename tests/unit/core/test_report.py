@@ -95,3 +95,21 @@ def test_the_report_names_each_acceptance_test_file_it_ran_with_its_digest() -> 
     rendered = render(make(acceptance_files=(("test_a.py", "0123456789ab"),)))
     assert "- Acceptance tests of the Owner side (1): `test_a.py` (`0123456789ab`)" in rendered
     assert "- Acceptance tests of the Owner side (0): none" in render(make())
+
+
+def test_an_acceptance_file_that_no_criterion_names_is_flagged() -> None:
+    """C49: the Owner of the third real run noticed a test that never ran; the report says so."""
+    rendered = render(make(unnamed_acceptance_files=("tests/extra.py",)))
+    assert "Acceptance test files that no criterion names (they never run):" in rendered
+    assert "- `tests/extra.py`" in rendered
+    assert "## Flags\n\nNone." in render(make())  # nothing unnamed, nothing flagged
+
+
+def test_both_kinds_of_flags_read_together() -> None:
+    rendered = render(
+        make(flagged_paths=("CONTRACT.md",), unnamed_acceptance_files=("tests/extra.py",))
+    )
+    assert "The delivery changes the client's own files" in rendered
+    assert "- `CONTRACT.md`" in rendered
+    assert "Acceptance test files that no criterion names (they never run):" in rendered
+    assert "- `tests/extra.py`" in rendered
