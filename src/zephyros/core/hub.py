@@ -30,7 +30,7 @@ from zephyros.core.audit import (
     format_line,
 )
 from zephyros.core.clock import Clock, SystemClock, format_time
-from zephyros.core.continuity import Continuity, TaskState
+from zephyros.core.continuity import Continuity, TaskState, ready_for_delivery
 from zephyros.core.contract import (
     Change,
     ContractError,
@@ -46,7 +46,7 @@ from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
 from zephyros.core.ports.agent_engine import Side
-from zephyros.core.principals import Principal
+from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.projects import CREATE_INPUT, ProjectService
 from zephyros.core.rights import decide
 from zephyros.core.schema import Array, Choice, Field, Free, Integer, Problem, Table, Text
@@ -688,19 +688,38 @@ class Hub:
         if side in (Side.OWNER.value, Side.CONTRACTOR.value):
             self._continuity.observe(caller.principal.project_id, side, self._clock.now())
 
+    def _delivery_held(self, project_id: str) -> bool:
+        """Whether the Contractor's task waits for its contract (ADR 0021)."""
+        return not ready_for_delivery(
+            self._contracts.read(OPERATOR, project_id),
+            self._contracts.pending(OPERATOR, project_id),
+        )
+
+    def _contract_changed(self, project_id: str) -> None:
+        """A version or a pending change came or went: the Contractor's task is held while the
+        contract is not ready for it, and its ladder starts once it is (US-E7-01)."""
+        if self._continuity is None:
+            return
+        if self._delivery_held(project_id):
+            self._continuity.hold(project_id, Side.CONTRACTOR.value)
+        else:
+            self._continuity.release(project_id, Side.CONTRACTOR.value, self._clock.now())
+
     def notified(self, event: str, payload: Mapping[str, object]) -> None:
         """The events of the delivery loop reach the continuity and the main agent."""
         if event == "staging.prepared" and self._continuity is not None:
+            project_id = str(payload["project_id"])
             self._continuity.expect(
                 TaskState(
-                    str(payload["project_id"]),
+                    project_id,
                     Side.CONTRACTOR.value,
                     "delivery",
                     "the base of "
                     f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is ready "
                     "and awaits a delivery",
                     self._clock.now(),
-                )
+                ),
+                held=self._delivery_held(project_id),
             )
         if event in ("delivery.decided", "delivery.loop"):
             marked = {**dict(payload), "simulation": self._simulation}
@@ -793,6 +812,7 @@ class Hub:
         operations = tuple(Operation("put", item, str(item["id"])) for item in imported)
         change = Change(str(arguments["summary"]), operations)
         version = self._contracts.apply_reserved(caller.principal, project_id, change)
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         counts: dict[str, int] = {}
         for item in imported:
@@ -1181,6 +1201,7 @@ class Hub:
                     self._clock.now(),
                 )
             )
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         return ToolResult(
             {
@@ -1205,6 +1226,7 @@ class Hub:
         version = self._contracts.approve(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
             self._continuity.answered(project_id, Side.OWNER.value)
+        self._contract_changed(project_id)
         return ToolResult(
             {"version_id": version.id, "number": version.number},
             {
@@ -1221,6 +1243,7 @@ class Hub:
         resolved = self._contracts.reject(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
             self._continuity.answered(project_id, Side.OWNER.value)
+        self._contract_changed(project_id)
         return ToolResult(
             {"change_id": resolved.id, "status": resolved.status.value},
             {
@@ -1239,6 +1262,7 @@ class Hub:
             {"summary": arguments["summary"], "operations": arguments["operations"]}
         )
         version = self._contracts.apply_reserved(caller.principal, project_id, change)
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         return ToolResult(
             {"version_id": version.id, "number": version.number, "flagged": flagged},

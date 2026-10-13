@@ -635,6 +635,125 @@ def test_a_proposed_change_waits_for_the_owner_and_a_decision_ends_it(env: Env) 
     assert list(env.continuity.waiting()) == []
 
 
+def criterion_with_test(
+    story_id: str = "US-E1-02", test: str = "checks/sub.txt::test_sub"
+) -> dict[str, str]:
+    """A criterion that names its acceptance test. US-E1-02 covers a P1 requirement of the seed
+    contract, so the Owner side may propose it; a criterion of US-E1-01 (P0) is the operator's."""
+    return {
+        "type": "criterion",
+        "id": f"{story_id}.2",
+        "story": story_id,
+        "text": "The system shall give the result.",
+        "test": test,
+    }
+
+
+def base_prepared(env: Env, project: str) -> None:
+    env.hub.notified(
+        "staging.prepared", {"project_id": project, "repository": "example/calc", "branch": "main"}
+    )
+
+
+def propose(env: Env, who: str, project: str, item: dict[str, str]) -> str:
+    response = env.call(
+        who,
+        "contract.propose",
+        project_id=project,
+        summary="a change",
+        operations=[wire(put(item))],
+    )
+    assert response.ok, response.failure
+    return str(response.data["change_id"])  # type: ignore[index]  # reason: ok checked
+
+
+def contractor_steps(env: Env, after: int, project: str | None = None) -> list[str]:
+    """The step of the Contractor's ladder due `after` seconds from now, if any."""
+    assert env.continuity is not None
+    steps = env.continuity.due(env.clock.now() + timedelta(seconds=after))
+    return [
+        step.kind
+        for step in steps
+        if step.expectation.side == "contractor"
+        and step.expectation.project_id == (project or env.project_a)
+    ]
+
+
+def test_a_base_prepared_before_the_contract_is_ready_wakes_no_contractor(env: Env) -> None:
+    """The comparison of 2026-10-13: the base was prepared first, for the Owner side to read it,
+    and the ladder woke the Contractor 900 s later, while the Owner side was still writing the
+    contract. The Contractor's task waits until the contract in force names an acceptance test
+    and no change of it awaits a decision (US-E7-01)."""
+    base_prepared(env, env.project_a)
+    # the seed contract has stories and criteria, but no criterion names its test yet
+    assert contractor_steps(env, after=86_400) == []
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    env.clock.advance(3600)
+    # the acceptance tests are proposed, not decided: the contract is still a draft
+    assert contractor_steps(env, after=86_400) == []
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    # the ladder counts from the decision, not from the preparation of the base
+    assert contractor_steps(env, after=899) == []
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def test_a_change_proposed_during_the_task_holds_its_ladder_until_it_is_decided(
+    env: Env,
+) -> None:
+    """The contract changes while the Contractor carries its task: no step is taken while the
+    change awaits a decision, and the decision starts the ladder again, from the wake."""
+    assert env.continuity is not None
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    base_prepared(env, env.project_a)
+    (wake,) = env.continuity.due(env.clock.now() + timedelta(seconds=900))
+    env.clock.advance(900)
+    env.continuity.taken(wake, env.clock.now())  # the Contractor was woken, and did nothing
+    change_id = propose(env, "main", env.project_a, note(7, "EXG-02"))
+    assert contractor_steps(env, after=86_400) == []
+    env.clock.advance(7200)
+    assert env.call("owner_a", "contract.reject", project_id=env.project_a, change_id=change_id).ok
+    assert contractor_steps(env, after=899) == []
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def test_a_reserved_change_that_names_a_test_makes_the_contract_ready(env: Env) -> None:
+    """The operator's own change counts like an approved one: the ladder starts from it."""
+    base_prepared(env, env.project_a)
+    env.clock.advance(3600)
+    response = env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="the acceptance test of EXG-01",
+        operations=[wire(put(criterion_with_test("US-E1-01", "checks/add.txt::test_add")))],
+    )
+    assert response.ok, response.failure
+    assert contractor_steps(env, after=899) == []
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def test_each_project_waits_for_its_own_contract(env: Env) -> None:
+    """Two projects, two ladders: the contract of one moves only its own Contractor."""
+    seed_contract(env, env.project_b)
+    base_prepared(env, env.project_a)
+    base_prepared(env, env.project_b)
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    assert contractor_steps(env, after=900) == ["wake"]
+    assert contractor_steps(env, after=86_400, project=env.project_b) == []
+    # a change of project B holds nothing of project A
+    propose(env, "owner_b", env.project_b, criterion_with_test())
+    assert contractor_steps(env, after=900) == ["wake"]
+    assert contractor_steps(env, after=86_400, project=env.project_b) == []
+
+
 def test_the_events_of_the_delivery_loop_reach_the_main_agent(env: Env) -> None:
     env.hub.notified(
         "staging.prepared",
