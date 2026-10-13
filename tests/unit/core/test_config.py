@@ -41,7 +41,7 @@ def test_a_minimal_file_starts_with_the_defaults() -> None:
     assert config.hub.agent_port == 8080
     assert config.hub.operator_bind == "127.0.0.1"
     assert config.paths.filter_socket == "/run/zephyros/filter.sock"
-    assert config.limits.memory_mib == 1024
+    assert (config.limits.memory_mib, config.limits.turn_seconds) == (1536, 7200)
     assert config.limits.cpus == 2.0
     assert config.tokens.lifetime_seconds == 14400
     assert config.network.instance_pool == "10.200.0.0/16"

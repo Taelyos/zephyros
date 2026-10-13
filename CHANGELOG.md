@@ -11,7 +11,7 @@ version. Each schema carries its own version number.
 ### Added
 - The contract schema, version 1.1.0: requirements, constraints, stories, criteria, links and
   notes, with the operator-reserved objects and the acceptance criteria of the Owner side.
-- The configuration schema, version 1.11.0: the hub, the networks and resolvers, the limits
+- The configuration schema, version 1.12.0: the hub, the networks and resolvers, the limits
   (including the refusals of one instance per minute, ATK-71), the tokens, the images, the
   forge, the verification, the signed notifications (EXG-43) and the continuity ladder
   (US-E7-01); `gateway.simulation` marks the runs with the simulated provider (EXG-46). The
@@ -21,6 +21,14 @@ version. Each schema carries its own version number.
   token in `forge.token_file`), as well as in a directory. The gateway names the session header
   its provider asks for (`gateway.session_header`, for OpenCode Go's `x-opencode-session`),
   and waits for a long answer of the provider (`gateway.timeout_seconds`, 600 by default).
+  The verification names the client's own files (`verification.protected_paths`, by default
+  `CONTRACT.md`): a delivery that changes one is flagged. A turn may use 1536 MiB and last two
+  hours by default (ADR 0020).
+- The Owner side judges with the hub (ADR 0020): it reads the pending changes of the contract
+  (`contract.pending`) and the delivered branch (`GET /staging/delivery/<id>`), records an
+  inspection (`inspection.record`) and its verdict (`delivery.review`), posted on the pull
+  request. The gate judges the constraints as well as the requirements. The forge interface is
+  0.3.0 (`comment`).
 - The events schema, version 1.0.0: the payloads of the signed notifications
   (`delivery.decided`, `delivery.loop`, `continuity.alert_main`, `continuity.alert_human`);
   every payload carries `schema_version`.
@@ -30,4 +38,8 @@ version. Each schema carries its own version number.
   with the tool set of `docs/tools.md` and the instance tools of `docs/instance-tools.md`.
 
 ### Breaking changes
-- None yet: version 0.0.0 is the first milestone and nothing has been promised before it.
+- None yet: version 0.0.0 is the first milestone and nothing has been promised before it. To
+  note all the same (ADR 0020): the gate now judges the constraints as well as the
+  requirements, and an object verified by a method other than test keeps a delivery from
+  PASS until the Owner side records its inspection; the rule names in the report say
+  "requirements and constraints".

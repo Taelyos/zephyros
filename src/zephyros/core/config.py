@@ -26,7 +26,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.11.0"
+CONFIG_SCHEMA_VERSION = "1.12.0"
 
 AUTHORISED_MODELS = frozenset({"deepseek-v4.1-flash"})
 """The only models the owner has authorised for the gateway (owner's model policy, the first real
@@ -272,8 +272,9 @@ def _limits() -> Table:
             Field(
                 "memory_mib",
                 Integer(128, 65536),
-                "Memory of an agent container, in MiB",
-                default=1024,
+                "Memory of an agent container, in MiB (a real turn of the second real run "
+                "reached 1019 MiB)",
+                default=1536,
             ),
             Field(
                 "pids",
@@ -287,7 +288,7 @@ def _limits() -> Table:
                 "Memory of a network guard, in MiB",
                 default=32,
             ),
-            Field("turn_seconds", Integer(60, 86400), "Longest duration of a turn", default=3600),
+            Field("turn_seconds", Integer(60, 86400), "Longest duration of a turn", default=7200),
             Field(
                 "silence_seconds",
                 Integer(30, 86400),
