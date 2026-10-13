@@ -38,4 +38,4 @@ def test_check_refuses_a_faulty_file_and_names_the_key(
 def test_schema_prints_the_published_document(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["config", "schema"]) == 0
     document = json.loads(capsys.readouterr().out)
-    assert document["x-zephyros-schema-version"] == "1.10.0"
+    assert document["x-zephyros-schema-version"] == "1.11.0"

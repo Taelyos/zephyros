@@ -135,7 +135,9 @@ _SUMMARY = Field(
 _OPERATIONS = Field(
     "operations",
     Array(Free(), min_items=1, max_items=200),
-    "The operations of the change",
+    'The operations of the change, each one of: {"op": "put", "object": <a whole contract '
+    "object, as contract.read shows them: requirement, constraint, story, criterion, link or "
+    'note>} to add or replace an object by its id, or {"op": "delete", "id": <its id>}',
     required=True,
 )
 _CHANGE = Field("change_id", Text(pattern=r"c_[a-z0-9]{4,16}"), "The pending change", required=True)
@@ -207,7 +209,12 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
         _spec(
             "contract.propose",
             Action.CONTRACT_PROPOSE,
-            "Propose a change to the contract. Another principal approves or rejects it.",
+            "Propose a change to the contract. Another principal approves or rejects it. A change "
+            "that touches operator-reserved data (a requirement or constraint, a P0 criterion, a "
+            "link to a P0 requirement) is refused: the operator applies those. Objects: story "
+            "{type, id US-E1-01, epic E1, title, text}; criterion {type, id US-E1-01.1, story, "
+            "text, verification, test file::function}; link {type, id LNK:US-E1-01>EXG-01, kind "
+            "covers, source, target}; note {type, id NB-001, target, text}.",
             _PROJECT,
             _SUMMARY,
             _OPERATIONS,

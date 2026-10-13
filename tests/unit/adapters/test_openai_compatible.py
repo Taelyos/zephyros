@@ -236,6 +236,17 @@ def test_a_session_header_is_sent_when_the_provider_asks_for_one(tmp_path: Path)
     assert seen["session"].startswith("zephyros-")
 
 
+def test_the_provider_waits_as_long_as_it_is_configured_to(tmp_path: Path) -> None:
+    """The client of the provider takes the configured timeout, ten minutes by default."""
+    credential = FileCredential(tmp_path / "model.key")
+    default = OpenAiCompatibleProvider("https://models.invalid/v1/", credential, upstream_model="m")
+    longer = OpenAiCompatibleProvider(
+        "https://models.invalid/v1/", credential, upstream_model="m", timeout_seconds=900
+    )
+    assert default._client.timeout.read == 600
+    assert longer._client.timeout.read == 900
+
+
 def test_no_session_header_is_sent_when_none_is_configured(tmp_path: Path) -> None:
     seen: dict[str, str | None] = {}
 

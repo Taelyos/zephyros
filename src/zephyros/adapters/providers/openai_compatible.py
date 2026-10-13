@@ -24,7 +24,7 @@ from zephyros.core.ports.model_provider import (
     Usage,
 )
 
-TIMEOUT_SECONDS = 120.0
+TIMEOUT_SECONDS = 600.0
 
 
 class FileCredential:
@@ -65,6 +65,7 @@ class OpenAiCompatibleProvider:
         *,
         upstream_model: str,
         session_header: str | None = None,
+        timeout_seconds: float = TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._url = base_url.rstrip("/") + "/chat/completions"
@@ -74,7 +75,7 @@ class OpenAiCompatibleProvider:
         # One session name per process: the providers that route by session (OpenCode Go asks
         # for `x-opencode-session`) keep this hub's traffic together.
         self._session = f"zephyros-{uuid.uuid4().hex}"
-        self._client = client or httpx.AsyncClient(timeout=TIMEOUT_SECONDS, follow_redirects=False)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False)
 
     @property
     def interface_version(self) -> str:

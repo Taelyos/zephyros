@@ -377,6 +377,16 @@ def test_a_github_forge_reads_its_token_file_from_the_configuration() -> None:
     assert config.forge.token_file == "/run/zephyros-credentials/forge.key"
 
 
+def test_the_gateway_waits_ten_minutes_by_default_and_reads_its_timeout() -> None:
+    """A long answer of a real model takes minutes: the second real run lost a turn at 120 s."""
+    assert parse_config(minimal()).gateway.timeout_seconds == 600
+    assert parse_config(with_value("gateway.timeout_seconds", 900)).gateway.timeout_seconds == 900
+    for wrong in (5, 3601):
+        with pytest.raises(ConfigError) as caught:
+            parse_config(with_value("gateway.timeout_seconds", wrong))
+        assert [problem.key for problem in caught.value.problems] == ["gateway.timeout_seconds"]
+
+
 def test_the_session_header_is_unset_by_default_and_read_when_written() -> None:
     assert parse_config(minimal()).gateway.session_header is None
     document = with_value("gateway.session_header", "x-opencode-session")

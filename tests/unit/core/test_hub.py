@@ -691,3 +691,14 @@ def test_a_simulated_run_marks_its_events(env: Env) -> None:
         {"project_id": simulated.project_a, "delivery_id": "d_1", "decision": "PASS"},
     )
     assert simulated.notifications[-1][1]["simulation"] is True
+
+
+def test_the_owner_learns_the_shape_of_a_change_from_the_tool_itself() -> None:
+    """Hermes does not read MCP instructions: the second real run's Owner guessed the shape of
+    an operation 22 times. The description and the field say it."""
+    spec = TOOL_SPECS["contract.propose"]
+    operations = next(field for field in spec.inputs.fields if field.name == "operations")
+    assert '"op": "put", "object"' in operations.description
+    assert '"op": "delete", "id"' in operations.description
+    for shape in ("US-E1-01.1", "LNK:US-E1-01>EXG-01", "operator-reserved"):
+        assert shape in spec.description

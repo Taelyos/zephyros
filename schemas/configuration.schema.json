@@ -320,6 +320,13 @@
           "pattern": "^(?:[A-Za-z0-9-]+)$",
           "description": "Name of the session header the gateway sends to the provider, when it asks for one (OpenCode Go requires x-opencode-session); unset sends none. The value is one stable session name per hub process"
         },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 3600,
+          "description": "How long the gateway waits for one answer of the provider, in seconds, when it is openai-compatible: a long answer of a real model takes minutes",
+          "default": 600
+        },
         "simulation": {
           "type": "boolean",
           "description": "Run with the simulated provider and mark the report, the pull request and the events as a simulation (EXG-46)",
@@ -462,7 +469,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.10.0",
+  "x-zephyros-schema-version": "1.11.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port and hub.main_agent_port are three different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",

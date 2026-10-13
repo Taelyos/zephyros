@@ -26,7 +26,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.10.0"
+CONFIG_SCHEMA_VERSION = "1.11.0"
 
 AUTHORISED_MODELS = frozenset({"deepseek-v4.1-flash"})
 """The only models the owner has authorised for the gateway (owner's model policy, the first real
@@ -374,6 +374,13 @@ def _gateway() -> Table:
                 "one (OpenCode Go requires x-opencode-session); unset sends none. The value is one "
                 "stable session name per hub process",
                 default=None,
+            ),
+            Field(
+                "timeout_seconds",
+                Integer(10, 3600),
+                "How long the gateway waits for one answer of the provider, in seconds, when it is "
+                "openai-compatible: a long answer of a real model takes minutes",
+                default=600,
             ),
             Field(
                 "simulation",
@@ -743,6 +750,7 @@ class GatewayConfig:
     credential_file: str | None
     session_header: str | None
     simulation: bool
+    timeout_seconds: int = 600
 
 
 @dataclass(frozen=True, slots=True)
@@ -877,6 +885,7 @@ def parse_config(data: object) -> Config:
             upstream_url=cast("str | None", gateway.get("upstream_url")),
             credential_file=cast("str | None", gateway.get("credential_file")),
             session_header=cast("str | None", gateway.get("session_header")),
+            timeout_seconds=_int(gateway, "timeout_seconds"),
         ),
         forge=ForgeConfig(
             provider=cast("str", forge["provider"]),
