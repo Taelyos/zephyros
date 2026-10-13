@@ -49,7 +49,7 @@ from zephyros.core.ports.verification import (
     VerificationRequest,
     VerificationRunner,
 )
-from zephyros.core.principals import OPERATOR
+from zephyros.core.principals import OPERATOR, Principal, PrincipalKind
 from zephyros.core.projects import ProjectService
 from zephyros.core.report import (
     Cost,
@@ -103,6 +103,8 @@ class DeliveryRecord:
     outcomes: Mapping[str, str] = field(default_factory=dict)
     gate_report: str | None = None
     """The evidence report as the gate wrote it, once and for all."""
+    contractor_gate_report: str | None = None
+    """The same, without the output of the run: what the Contractor reads (T07)."""
     pull_request: str | None = None
     detail: str | None = None
     pull_number: int | None = None
@@ -129,6 +131,30 @@ class DeliveryRecord:
         if self.gate_report is None:
             return None
         return with_addendum(self.gate_report, self.addendum)
+
+    @property
+    def contractor_report(self) -> str | None:
+        """The evidence report now as the Contractor reads it: the outcome of each test, never
+        the output of the run (T07). None for a record kept before there was one."""
+        if self.contractor_gate_report is None:
+            return None
+        return with_addendum(self.contractor_gate_report, self.addendum)
+
+
+FULL_REPORT_READERS = frozenset(
+    {PrincipalKind.OPERATOR, PrincipalKind.MAIN_AGENT, PrincipalKind.OWNER}
+)
+"""Who reads the evidence report whole, as the pull request shows it."""
+
+
+def report_for(record: DeliveryRecord, principal: Principal) -> str | None:
+    """The evidence report of `record` that `principal` may read (T07): whole for the Owner
+    side, the operator and the main agent; without the output of the run for anyone else, the
+    Contractor first, since that output shows the Owner side's acceptance tests. Wherever a
+    report is shown to a caller (`delivery.status`), it is this one."""
+    if principal.kind in FULL_REPORT_READERS:
+        return record.report
+    return record.contractor_report
 
 
 class StaleRecordError(Exception):
@@ -717,28 +743,27 @@ class DeliveryService:
             contract_version=version.number,
         )
         project = self._projects.get(project_id)
-        report = render(
-            ReportInput(
-                project_name=project.name,
-                delivery=delivery,
-                contract_version=version.number,
-                contract_hash=version.content_hash,
-                kit=self._kit,
-                gate=gate,
-                outcomes=outcomes,
-                log=log,
-                cost=self._cost(project_id),
-                produced_at=format_time(self._clock.now()),
-                produced_by=self._version,
-                simulation=self._simulation,
-                flagged_paths=flagged,
-                acceptance_files=ran,
-                unnamed_acceptance_files=unnamed,
-                missing_acceptance_files=missing,
-                set_aside_paths=set_aside,
-            ),
-            secrets=self._secrets(),
+        evidence = ReportInput(
+            project_name=project.name,
+            delivery=delivery,
+            contract_version=version.number,
+            contract_hash=version.content_hash,
+            kit=self._kit,
+            gate=gate,
+            outcomes=outcomes,
+            log=log,
+            cost=self._cost(project_id),
+            produced_at=format_time(self._clock.now()),
+            produced_by=self._version,
+            simulation=self._simulation,
+            flagged_paths=flagged,
+            acceptance_files=ran,
+            unnamed_acceptance_files=unnamed,
+            missing_acceptance_files=missing,
+            set_aside_paths=set_aside,
         )
+        report = render(evidence, self._secrets())
+        contractor_report = render(evidence, self._secrets(), with_output=False)
         _before, decided = self._update(
             project_id,
             record.delivery_id,
@@ -748,6 +773,7 @@ class DeliveryService:
                 decision=gate.decision.value,
                 outcomes={k: v.value for k, v in outcomes.items()},
                 gate_report=report,
+                contractor_gate_report=contractor_report,
                 contract_version=version.number,
                 flagged_paths=flagged,
             ),

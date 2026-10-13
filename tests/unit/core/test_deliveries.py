@@ -27,9 +27,11 @@ from zephyros.core.deliveries import (
     DeliveryState,
     Verdict,
     flagged_paths,
+    report_for,
 )
 from zephyros.core.errors import Refusal
 from zephyros.core.gate import NOTHING_JUDGED, Inspected
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.forge import (
     ForgeError,
     PullRequest,
@@ -42,7 +44,7 @@ from zephyros.core.ports.verification import (
     VerificationRequest,
     VerificationResult,
 )
-from zephyros.core.principals import OPERATOR
+from zephyros.core.principals import MAIN_AGENT, OPERATOR, instance_principal
 from zephyros.core.projects import ProjectService
 
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
@@ -400,6 +402,8 @@ def test_a_recorded_inspection_decides_again_and_the_report_says_so() -> None:
     assert record.report is not None
     assert "## Inspections recorded after the gate" in record.report
     assert "**Decision now: PASS** (it was CONCERNS before the last inspection)" in record.report
+    assert record.contractor_report is not None  # T07: the Contractor reads the addendum too
+    assert record.contractor_report.endswith(str(record.addendum))
     last = audit.read(project, 0, 1000)[-1]
     assert (last.action, last.outcome) == (Action.GATE_DECISION, Outcome.OK)
     again = made.record_inspection(
@@ -802,3 +806,42 @@ def test_a_push_never_writes_over_a_recorded_delivery() -> None:
     with pytest.raises(Refusal, match="already recorded"):
         made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w")
     assert made.status(project, "d1") == old
+
+
+# ----------------------------------------------------------------------------- T07
+HIDDEN = "assert sub(7, 3) == 4  # the Owner side's own check"
+
+
+class TracebackRunner(AssertionRunner):
+    """The assertions runner, whose output shows the file of every test that did not pass, as
+    a pytest traceback shows the lines of the test."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        result = super().run(request)
+        shown = [
+            request.files[test.partition("::")[0]].decode()
+            for test, outcome in result.outcomes.items()
+            if outcome is not VerificationOutcome.PASSED
+        ]
+        return VerificationResult(result.outcomes, "\n".join([result.log, *shown]))
+
+
+def test_the_contractor_reads_every_outcome_and_never_the_output_of_the_run() -> None:
+    """T07: the output of the run shows the Owner side's acceptance tests, which the Contractor
+    must not read; it reads the outcome of each test. The Owner side reads it all."""
+    made, project, _audit, _store = service(runner=TracebackRunner(), specs=ADD_AND_SUB)
+    ready(made, project)
+    made.put_acceptance(project, "checks/sub.txt", f"test_sub: fail\n{HIDDEN}\n")
+    record = made.status(project, delivered(made, project))
+    owner = report_for(record, instance_principal(Side.OWNER, project))
+    contractor = report_for(record, instance_principal(Side.CONTRACTOR, project))
+    assert owner is not None
+    assert contractor is not None
+    assert HIDDEN in owner
+    assert HIDDEN not in contractor
+    for test, outcome in (
+        ("checks/add.txt::test_add", "passed"),
+        ("checks/sub.txt::test_sub", "failed"),
+    ):
+        assert f"- `{test}`: {outcome}" in contractor.splitlines()
+    assert report_for(record, OPERATOR) == report_for(record, MAIN_AGENT) == owner == record.report

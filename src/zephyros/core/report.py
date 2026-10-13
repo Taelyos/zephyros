@@ -77,7 +77,10 @@ def _plain(text: str) -> str:
     return text.replace("|", "/").replace("\n", " ")
 
 
-def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
+def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
+    """The evidence report. Without the output of the run (`with_output` false), it is the
+    report the Contractor reads: the output shows the Owner side's acceptance tests, the outcome
+    of each test does not (T07)."""
     gate = report.gate
     delivery = report.delivery
     lines = [
@@ -137,8 +140,11 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         )
     lines += ["", f"## Verification (kit: {_plain(report.kit)})", ""]
     lines += [f"- {_code(test)}: {outcome.value}" for test, outcome in report.outcomes.items()]
-    excerpt = report.log[-LOG_EXCERPT:]
-    lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
+    if with_output:
+        excerpt = report.log[-LOG_EXCERPT:]
+        lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
+    else:
+        lines += ["", "The output of the run is kept for the Owner side: it shows its tests.", ""]
     lines += ["## Flags", ""]
     flags = [
         (

@@ -31,6 +31,7 @@ def test_a_record_keeps_its_contract_version_inspections_review_and_flags() -> N
         review={"verdict": "accept", "reasons": "fine", "by": "o", "at": "t"},
         flagged_paths=("CONTRACT.md",),
         gate_report="# Evidence report\n",
+        contractor_gate_report="# Evidence report, no output\n",
         addendum="## Inspections recorded after the gate\n",
     )
     written = store.put_record(record)
@@ -39,6 +40,9 @@ def test_a_record_keeps_its_contract_version_inspections_review_and_flags() -> N
     assert written.report == (
         "# Evidence report\n\n## Inspections recorded after the gate\n"
     )  # T11: the report of the gate, then the addendum
+    assert written.contractor_report == (
+        "# Evidence report, no output\n\n## Inspections recorded after the gate\n"
+    )  # T07: the Contractor's, with the same addendum
 
 
 def test_a_report_kept_whole_before_t11_reads_as_the_report_of_the_gate() -> None:
@@ -65,6 +69,7 @@ def test_a_report_kept_whole_before_t11_reads_as_the_report_of_the_gate() -> Non
     found = store.get_record("p_store001", "d1")
     assert found is not None
     assert (found.gate_report, found.addendum, found.report) == (whole, None, whole)
+    assert found.contractor_report is None  # T07: none was kept, so the Contractor reads none
 
 
 def test_a_record_written_before_adr_0020_reads_with_empty_additions() -> None:

@@ -40,6 +40,7 @@ def _record_body(record: DeliveryRecord) -> str:
             "decision": record.decision,
             "outcomes": dict(record.outcomes),
             "gate_report": record.gate_report,
+            "contractor_gate_report": record.contractor_gate_report,
             "addendum": record.addendum,
             "pull_request": record.pull_request,
             "detail": record.detail,
@@ -76,6 +77,8 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         # the gate, and a new inspection writes its addendum after it.
         gate_report=body["gate_report"] if "gate_report" in body else body.get("report"),
         addendum=body.get("addendum"),
+        # Before T07 there was no report for the Contractor: it reads none of those.
+        contractor_gate_report=body.get("contractor_gate_report"),
         pull_request=body["pull_request"],
         detail=body["detail"],
         # Added by ADR 0020: a record written before has none of them.

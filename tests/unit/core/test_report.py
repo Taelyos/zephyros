@@ -166,3 +166,23 @@ def test_the_addendum_follows_the_report_and_cuts_nothing_from_it() -> None:
     assert full == report.rstrip("\n") + "\n\n" + addendum
     assert full.endswith("Reservations now:\n\nNone.\n")
     assert with_addendum(report, None) == report
+
+
+def test_the_contractors_report_is_the_owners_without_the_output_of_the_run() -> None:
+    """T07: the output of the run shows the Owner side's acceptance tests. The Contractor's
+    report keeps every outcome and every other section as they are."""
+    log = "E       assert sub(7, 3) == 4"
+    owner = render(make(log=log)).split("\n## ")
+    contractor = render(make(log=log), with_output=False).split("\n## ")
+    assert [section.splitlines()[0] for section in contractor] == [
+        section.splitlines()[0] for section in owner
+    ]
+    for mine, theirs in zip(owner, contractor, strict=True):
+        if not mine.startswith("Verification"):
+            assert theirs == mine
+            continue
+        assert log in mine
+        assert log not in theirs
+        outcomes = ["- `tests/t.py::test_add`: passed", "- `tests/t.py::test_sub`: failed"]
+        assert theirs.splitlines()[2:4] == mine.splitlines()[2:4] == outcomes
+        assert "The output of the run is kept for the Owner side" in theirs
