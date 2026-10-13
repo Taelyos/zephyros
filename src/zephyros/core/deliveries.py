@@ -67,6 +67,10 @@ LOGGED_PATHS = 20
 """The most paths a record of the log names: each is short, and a record stays small."""
 WRITE_ATTEMPTS = 10
 """How many times a change is applied again to a record that others keep writing (T05)."""
+REFUSED = "REFUSED"
+"""What `delivery.decided` tells of a delivery the checks refused before any run (T03)."""
+ERROR = "ERROR"
+"""What `delivery.decided` tells of a delivery whose verification could not run to an end."""
 
 
 class DeliveryState(StrEnum):
@@ -395,15 +399,7 @@ class DeliveryService:
             after="inspection",
         )
         if updated.decision != before.decision:
-            self._events(
-                "delivery.decided",
-                {
-                    "project_id": project_id,
-                    "delivery_id": delivery_id,
-                    "branch": updated.branch,
-                    "decision": updated.decision,
-                },
-            )
+            self._tell_decision(updated, str(updated.decision))
         self._post_later(
             updated,
             "comment",
@@ -610,7 +606,7 @@ class DeliveryService:
                     return current
                 return replace(current, state=DeliveryState.ERROR, detail=detail)
 
-            self._update(project_id, delivery_id, failed)
+            before, after = self._update(project_id, delivery_id, failed)
             self._record_event(
                 project_id,
                 Action.VERIFICATION_RUN,
@@ -618,21 +614,15 @@ class DeliveryService:
                 delivery=delivery_id,
                 error=detail,
             )
+            if after is not before:
+                self._tell_decision(after, ERROR)
             return
         if verified is None:
             return
         decided, delivery = verified
         # The main agent hears of the decision before the forge is called: an inspection
         # recorded while the pull request opens tells of the decision it leads to after this.
-        self._events(
-            "delivery.decided",
-            {
-                "project_id": project_id,
-                "delivery_id": delivery_id,
-                "branch": decided.branch,
-                "decision": decided.decision,
-            },
-        )
+        self._tell_decision(decided, str(decided.decision))
         if decided.decision != Decision.FAIL.value:
             self._propose(decided, delivery)
         if decided.decision == Decision.FAIL.value and self._rejections_alert is not None:
@@ -675,7 +665,7 @@ class DeliveryService:
         touched = sorted(set(delivery.changed_paths) & (protected - set(missing)))
         if touched:
             detail = "the delivery changes acceptance tests: " + ", ".join(touched[:10])
-            self._update(
+            _before, refused = self._update(
                 project_id,
                 record.delivery_id,
                 lambda current: replace(current, state=DeliveryState.REFUSED, detail=detail),
@@ -689,6 +679,7 @@ class DeliveryService:
                 paths=touched[:LOGGED_PATHS],
                 count=len(touched),
             )
+            self._tell_decision(refused, REFUSED)
             return None
         files = dict(self._area.tree(project_id, delivery.delivery_id).files)
         set_aside = tuple(path for path in missing if path in files)
@@ -840,6 +831,20 @@ class DeliveryService:
             Outcome.OK,
             delivery=record.delivery_id,
             number=opened.number,
+        )
+
+    def _tell_decision(self, record: DeliveryRecord, decision: str) -> None:
+        """Tell the main agent what became of a delivery (`delivery.decided`): the decision of
+        the gate, PASS, CONCERNS or FAIL; REFUSED when the checks refused it before any run, and
+        ERROR when its verification could not run to an end (T03)."""
+        self._events(
+            "delivery.decided",
+            {
+                "project_id": record.project_id,
+                "delivery_id": record.delivery_id,
+                "branch": record.branch,
+                "decision": decision,
+            },
         )
 
     def _cost(self, project_id: str) -> Cost:

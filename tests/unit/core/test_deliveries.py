@@ -91,7 +91,10 @@ def service(
     forge: Any = "default",
     specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
     store: InMemoryDeliveryStore | None = None,
+    events: list[tuple[str, Mapping[str, object]]] | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
+    """A delivery service on a project with a contract; `events`, when given, collects what
+    the service tells the hub."""
     clock = FakeClock()
     audit = AuditLog(InMemoryLogStore(), clock)
     projects = ProjectService(InMemoryProjectStore(), clock, new_id=lambda: "p_service1")
@@ -119,6 +122,7 @@ def service(
         audit,
         clock,
         kit="assertions",
+        events=None if events is None else lambda event, payload: events.append((event, payload)),
     )
     return made, project, audit, store
 
@@ -547,8 +551,7 @@ def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_loc
 def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_changes() -> None:
     """ADR 0020: a reject is the main agent's to act on; a new decision is a transition."""
     events: list[tuple[str, Mapping[str, object]]] = []
-    made, project, _audit, _store = service()
-    made._events = lambda event, payload: events.append((event, payload))
+    made, project, _audit, _store = service(events=events)
     with_constraint(made, project)
     ready(made, project)
     delivery = delivered(made, project)
@@ -845,3 +848,27 @@ def test_the_contractor_reads_every_outcome_and_never_the_output_of_the_run() ->
     ):
         assert f"- `{test}`: {outcome}" in contractor.splitlines()
     assert report_for(record, OPERATOR) == report_for(record, MAIN_AGENT) == owner == record.report
+
+
+# ----------------------------------------------------------------------------- T03
+@pytest.mark.parametrize(
+    ("runner", "files", "decision"),
+    [
+        (None, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"}, "REFUSED"),
+        (Exploding(), None, "ERROR"),
+        (None, None, "PASS"),
+        (Failing(), None, "FAIL"),
+    ],
+)
+def test_the_main_agent_hears_once_of_what_became_of_a_delivery(
+    runner: AssertionRunner | None, files: dict[str, bytes] | None, decision: str
+) -> None:
+    """T03: a refusal and an error are told like a decision of the gate, once each."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, _audit, _store = service(runner=runner, events=events)
+    ready(made, project)
+    delivery = delivered(made, project, files)
+    told = [payload for event, payload in events if event == "delivery.decided"]
+    assert told == [
+        {"project_id": project, "delivery_id": delivery, "branch": "work", "decision": decision}
+    ]

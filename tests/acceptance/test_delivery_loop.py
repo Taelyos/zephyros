@@ -499,7 +499,6 @@ def notified(world: World, event: str) -> list[dict[str, Any]]:
     return [parameters for parameters in found if parameters["event"] == event]
 
 
-@pytest.mark.xfail(strict=True, reason="T03: nothing is told until the fix")
 @pytest.mark.parametrize(
     ("fixture", "change", "decision"),
     [
