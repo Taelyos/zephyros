@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
+from zephyros import __version__
 from zephyros.core.hub import Caller, Hub, ToolResponse, ToolSpec
 
 HUB_NAME = "zephyros-hub"
@@ -69,7 +70,7 @@ def handle_message(
             "result": {
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": HUB_NAME, "version": "0.0.0"},
+                "serverInfo": {"name": HUB_NAME, "version": __version__},
             },
         }
     if method == "ping":

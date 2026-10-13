@@ -337,6 +337,8 @@ class DeliveryService:
             f"{record.decision}), computed by the gate from the same results and the "
             "inspections recorded.",
         )
+        if gate.decision.value != record.decision:
+            self._retitle_later(updated)
         return updated
 
     def record_review(
@@ -387,6 +389,13 @@ class DeliveryService:
         if record.pull_number is not None and self._forge is not None:
             self._enqueue(_Job("comment", record.project_id, record.delivery_id, body))
 
+    def _retitle_later(self, record: DeliveryRecord) -> None:
+        """Ask the worker to bring the title of the pull request to the current decision, built
+        like the title of `_propose`: a forge call never runs on a request."""
+        if record.pull_number is not None and self._forge is not None:
+            title = f"{record.branch} (delivery {record.delivery_id}, {record.decision})"
+            self._enqueue(_Job("retitle", record.project_id, record.delivery_id, title))
+
     def _do_comment(self, job: _Job) -> None:
         record = self._store.get_record(job.project_id, job.delivery_id)
         source = self._store.get_source(job.project_id)
@@ -417,6 +426,36 @@ class DeliveryService:
             number=record.pull_number,
         )
 
+    def _do_retitle(self, job: _Job) -> None:
+        record = self._store.get_record(job.project_id, job.delivery_id)
+        source = self._store.get_source(job.project_id)
+        if record is None or record.pull_number is None or source is None or self._forge is None:
+            return
+        try:
+            self._run_async(
+                self._forge.update_title(
+                    RepositoryRef(source.repository),
+                    record.pull_number,
+                    mask(job.body, self._secrets()),
+                )
+            )
+        except ForgeError as error:
+            self._record_event(
+                job.project_id,
+                Action.PULL_REQUEST_RETITLE,
+                Outcome.ERROR,
+                delivery=job.delivery_id,
+                error=str(error),
+            )
+            return
+        self._record_event(
+            job.project_id,
+            Action.PULL_REQUEST_RETITLE,
+            Outcome.OK,
+            delivery=job.delivery_id,
+            number=record.pull_number,
+        )
+
     def _record(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         record = self._store.get_record(project_id, delivery_id)
         if record is None:
@@ -438,6 +477,8 @@ class DeliveryService:
             self._do_prepare(job.project_id)
         elif job.kind == "comment":
             self._do_comment(job)
+        elif job.kind == "retitle":
+            self._do_retitle(job)
         else:
             self._do_verify(job.project_id, job.delivery_id)
         return True
@@ -551,6 +592,9 @@ class DeliveryService:
             (path, hashlib.sha256(acceptance[path]).hexdigest()[:12])
             for path in sorted(protected & set(acceptance))
         )
+        # An acceptance test of the Owner side that no criterion names never runs: say so.
+        named_files = {test.partition("::")[0] for test in tests}
+        unnamed = tuple(sorted(path for path in acceptance if path not in named_files))
         outcomes: dict[str, Any] = {}
         log = ""
         if tests:
@@ -594,6 +638,7 @@ class DeliveryService:
                 simulation=self._simulation,
                 flagged_paths=flagged,
                 acceptance_files=ran,
+                unnamed_acceptance_files=unnamed,
             ),
             secrets=self._secrets(),
         )

@@ -47,6 +47,8 @@ class ReportInput:
     """The client's own files the delivery changes (ADR 0020): flagged, never refused."""
     acceptance_files: tuple[tuple[str, str], ...] = ()
     """The acceptance tests of the Owner side the run used, with the digest of their content."""
+    unnamed_acceptance_files: tuple[str, ...] = ()
+    """The acceptance test files of the Owner side that no criterion names: they never run."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -134,15 +136,24 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
     excerpt = report.log[-LOG_EXCERPT:]
     lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
     lines += ["## Flags", ""]
-    lines += (
-        [
-            "The delivery changes the client's own files: the Owner side reviews these changes.",
-            "",
-        ]
-        + [f"- {_code(path)}" for path in report.flagged_paths]
-        if report.flagged_paths
-        else ["None."]
-    )
+    if not report.flagged_paths and not report.unnamed_acceptance_files:
+        lines += ["None."]
+    else:
+        if report.flagged_paths:
+            lines += [
+                "The delivery changes the client's own files: the Owner side reviews these "
+                "changes.",
+                "",
+            ]
+            lines += [f"- {_code(path)}" for path in report.flagged_paths]
+        if report.unnamed_acceptance_files:
+            if report.flagged_paths:
+                lines += [""]
+            lines += [
+                "Acceptance test files that no criterion names (they never run):",
+                "",
+            ]
+            lines += [f"- {_code(path)}" for path in report.unnamed_acceptance_files]
     lines += [
         "",
         "## Automated delivery checks",

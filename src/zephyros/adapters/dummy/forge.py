@@ -5,6 +5,7 @@ A branch holds a package as it was pushed, opaque: the forge never reads it."""
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from zephyros.core.ports.forge import (
     INTERFACE_VERSION,
@@ -68,6 +69,14 @@ class InMemoryForge:
         if not body.strip():
             raise ForgeError("the comment is empty")
         self.comments.setdefault((repository.slug, number), []).append(body)
+
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        pull_requests = self._pull_requests.get(repository.slug, [])
+        if not 1 <= number <= len(pull_requests):
+            raise ForgeError(f"no pull request {number} in {repository.slug}")
+        if not title.strip():
+            raise ForgeError("the title is empty")
+        pull_requests[number - 1] = replace(pull_requests[number - 1], title=title)
 
     async def fetch(self, repository: RepositoryRef, branch: str) -> bytes:
         if branch not in self._branches.get(repository.slug, set()):
