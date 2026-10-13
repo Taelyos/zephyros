@@ -26,7 +26,11 @@ from zephyros.adapters.dummy.verification import AssertionRunner
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.app.hub import DeliverySetup
 from zephyros.core.audit import Action, Outcome, Reason
-from zephyros.core.ports.verification import VerificationRequest, VerificationResult
+from zephyros.core.ports.verification import (
+    VerificationError,
+    VerificationRequest,
+    VerificationResult,
+)
 
 pytestmark = pytest.mark.acceptance
 
@@ -469,3 +473,53 @@ def test_a_delivery_declared_before_the_contract_never_passes(
     assert reservation in found["report"].splitlines()
     pulls = json.loads((forge_root / "example" / "calc.pulls.json").read_text())
     assert pulls[0]["title"] == f"add-sub (delivery {delivery}, CONCERNS)"
+
+
+# ----------------------------------------------------------------------------- T03
+class BrokenRunner(AssertionRunner):
+    """A runner that cannot run: the delivery ends in ERROR."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        del request
+        raise VerificationError("the sandbox did not start")
+
+
+@pytest.fixture
+def broken_world(tmp_path: Path, forge_root: Path) -> World:
+    return make_world(tmp_path, forge_root, BrokenRunner())
+
+
+def notified(world: World, event: str) -> list[dict[str, Any]]:
+    """The notifications the hub recorded for `event`, newest last."""
+    found = [
+        json.loads(r.parameters)
+        for r in world.records(world.project_a)
+        if r.action is Action.NOTIFICATION
+    ]
+    return [parameters for parameters in found if parameters["event"] == event]
+
+
+@pytest.mark.xfail(strict=True, reason="T03: nothing is told until the fix")
+@pytest.mark.parametrize(
+    ("fixture", "change", "decision"),
+    [
+        ("world", {**ADD_SUB, "checks/add.txt": b"test_add: pass\n# mine\n"}, "REFUSED"),
+        ("broken_world", ADD_SUB, "ERROR"),
+    ],
+)
+def test_the_main_agent_hears_of_a_refused_delivery_and_of_one_in_error(
+    request: pytest.FixtureRequest, fixture: str, change: dict[str, bytes], decision: str
+) -> None:
+    """T03: a refusal (ATK-16) and an error are the cases of attack, and the main agent was
+    told of neither: only of a decision of the gate. They are decisions too."""
+    world: World = request.getfixturevalue(fixture)
+    prepared(world)
+    delivery = deliver(world, change, branch="watched")
+    assert status(world, delivery)["state"] == decision.lower()
+    [told] = notified(world, "delivery.decided")
+    assert {k: told[k] for k in ("project_id", "delivery_id", "branch", "decision")} == {
+        "project_id": world.project_a,
+        "delivery_id": delivery,
+        "branch": "watched",
+        "decision": decision,
+    }
