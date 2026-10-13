@@ -16,3 +16,8 @@ mcp_servers:
 tools:
   tool_search:
     enabled: "off"
+# An instance continues its conversation from turn to turn (ADR 0016). Hermes compacts it past
+# this many tokens: the third real run's Contractor reached 188 000 tokens a call, and each call
+# took longer than the last. The hub holds the state that matters (contract, deliveries).
+compression:
+  threshold_tokens: 80000
