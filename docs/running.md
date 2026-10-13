@@ -1,6 +1,6 @@
 # Running Zephyros on one machine
 
-Zephyros is not released yet. This page describes the development deployment, which is also the one the runtime tests use.
+This page describes the deployment on one machine, which is also the one the runtime tests use.
 
 ## What runs
 

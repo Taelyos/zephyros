@@ -37,9 +37,9 @@ refuses it. The decision comes from recorded results and written rules, the same
 - **Isolation**: one network and one guard per instance, a token per project and side, protected
   networks unreachable, a model gateway that holds the provider key and serves one authorised model,
   and a hash-chained log of every call and refusal.
-- **A threat model of 93 attacks.** 59 run in the acceptance suite, as the attacker would; 25 wait
-  for features of the next milestone (signed approvals, budget, dashboard, backups); 9 have no
-  automated test yet. 2,400+ tests in all, 96 % coverage.
+- **A threat model of 93 attacks.** 59 have automated tests, most of them run as the attacker
+  would; 25 wait for features of the next milestone (signed approvals, budget, dashboard,
+  backups); 9 have no automated test yet. 2,400+ tests in all, 96 % coverage.
 
 ## Three runs with real models
 

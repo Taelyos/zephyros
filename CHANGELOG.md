@@ -10,7 +10,7 @@ version. Each schema carries its own version number.
 
 Nothing yet.
 
-## [0.1.0] - 2026-10-14
+## [0.1.0] - 2026-10-13
 
 The first release: a hub with no model that runs a software project between an Owner side and a
 Contractor side, tried in three runs with real models. Release notes:
