@@ -7,10 +7,10 @@ The continuity ladder (US-E7-01) resumes a task that stays without activity: it 
 instance, restarts it, then alerts the main agent and the human. The Contractor's task began
 as soon as the base of its staging area was ready. But the base comes first: the Owner side
 reads it to write the stories and the acceptance tests. The Contractor's work only begins once
-that contract is settled. In the comparison run of 2026-10-13, the hub twice woke the
-Contractor 900 s after the base was ready, while the Owner side was still writing the
-contract. The Contractor spent whole turns on a draft ($2.46), and the operator had to stop such
-turns by hand.
+that contract is settled. In the comparison run of 2026-10-13, the hub woke the Contractor
+900 s after the base was ready each time the Owner side wrote for longer than that. Two
+attempts were abandoned after the Contractor spent whole turns on a draft ($2.46), and an
+external guard had to stop such turns from then on.
 
 ## Decision
 - The Contractor's task still begins when the base is ready, and a declared delivery still
