@@ -21,3 +21,10 @@ tools:
 # took longer than the last. The hub holds the state that matters (contract, deliveries).
 compression:
   threshold_tokens: 80000
+# No review of the turn after it ends: Hermes' automatic background review is one more call
+# with the whole conversation (145 000 tokens in the third real run, after the hub had ended the
+# turn), and it writes the instance's own memories and skills from what the turn read — content
+# the hub treats as untrusted.
+auxiliary:
+  background_review:
+    enabled: false
