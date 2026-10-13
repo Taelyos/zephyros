@@ -211,7 +211,10 @@ def _clean(value: object, depth: int) -> object:
     if depth >= MAX_DEPTH:
         return "[too deep]"
     if isinstance(value, Mapping):
-        return {str(key)[:MAX_STRING]: _clean(item, depth + 1) for key, item in value.items()}
+        # EXG-49: a key is text the log keeps, as much as a value is.
+        return {
+            mask_text(str(key))[:MAX_STRING]: _clean(item, depth + 1) for key, item in value.items()
+        }
     if isinstance(value, list | tuple):
         return [_clean(item, depth + 1) for item in value]
     return f"[{type(value).__name__}]"

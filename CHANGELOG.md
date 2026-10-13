@@ -17,6 +17,13 @@ version. Each schema carries its own version number.
   or `gateway.model` when the file has no `gateway.upstream_model`, and lists the models it
   allows. A file accepted by 1.12.0 is accepted by 1.13.0.
 
+### Fixed
+- The masking of secrets (EXG-49) no longer changes ordinary words. A key shape counts only where
+  a token starts, so `risk-management-module` and `src/disk-usage-monitoring.py` stay as written
+  in the log, the evidence report, the comments and the retitled title of a pull request; a
+  canary glued to a separator (`add-sub-ghp_…`) is still masked. The log masks the keys of the
+  parameters as it masks their values.
+
 ## [0.1.0] - 2026-10-13
 
 The first release: a hub with no model that runs a software project between an Owner side and a
