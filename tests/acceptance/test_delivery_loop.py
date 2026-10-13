@@ -72,7 +72,9 @@ def requirements() -> list[dict[str, Any]]:
     return [wire(put(item)) for item in objects.values()]
 
 
-def prepared(world: World, sub_answer: str = "pass") -> str:
+def prepared(world: World, sub_answer: str = "pass", *, put_sub: bool = True) -> str:
+    """The contract, the staging area and, unless `put_sub` is false, the Owner side's test
+    for EXG-02."""
     project = world.project_a
     world.operator_tool(
         "contract.apply_reserved",
@@ -82,12 +84,13 @@ def prepared(world: World, sub_answer: str = "pass") -> str:
     )
     world.operator_tool("project.prepare", project_id=project, repository=REPOSITORY, branch="main")
     world.run_jobs()
-    world.operator_tool(
-        "acceptance.put",
-        project_id=project,
-        path=NEW_ACCEPTANCE,
-        content=f"test_sub: {sub_answer}\n",
-    )
+    if put_sub:
+        world.operator_tool(
+            "acceptance.put",
+            project_id=project,
+            path=NEW_ACCEPTANCE,
+            content=f"test_sub: {sub_answer}\n",
+        )
     return project
 
 
@@ -186,16 +189,21 @@ def test_the_owner_side_sees_the_decision_and_the_contractor_sees_its_own(world:
 
 
 # ----------------------------------------------------------------------------- ATK-16, ATK-20
+@pytest.mark.xfail(strict=True, reason="T02: the attack works until the fix")
 @pytest.mark.parametrize(
-    ("change", "what"),
+    ("change", "what", "path"),
     [
-        ({**ADD_SUB, "checks/add.txt": b"test_add: pass\nextra\n"}, "modifies"),
-        ({k: v for k, v in ADD_SUB.items() if k != "checks/add.txt"}, "deletes"),
-        ({**ADD_SUB, NEW_ACCEPTANCE: b"test_sub: pass\n"}, "adds at an acceptance path"),
+        ({**ADD_SUB, "checks/add.txt": b"test_add: pass\nextra\n"}, "modifies", "checks/add.txt"),
+        ({k: v for k, v in ADD_SUB.items() if k != "checks/add.txt"}, "deletes", "checks/add.txt"),
+        (
+            {**ADD_SUB, NEW_ACCEPTANCE: b"test_sub: pass\n"},
+            "adds at an acceptance path",
+            NEW_ACCEPTANCE,
+        ),
     ],
 )
 def test_atk_16_20_a_delivery_that_touches_an_acceptance_test_is_refused_before_any_run(
-    world: World, change: dict[str, bytes], what: str
+    world: World, change: dict[str, bytes], what: str, path: str
 ) -> None:
     prepared(world)
     delivery = deliver(world, change, branch="sneaky")
@@ -209,7 +217,31 @@ def test_atk_16_20_a_delivery_that_touches_an_acceptance_test_is_refused_before_
         if r.action is Action.DELIVERY_CHECK and r.outcome is Outcome.REFUSED
     ]
     assert refusals[-1].reason is Reason.PROTECTED_PATH
+    # ATK-16: the log names the paths the delivery touched, not only how many there were.
+    assert json.loads(refusals[-1].parameters)["paths"] == [path]
     assert Action.VERIFICATION_RUN not in [r.action for r in world.records(world.project_a)]
+
+
+@pytest.mark.xfail(strict=True, reason="T02: the attack works until the fix")
+def test_atk_16_a_named_test_the_hub_does_not_hold_is_never_taken_from_the_delivery(
+    world: World,
+) -> None:
+    """T02: a criterion names checks/sub.txt::test_sub, and the Owner side has not put that file
+    yet (or missed it). The Contractor reads the contract and delivers a checks/sub.txt that
+    passes. Its version never runs: the test does not pass, neither does the delivery, and the
+    report and the log say which file was set aside."""
+    prepared(world, put_sub=False)
+    delivery = deliver(world, {**ADD_SUB, NEW_ACCEPTANCE: b"test_sub: pass\n"}, branch="helpful")
+    found = status(world, delivery)
+    assert found["outcomes"]["checks/sub.txt::test_sub"] in ("not_run", "error")
+    assert found["decision"] != "PASS"
+    assert "- `checks/sub.txt` (the delivered version was set aside)" in found["report"]
+    [check] = [
+        json.loads(r.parameters)
+        for r in world.records(world.project_a)
+        if r.action is Action.DELIVERY_CHECK and r.outcome is Outcome.OK
+    ]
+    assert (check["missing"], check["set_aside"]) == ([NEW_ACCEPTANCE], [NEW_ACCEPTANCE])
 
 
 def test_atk_18_lite_a_delivered_file_with_an_acceptance_test_name_elsewhere_changes_nothing(
