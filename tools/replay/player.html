@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zephyros replay</title>
+<style>
+:root{
+  --bg:#0a0e15; --panel:#111927; --panel2:#0d1420; --line:#1e2a3c; --line2:#2c3b52;
+  --fg:#e8eef7; --muted:#93a4ba; --dim:#5e7189; --white:#ffffff;
+  --green:#34d399; --amber:#fbbf24; --red:#f87171; --blue:#60a5fa; --purple:#a78bfa;
+  --cyan:#22d3ee; --pink:#f472b6;
+  --owner:#60a5fa; --contractor:#34d399;
+  --base:15px;
+}
+html[data-theme="light"]{
+  --bg:#eef2f7; --panel:#ffffff; --panel2:#f4f7fb; --line:#d8e0ea; --line2:#c2cddb;
+  --fg:#101826; --muted:#4a5b73; --dim:#8496ad;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:var(--base)/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+h2{
+  margin:0; padding:6px 11px 5px; font-size:12.5px; font-weight:700; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+}
+h2 .chip{
+  margin-left:auto; font-size:11px; letter-spacing:.03em; text-transform:none; color:var(--fg);
+  background:var(--panel2); border:1px solid var(--line2); border-radius:20px; padding:1px 9px; font-weight:600;
+}
+
+/* ---------------- layout ---------------- */
+#app{height:100vh; display:grid; grid-template-rows:auto minmax(0,1fr) auto auto; gap:0}
+#topbar{
+  display:flex; align-items:center; gap:14px; padding:7px 14px;
+  background:linear-gradient(180deg,#131d2c,#0f1724); border-bottom:1px solid var(--line);
+}
+html[data-theme="light"] #topbar{background:linear-gradient(180deg,#ffffff,#eef2f7)}
+.brand{display:flex; align-items:center; gap:8px; flex:0 0 auto}
+.logo{
+  width:26px; height:26px; border-radius:7px; display:grid; place-items:center; font-weight:800; font-size:15px;
+  color:#04121a; background:linear-gradient(135deg,var(--cyan),var(--blue)); box-shadow:0 0 12px rgba(96,165,250,.35);
+}
+.brandname{font-weight:700; letter-spacing:.02em; font-size:15px}
+.runmeta{min-width:0; flex:1 1 auto}
+#run-title{font-size:16px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.rsub{font-size:12.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.rsub .dot{color:var(--dim); padding:0 3px}
+.badges{display:flex; align-items:center; gap:8px; flex:0 0 auto}
+.badge{
+  font-size:12.5px; font-weight:700; letter-spacing:.02em; border-radius:7px; padding:5px 10px;
+  border:1px solid transparent; white-space:nowrap;
+}
+.badge.kind.real{color:#04141b; background:linear-gradient(90deg,#22d3ee,#34d399); box-shadow:0 0 14px rgba(52,211,153,.3)}
+.badge.kind.scripted{
+  color:#f6f0ff; background:repeating-linear-gradient(45deg,#6d28d9 0 9px,#7c3aed 9px 18px);
+  border-color:#a78bfa; text-shadow:0 1px 2px rgba(0,0,0,.5);
+}
+.badge.attacks{color:#e9d5ff; background:rgba(124,58,237,.18); border-color:#7c3aed}
+.badge.integrity.ok{color:#04160f; background:var(--green)}
+.badge.integrity.bad{color:#fff; background:var(--red)}
+.badge.integrity.none{color:var(--muted); background:var(--panel2); border-color:var(--line2)}
+
+#main{
+  display:grid; grid-template-columns:minmax(250px,22vw) minmax(0,1fr) minmax(270px,24vw);
+  gap:10px; padding:10px; min-height:0;
+}
+.col{background:var(--panel); border:1px solid var(--line); border-radius:12px; min-height:0; display:flex; flex-direction:column; overflow:hidden}
+.col.flush{background:transparent; border:none; overflow:visible; border-radius:0}
+.scroll{overflow:auto; padding:9px; min-height:0}
+
+/* ---------------- contract ---------------- */
+.grouphead{font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); font-weight:700; margin:2px 0 7px}
+.grouphead:not(:first-child){margin-top:12px}
+.citem{
+  border:1px solid var(--line); border-left:3px solid var(--line2); border-radius:9px;
+  padding:7px 9px; margin-bottom:7px; background:var(--panel2);
+  transition:background .25s, border-color .25s, box-shadow .3s, transform .2s;
+}
+.citem .chead{display:flex; align-items:baseline; gap:7px}
+.citem .cid{font:700 12px ui-monospace,Menlo,Consolas,monospace; color:var(--muted); flex:0 0 auto}
+.citem .ctitle{font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.citem .ctext{
+  font-size:12.5px; color:var(--muted); margin-top:2px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.citem .cmeta{display:flex; gap:6px; margin-top:5px; align-items:center}
+.pchip{font-size:10.5px; font-weight:700; letter-spacing:.03em; border-radius:5px; padding:1px 6px; border:1px solid var(--line2); color:var(--muted)}
+.pchip.prio{color:#fde68a; border-color:#a16207; background:rgba(251,191,36,.1)}
+.vchip{font-size:10.5px; border-radius:5px; padding:1px 6px; border:1px solid var(--line2); color:var(--cyan)}
+.vchip[data-m="test"]{color:var(--blue); border-color:#1d4ed8}
+.vchip[data-m="inspection"]{color:var(--cyan); border-color:#0e7490}
+.vchip[data-m="analysis"]{color:var(--purple); border-color:#6d28d9}
+.vchip[data-m="demonstration"]{color:var(--pink); border-color:#9d174d}
+.mk{margin-left:auto; font-size:11.5px; font-weight:700; border-radius:5px; padding:1px 7px}
+.mk.ok{color:#04160f; background:var(--green)}
+.mk.bad{color:#fff; background:var(--red)}
+.citem.active{background:#172a41; border-color:var(--blue); box-shadow:0 0 0 1px var(--blue), 0 0 16px rgba(96,165,250,.28); transform:translateX(2px)}
+.citem.ok{border-left-color:var(--green)}
+.citem.bad{border-left-color:var(--red)}
+details.stories{margin-top:12px; border-top:1px dashed var(--line); padding-top:8px}
+details.stories>summary{cursor:pointer; font-size:12px; color:var(--muted); letter-spacing:.05em; text-transform:uppercase; font-weight:700; outline:none}
+details.stories[open]>summary{margin-bottom:8px}
+
+/* ---------------- lanes ---------------- */
+#col-lanes{display:grid; grid-template-columns:1fr 1fr; gap:10px; min-height:0}
+.lane{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px; min-height:0;
+  display:flex; flex-direction:column; overflow:hidden; position:relative; transition:box-shadow .25s;
+}
+.lane::before{content:""; position:absolute; top:0; left:0; right:0; height:3px; background:var(--line2)}
+.lane.owner{border-color:#1e3a5f}
+.lane.owner::before{background:var(--owner)}
+.lane.contractor{border-color:#17493a}
+.lane.contractor::before{background:var(--contractor)}
+.lane.running{box-shadow:inset 0 0 0 1px rgba(96,165,250,.25), 0 0 18px rgba(96,165,250,.12)}
+.lane.contractor.running{box-shadow:inset 0 0 0 1px rgba(52,211,153,.25), 0 0 18px rgba(52,211,153,.12)}
+.lane.refusal{animation:flashred .5s ease-in-out 3}
+@keyframes flashred{0%,100%{background:var(--panel)}50%{background:rgba(248,113,113,.22)}}
+.lhead{display:flex; align-items:center; gap:8px; padding:9px 11px 7px; margin-top:3px}
+.lhead .lname{font-weight:700; font-size:14.5px}
+.lhead .lrole{font-size:12px; color:var(--muted)}
+.rdot{margin-left:auto; width:10px; height:10px; border-radius:50%; background:var(--dim); flex:0 0 auto; transition:background .3s}
+.lane.running .rdot{background:var(--green); animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55)}70%{box-shadow:0 0 0 7px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+.activity{padding:7px 11px; font-size:13px; color:var(--muted); min-height:40px; border-top:1px solid var(--line); border-bottom:1px solid var(--line)}
+.activity .cap{display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin-bottom:1px}
+.counters{display:flex; gap:14px; padding:6px 11px; font-size:12.5px; color:var(--muted); border-bottom:1px solid var(--line)}
+.counters b{color:var(--fg); font-weight:700}
+.counters .ref{color:var(--red)}
+.bubbles{flex:1 1 auto; overflow:auto; padding:9px; display:flex; flex-direction:column; gap:7px; min-height:0}
+.bubble{
+  background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:7px 10px;
+  font-size:13px; color:var(--fg); white-space:pre-wrap; overflow-wrap:anywhere;
+  max-height:150px; overflow:auto; animation:pop .22s ease-out;
+}
+@keyframes pop{from{opacity:0; transform:translateY(6px)}to{opacity:1; transform:none}}
+.bubble.final{border-color:var(--line2); box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+.bubble .btag{display:block; font-size:10px; text-transform:uppercase; letter-spacing:.09em; color:var(--dim); margin-bottom:2px}
+.bubble.refused{border-color:var(--red); background:rgba(248,113,113,.08)}
+.bubble.refused .btag{color:var(--red)}
+.bubbles .empty{color:var(--dim); font-size:12.5px; font-style:italic; padding:2px 4px}
+
+/* ---------------- gate column ---------------- */
+#col-gate{overflow:auto}
+.pane{border-bottom:1px solid var(--line)}
+.pane:last-child{border-bottom:none}
+.pbody{padding:5px 10px}
+.gate-big{
+  text-align:center; font-weight:800; font-size:20px; letter-spacing:.04em; border-radius:9px; padding:3px 6px;
+  border:1px solid var(--line2); color:var(--muted); background:var(--panel2); transition:all .3s;
+}
+.gate-big.pass{color:#04160f; background:linear-gradient(180deg,#4ade80,#22c55e); border-color:#4ade80; box-shadow:0 0 22px rgba(52,211,153,.35)}
+.gate-big.concerns{color:#2a1a02; background:linear-gradient(180deg,#fbbf24,#f59e0b); border-color:#fbbf24; box-shadow:0 0 22px rgba(251,191,36,.3)}
+.gate-big.fail{color:#fff; background:linear-gradient(180deg,#f87171,#dc2626); border-color:#f87171; box-shadow:0 0 22px rgba(248,113,113,.35)}
+.gate-tests{text-align:center; font-size:11.5px; color:var(--muted); margin-top:4px}
+.ghist{margin-top:6px; display:flex; flex-direction:column; gap:4px; max-height:40px; overflow:auto}
+.grow{display:flex; align-items:center; gap:8px; font-size:12.5px}
+.grow .d{font:600 11.5px ui-monospace,Menlo,Consolas,monospace; color:var(--muted); min-width:56px}
+.grow .r{margin-left:auto; color:var(--dim); font-size:11px}
+.mini{font-size:11px; font-weight:700; border-radius:5px; padding:1px 7px}
+.mini.PASS{color:#04160f; background:var(--green)}
+.mini.CONCERNS{color:#2a1a02; background:var(--amber)}
+.mini.FAIL{color:#fff; background:var(--red)}
+.verdict{font-size:14px; font-weight:700; border-radius:8px; padding:5px 9px; border:1px solid var(--line2); color:var(--muted); background:var(--panel2)}
+.verdict.accept{color:#04160f; background:var(--green); border-color:var(--green)}
+.verdict.accept_with_reservations{color:#2a1a02; background:var(--amber); border-color:var(--amber)}
+.verdict.reject{color:#fff; background:var(--red); border-color:var(--red)}
+.vreasons{font-size:12.5px; color:var(--muted); margin-top:5px; max-height:44px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere}
+.flags{display:flex; flex-direction:column; gap:5px; font-size:12.5px; max-height:40px; overflow:auto}
+.flagrow{border:1px solid #a16207; background:rgba(251,191,36,.09); border-radius:8px; padding:4px 8px}
+.flagrow .fp{color:#fde68a; font-weight:700}
+.flagrow .fm{color:var(--muted); font-size:11.5px}
+.muted{color:var(--muted); font-size:12.5px}
+table.cost{width:100%; border-collapse:collapse; font-size:12px; line-height:1.3}
+table.cost th{text-align:left; color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; padding:0 0 2px}
+table.cost td{padding:0; border-top:1px solid var(--line)}
+table.cost td.n{text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace}
+table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:var(--fg)}
+
+/* ---------------- transport ---------------- */
+#transport{display:flex; align-items:center; gap:10px; padding:6px 14px; background:var(--panel); border-top:1px solid var(--line)}
+.tbtn{
+  display:inline-grid; place-items:center; width:34px; height:30px; border-radius:8px; cursor:pointer;
+  background:var(--panel2); color:var(--fg); border:1px solid var(--line2); transition:background .15s, border-color .15s;
+}
+.tbtn:hover{background:#1b2740; border-color:var(--blue)}
+.tbtn.main{background:linear-gradient(180deg,#1d4ed8,#1e40af); border-color:#3b82f6; color:#fff; width:40px}
+#speed{
+  background:var(--panel2); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:4px 6px;
+  font-size:12.5px; font-family:inherit;
+}
+.toggle{display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); cursor:pointer; user-select:none; white-space:nowrap}
+.toggle input{accent-color:var(--blue)}
+#scrub{position:relative; flex:1 1 auto; height:24px; cursor:pointer; min-width:120px}
+#scrub::before{content:""; position:absolute; left:0; right:0; top:11px; height:2px; background:var(--line2); border-radius:2px}
+#scrub-fill{position:absolute; left:0; top:10px; height:4px; width:0; border-radius:3px; background:linear-gradient(90deg,var(--blue),var(--contractor))}
+#ticks{position:absolute; inset:0}
+.tick{position:absolute; bottom:4px; width:2px; height:7px; border-radius:1px; background:var(--dim); opacity:.55; transform:translateX(-1px)}
+.tick.key{height:13px; width:3px; opacity:.95}
+.tick.gate{height:17px; width:4px}
+.tick.cat-refusal{background:var(--red); opacity:1}
+.tick.cat-gate{background:var(--amber); opacity:1}
+.tick.cat-flag{background:var(--amber); opacity:1}
+.tick.cat-judgment{background:var(--pink); opacity:1}
+.tick.cat-message{background:var(--blue)}
+.tick.cat-contract{background:var(--purple)}
+.tick.cat-delivery{background:var(--green)}
+.tick.cat-model{background:#7c8aa0}
+#head{position:absolute; top:1px; width:3px; height:20px; background:var(--white); border-radius:2px; box-shadow:0 0 9px var(--white); transform:translateX(-1.5px)}
+#clock{font-size:12px; color:var(--muted); white-space:nowrap; min-width:126px; text-align:right}
+
+/* ---------------- feed ---------------- */
+#feed{height:140px; overflow:auto; padding:5px 14px 7px; background:var(--panel2); border-top:1px solid var(--line); font-size:13px}
+.frow{display:grid; grid-template-columns:70px 96px 18px minmax(0,1fr); gap:9px; align-items:center; padding:2px 4px; border-radius:5px; border-bottom:1px solid rgba(255,255,255,.035)}
+.frow .ft{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--dim)}
+.frow .fa{font-size:11.5px; color:var(--muted); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.frow .fs{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--fg)}
+.frow .fs.refused{color:var(--red)}
+.ficon{display:inline-grid; place-items:center; width:16px; height:16px; border-radius:5px; font-size:9.5px; font-weight:800; color:#08111c}
+.frow.cat-gate{background:rgba(251,191,36,.07)}
+.frow.cat-refusal{background:rgba(248,113,113,.09)}
+.frow.cat-flag{background:rgba(251,191,36,.06)}
+.frow.focus{animation:focusrow 1.4s ease-out; box-shadow:0 0 0 1px var(--blue)}
+@keyframes focusrow{0%{background:rgba(96,165,250,.4)}100%{background:transparent}}
+.actor-owner{color:var(--owner) !important}
+.actor-contractor{color:var(--contractor) !important}
+.actor-hub{color:var(--purple) !important}
+.actor-operator{color:var(--amber) !important}
+
+/* ---------------- caption + overlay ---------------- */
+#caption{
+  position:fixed; left:50%; bottom:180px; transform:translateX(-50%); max-width:78%; z-index:40;
+  background:rgba(5,9,15,.84); border:1px solid var(--line2); border-radius:13px; padding:12px 22px;
+  font-size:21px; line-height:1.35; color:#fff; text-align:center; box-shadow:0 8px 30px rgba(0,0,0,.5);
+  transition:opacity .2s, transform .2s;
+}
+#overlay{position:fixed; inset:0; z-index:60; background:radial-gradient(1200px 700px at 50% 20%,#101a2b,#070b11); display:grid; place-items:center; padding:24px}
+#dropzone{max-width:640px; text-align:center}
+#dropzone h1{font-size:26px; margin:0 0 6px}
+#dropzone p{color:var(--muted); font-size:14px}
+.dzbox{border:2px dashed var(--line2); border-radius:16px; padding:34px 30px; background:rgba(255,255,255,.015); transition:border-color .2s, background .2s}
+#overlay.drag .dzbox{border-color:var(--blue); background:rgba(96,165,250,.08)}
+.filebtn{display:inline-block; margin-left:6px; padding:6px 14px; border-radius:9px; background:linear-gradient(180deg,#1d4ed8,#1e40af); color:#fff; cursor:pointer; font-weight:600; border:1px solid #3b82f6}
+.filebtn input{display:none}
+.hint{font-size:12.5px; color:var(--dim); margin-top:14px}
+.hint code{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px}
+#fatal{max-width:620px; text-align:center; border:1px solid var(--red); background:rgba(248,113,113,.08); border-radius:14px; padding:24px 26px}
+#fatal h1{font-size:20px; margin:0 0 8px; color:var(--red)}
+#fatal p{color:var(--fg); font-size:14px; overflow-wrap:anywhere}
+
+@media (min-width:1600px){
+  #main{grid-template-columns:minmax(300px,20vw) minmax(0,1fr) minmax(320px,21vw)}
+}
+</style>
+</head>
+<body>
+
+<div id="app" hidden>
+  <header id="topbar">
+    <div class="brand"><span class="logo">Z</span><span class="brandname">Zephyros</span></div>
+    <div class="runmeta">
+      <div id="run-title">—</div>
+      <div class="rsub">
+        <span id="run-project"></span><span class="dot">·</span>
+        <span id="run-model"></span><span class="dot">·</span>
+        <span id="run-duration"></span><span class="dot">·</span>
+        <span id="run-events"></span>
+      </div>
+    </div>
+    <div class="badges">
+      <div id="kind-badge" class="badge kind"></div>
+      <div id="attacks" class="badge attacks" hidden></div>
+      <div id="integrity" class="badge integrity none"></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="col" id="col-contract">
+      <h2>Contract <span id="contract-version" class="chip">—</span></h2>
+      <div class="scroll" id="contract-list"></div>
+    </section>
+
+    <section class="col flush" id="col-lanes">
+      <div class="lane owner" id="lane-owner">
+        <div class="lhead"><span class="lname">Owner</span><span class="lrole">client side</span><span class="rdot"></span></div>
+        <div class="activity" id="act-owner"><span class="cap">activity</span><span class="txt">—</span></div>
+        <div class="counters" id="cnt-owner"></div>
+        <div class="bubbles" id="bub-owner"></div>
+      </div>
+      <div class="lane contractor" id="lane-contractor">
+        <div class="lhead"><span class="lname">Contractor</span><span class="lrole">builder side</span><span class="rdot"></span></div>
+        <div class="activity" id="act-contractor"><span class="cap">activity</span><span class="txt">—</span></div>
+        <div class="counters" id="cnt-contractor"></div>
+        <div class="bubbles" id="bub-contractor"></div>
+      </div>
+    </section>
+
+    <section class="col" id="col-gate">
+      <div class="pane">
+        <h2>Gate</h2>
+        <div class="pbody">
+          <div class="gate-big none" id="gate-big">—</div>
+          <div class="gate-tests" id="gate-tests">no delivery yet</div>
+          <div class="ghist" id="gate-history"></div>
+        </div>
+      </div>
+      <div class="pane">
+        <h2>Verdict</h2>
+        <div class="pbody">
+          <div class="verdict" id="verdict-badge">—</div>
+          <div class="vreasons" id="verdict-reasons">no verdict yet</div>
+        </div>
+      </div>
+      <div class="pane">
+        <h2>Flags</h2>
+        <div class="pbody"><div class="flags muted" id="flags-list">none</div></div>
+      </div>
+      <div class="pane">
+        <h2>Cost</h2>
+        <div class="pbody">
+          <table class="cost" id="cost-table">
+            <thead><tr><th>side</th><th style="text-align:right">calls</th><th style="text-align:right">tokens</th><th style="text-align:right">USD</th></tr></thead>
+            <tbody>
+              <tr id="cost-owner"><td>Owner</td><td class="n">0</td><td class="n">0</td><td class="n">$0.000</td></tr>
+              <tr id="cost-contractor"><td>Contractor</td><td class="n">0</td><td class="n">0</td><td class="n">$0.000</td></tr>
+              <tr id="cost-total" class="tot"><td>Total</td><td class="n">0</td><td class="n">0</td><td class="n">$0.000</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="transport">
+    <button class="tbtn main" id="btn-play" title="Play / pause (space)"></button>
+    <select id="speed" title="Playback speed"></select>
+    <label class="toggle" title="Shorten long idle gaps"><input type="checkbox" id="compress" checked> compress idle gaps</label>
+    <button class="tbtn" id="btn-prev" title="Previous key moment"></button>
+    <button class="tbtn" id="btn-next" title="Next key moment"></button>
+    <div id="scrub"><div id="ticks"></div><div id="scrub-fill"></div><div id="head"></div></div>
+    <div id="clock" class="mono">+00:00 / +00:00</div>
+  </div>
+
+  <div id="feed"></div>
+</div>
+
+<div id="caption" hidden></div>
+
+<div id="overlay">
+  <div id="dropzone">
+    <div class="dzbox">
+      <h1>Zephyros replay</h1>
+      <p>Drop a <b>.json</b> replay here, or <label class="filebtn">choose a file<input type="file" id="file" accept=".json,application/json"></label></p>
+    </div>
+    <p class="hint">…or open <code>player.html?src=https://…/run.replay.json</code></p>
+  </div>
+  <div id="fatal" hidden><h1>Cannot open this document</h1><p id="fatal-msg"></p></div>
+</div>
+
+<script type="application/json" id="replay-data"></script>
+<script>
+'use strict';
+(function () {
+  /* ------------------------------------------------------------------ *
+   *  Small helpers                                                      *
+   * ------------------------------------------------------------------ */
+  const $ = (s, r) => (r || document).querySelector(s);
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+
+  const SVG = {
+    play: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="6" y="5" width="4" height="14" fill="currentColor"/><rect x="14" y="5" width="4" height="14" fill="currentColor"/></svg>',
+    prev: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 5h2.4v14H6zM20 5v14L9.6 12z" fill="currentColor"/></svg>',
+    next: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M15.6 5H18v14h-2.4zM4 5v14L14.4 12z" fill="currentColor"/></svg>'
+  };
+
+  const CAT_COLOR = {
+    contract: '#60a5fa', turn: '#22d3ee', model: '#a78bfa', refusal: '#f87171',
+    delivery: '#34d399', gate: '#fbbf24', judgment: '#f472b6', message: '#93c5fd',
+    flag: '#fbbf24', other: '#64748b'
+  };
+  const CAT_ICON = {
+    contract: 'C', turn: 'T', model: 'M', refusal: 'R', delivery: 'D',
+    gate: 'G', judgment: 'J', message: 'S', flag: 'F', other: '?'
+  };
+  const SPEEDS = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 200, 500, 1000];
+  const GAP_THRESHOLD_MS = 6000;   // a real gap longer than this is compressed
+  const GAP_PAUSE_MS = 600;        // …to this short playback pause
+  const FEED_CAP = 200;            // keep the last N feed rows
+  const BUBBLE_CAP = 6;            // keep the last N messages per lane
+  const TICK_CAP = 700;
+
+  /* ------------------------------------------------------------------ *
+   *  State                                                              *
+   * ------------------------------------------------------------------ */
+  let doc = null;
+  let events = [];
+  let N = 0;
+  let pb = [];               // pb[i] = playback time (ms) of events[i]
+  let byId = new Map();
+  let winStart = 0, winEnd = 0, startT = 0, endT = 0;
+  let curIdx = -1;
+  let ph = 0;                // playhead, in playback-time ms
+  let speed = 1;
+  let playing = false;
+  let done = false;
+  let compress = true;
+  let captionsEnabled = true;
+  let keyIdx = [];
+  let loaded = false;
+  let lastNow = 0;
+  let rafId = 0;
+
+  const counters = {
+    owner: {calls: 0, tok: 0, cost: 0, refusals: 0},
+    contractor: {calls: 0, tok: 0, cost: 0, refusals: 0}
+  };
+
+  /* ------------------------------------------------------------------ *
+   *  Public API                                                         *
+   * ------------------------------------------------------------------ */
+  window.replay = {
+    play: () => doPlay(),
+    pause: () => doPause(),
+    seek: (eventId) => doSeek(eventId, false),
+    setSpeed: (n) => doSetSpeed(n),
+    state: () => ({
+      eventId: (loaded && curIdx >= 0) ? events[curIdx].id : null,
+      playing: playing, done: done
+    }),
+    caption: (text) => doCaption(text),
+    focus: (eventId) => doSeek(eventId, true)
+  };
+
+  /* ------------------------------------------------------------------ *
+   *  boot                                                               *
+   * ------------------------------------------------------------------ */
+  function boot() {
+    wireChrome();
+    const dataEl = document.getElementById('replay-data');
+    const inline = dataEl && dataEl.textContent ? dataEl.textContent.trim() : '';
+    if (inline) {
+      try { return loadDoc(JSON.parse(inline)); }
+      catch (e) { return fatal('The embedded replay is not valid JSON: ' + e.message); }
+    }
+    const params = new URLSearchParams(location.search);
+    const src = params.get('src');
+    if (src) {
+      fetch(src, {cache: 'no-store'})
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(loadDoc)
+        .catch(e => fatal('Could not fetch ' + src + ' — ' + e.message +
+          '. If the page is opened from file://, put the replay in the page or pick the file.'));
+      return;
+    }
+    showDropzone();
+  }
+
+  function fatal(msg) {
+    loaded = false;
+    $('#overlay').hidden = false;
+    $('#dropzone').hidden = true;
+    const f = $('#fatal');
+    f.hidden = false;
+    $('#fatal-msg').textContent = msg;
+    $('#app').hidden = true;
+  }
+  function showDropzone() { $('#overlay').hidden = false; $('#dropzone').hidden = false; $('#fatal').hidden = true; }
+
+  /* ------------------------------------------------------------------ *
+   *  load / validate                                                    *
+   * ------------------------------------------------------------------ */
+  function loadDoc(d) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return fatal('The document is not a JSON object.');
+    if (d.format !== 'zephyros-replay') return fatal('Not a Zephyros replay: format is ' + JSON.stringify(d.format) + ', expected "zephyros-replay".');
+    const major = String(d.version == null ? '' : d.version).split('.')[0];
+    if (major !== '1') return fatal('Unsupported replay version ' + JSON.stringify(d.version) + ': this player knows major version 1.');
+    if (!Array.isArray(d.events)) return fatal('The replay has no "events" array.');
+
+    doc = d;
+    events = d.events.slice().sort((a, b) => {
+      const da = a.offset_ms || 0, db = b.offset_ms || 0;
+      if (da !== db) return da - db;
+      return ((a.seq == null ? 1e15 : a.seq) - (b.seq == null ? 1e15 : b.seq));
+    });
+    N = events.length;
+    byId = new Map();
+    events.forEach((e, i) => {
+      e._i = i;
+      const id = (typeof e.id === 'number') ? e.id : i;
+      e.id = id;
+      byId.set(id, i);
+    });
+
+    const run = d.run || {};
+    const params = new URLSearchParams(location.search);
+
+    buildPb();
+
+    winStart = 0; winEnd = N - 1;
+    const fromId = params.has('from') ? parseInt(params.get('from'), 10) : NaN;
+    const toId = params.has('to') ? parseInt(params.get('to'), 10) : NaN;
+    if (!isNaN(fromId) && byId.has(fromId)) winStart = byId.get(fromId);
+    if (!isNaN(toId) && byId.has(toId)) winEnd = byId.get(toId);
+    if (winEnd < winStart) winEnd = winStart;
+    startT = pb[winStart]; endT = pb[winEnd];
+
+    if (params.has('captions')) captionsEnabled = params.get('captions') !== '0';
+    $('#caption').hidden = true;
+
+    if (params.has('speed')) { const s = parseFloat(params.get('speed')); if (isFinite(s) && s > 0) speed = s; }
+
+    buildTopbar(run, d);
+    buildContract(d.contract);
+    buildTicks();
+    buildSpeedSelect();
+    if (params.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
+
+    $('#overlay').hidden = true;
+    $('#app').hidden = false;
+    loaded = true;
+
+    resetState();
+    goTo(winStart);
+    ph = startT;
+    updateHead(); updateClock(); updatePlayBtn();
+
+    if (params.get('autoplay') === '1') doPlay();
+    if (!rafId) rafId = requestAnimationFrame(loop);
+  }
+
+  function buildPb() {
+    pb = new Array(N);
+    if (!N) return;
+    pb[0] = 0;
+    for (let i = 1; i < N; i++) {
+      let dt = (events[i].offset_ms || 0) - (events[i - 1].offset_ms || 0);
+      if (!(dt > 0)) dt = 0;
+      if (compress && dt > GAP_THRESHOLD_MS) dt = GAP_PAUSE_MS;
+      pb[i] = pb[i - 1] + dt;
+    }
+    keyIdx = [];
+    for (let i = 0; i < N; i++) if (isKey(events[i])) keyIdx.push(i);
+  }
+
+  function isKey(e) {
+    const c = e.category;
+    return c === 'gate' || c === 'judgment' || c === 'flag' || c === 'refusal' ||
+      c === 'message' || e.type === 'contract.propose' || e.type === 'pull_request.open' ||
+      e.type === 'delivery.declare';
+  }
+
+  function pct(i) {
+    const span = endT - startT;
+    return span > 0 ? clamp((pb[i] - startT) / span * 100, 0, 100) : 0;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  top bar, contract, ticks, speed                                    *
+   * ------------------------------------------------------------------ */
+  function fmtTok(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+  function fmtUsd(n) { return '$' + (n || 0).toFixed(3); }
+  function fmtOff(ms) {
+    ms = Math.max(0, ms | 0);
+    const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    const pad = v => String(v).padStart(2, '0');
+    return '+' + (h > 0 ? h + ':' + pad(m) : pad(m)) + ':' + pad(ss);
+  }
+
+  function buildTopbar(run, d) {
+    const kind = run.kind === 'scripted' ? 'scripted' : 'real';
+    $('#run-title').textContent = run.title || 'Untitled run';
+    const proj = run.project || {};
+    $('#run-project').textContent = proj.name ? (proj.name + (proj.id ? ' (' + proj.id + ')' : '')) : '—';
+    $('#run-model').textContent = (kind === 'scripted') ? 'no model (scripted)' : ('model: ' + (run.model || 'unknown'));
+    const dur = (d.totals && d.totals.duration_ms != null) ? d.totals.duration_ms : 0;
+    $('#run-duration').textContent = 'duration ' + fmtOff(dur).slice(1);
+    $('#run-events').textContent = N + ' events';
+
+    const kb = $('#kind-badge');
+    kb.className = 'badge kind ' + kind;
+    kb.textContent = kind === 'real' ? 'REAL RUN · real models' : 'SCRIPTED ATTACK · test code, no model';
+
+    const ab = $('#attacks');
+    const atk = Array.isArray(run.attacks) ? run.attacks : [];
+    if (kind === 'scripted' && atk.length) { ab.hidden = false; ab.textContent = atk.join(' · '); }
+    else ab.hidden = true;
+
+    const integ = d.integrity || {};
+    const ib = $('#integrity');
+    if (integ.chain === 'verified') {
+      ib.className = 'badge integrity ok';
+      ib.textContent = 'log chain verified (' + (integ.records || 0) + ' records)';
+      ib.title = 'The hash chain of the hub log was verified for the exported records.';
+    } else if (integ.chain === 'broken') {
+      ib.className = 'badge integrity bad';
+      ib.textContent = 'chain broken';
+      ib.title = integ.detail || 'The hub log chain does not verify.';
+    } else {
+      ib.className = 'badge integrity none';
+      ib.textContent = 'chain not checked';
+      ib.title = 'The replay carries no integrity result.';
+    }
+  }
+
+  const contractIndex = new Map();   // id -> element
+
+  function buildContract(contract) {
+    const list = $('#contract-list');
+    list.innerHTML = '';
+    contractIndex.clear();
+    $('#contract-version').textContent = contract && contract.version != null ? 'v' + contract.version : '—';
+    const objs = (contract && Array.isArray(contract.objects)) ? contract.objects : [];
+
+    const reqs = objs.filter(o => o && /^EXG-/.test(o.id || ''));
+    const cons = objs.filter(o => o && /^CTR-/.test(o.id || ''));
+    const stories = objs.filter(o => o && /^US-/.test(o.id || ''));
+
+    if (reqs.length) { list.appendChild(el('div', 'grouphead', 'Requirements')); reqs.forEach(o => list.appendChild(contractItem(o))); }
+    if (cons.length) { list.appendChild(el('div', 'grouphead', 'Constraints')); cons.forEach(o => list.appendChild(contractItem(o))); }
+    if (stories.length) {
+      const det = el('details', 'stories');
+      const sum = el('summary', null, 'Stories & criteria (' + stories.length + ')');
+      det.appendChild(sum);
+      stories.forEach(o => det.appendChild(contractItem(o)));
+      list.appendChild(det);
+    }
+    if (!reqs.length && !cons.length && !stories.length) {
+      list.appendChild(el('div', 'muted', 'No contract objects in this replay.'));
+    }
+  }
+
+  function contractItem(o) {
+    const it = el('div', 'citem');
+    it.dataset.id = o.id || '';
+    const head = el('div', 'chead');
+    head.appendChild(el('span', 'cid', o.id || '—'));
+    head.appendChild(el('span', 'ctitle', o.title || ''));
+    const mk = el('span', 'mk'); mk.hidden = true; head.appendChild(mk);
+    it.appendChild(head);
+    if (o.text) it.appendChild(el('div', 'ctext', o.text));
+    const meta = el('div', 'cmeta');
+    if (o.verification) { const v = el('span', 'vchip', o.verification); v.dataset.m = o.verification; meta.appendChild(v); }
+    if (o.priority) meta.appendChild(el('span', 'pchip prio', o.priority));
+    it.appendChild(meta);
+    contractIndex.set(o.id, it);
+    return it;
+  }
+
+  function buildTicks() {
+    const wrap = $('#ticks');
+    wrap.innerHTML = '';
+    if (!N) return;
+    let idxs = [];
+    if (N <= TICK_CAP) { for (let i = 0; i < N; i++) idxs.push(i); }
+    else {
+      const step = Math.ceil(N / TICK_CAP);
+      for (let i = 0; i < N; i += step) idxs.push(i);
+      const set = new Set(idxs);
+      for (const i of keyIdx) if (!set.has(i)) { idxs.push(i); set.add(i); }
+    }
+    idxs.sort((a, b) => a - b);
+    const frag = document.createDocumentFragment();
+    for (const i of idxs) {
+      const e = events[i];
+      const key = isKey(e);
+      let cls = 'tick cat-' + (e.category || 'other');
+      if (key) cls += ' key';
+      if (e.category === 'gate') cls += ' gate';
+      const t = el('div', cls);
+      t.style.left = pct(i) + '%';
+      frag.appendChild(t);
+    }
+    wrap.appendChild(frag);
+  }
+
+  function buildSpeedSelect() {
+    const sel = $('#speed');
+    sel.innerHTML = '';
+    const present = SPEEDS.slice();
+    if (!present.includes(speed)) present.push(speed);
+    present.sort((a, b) => a - b);
+    for (const s of present) {
+      const o = el('option', null, (s >= 1 ? s + '×' : s + '×'));
+      o.value = String(s);
+      sel.appendChild(o);
+    }
+    sel.value = String(speed);
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  state folding                                                      *
+   * ------------------------------------------------------------------ */
+  function resetState() {
+    for (const side of ['owner', 'contractor']) {
+      counters[side] = {calls: 0, tok: 0, cost: 0, refusals: 0};
+      setActivity(side, '—');
+      setRunning(side, false);
+      $('#cnt-' + side).innerHTML = '';
+      renderCounters(side);
+      $('#bub-' + side).innerHTML = '';
+      $('#bub-' + side).appendChild(el('div', 'empty', 'no messages yet'));
+    }
+    $('#gate-big').className = 'gate-big none'; $('#gate-big').textContent = '—';
+    $('#gate-tests').textContent = 'no delivery yet';
+    $('#gate-history').innerHTML = '';
+    $('#verdict-badge').className = 'verdict'; $('#verdict-badge').textContent = '—';
+    $('#verdict-reasons').textContent = 'no verdict yet';
+    const fl = $('#flags-list'); fl.className = 'flags muted'; fl.textContent = 'none';
+    for (const side of ['owner', 'contractor', 'total']) renderCostRow(side);
+    for (const it of contractIndex.values()) {
+      it.classList.remove('active', 'ok', 'bad');
+      const mk = it.querySelector('.mk'); if (mk) mk.hidden = true;
+    }
+    const feed = $('#feed'); feed.innerHTML = ''; feedStick = true;
+  }
+
+  function goTo(idx) {
+    if (!N) return;
+    idx = clamp(idx, 0, N - 1);
+    if (idx < curIdx) { resetState(); curIdx = -1; }
+    const bulk = (idx - curIdx) > 30;
+    if (bulk) feedFrag = document.createDocumentFragment();
+    for (let i = curIdx + 1; i <= idx; i++) applyEvent(events[i]);
+    if (bulk) {
+      const feed = $('#feed');
+      feed.appendChild(feedFrag); feedFrag = null;
+      while (feed.childElementCount > FEED_CAP) feed.removeChild(feed.firstChild);
+      if (feedStick) feed.scrollTop = feed.scrollHeight;
+    }
+    curIdx = idx;
+  }
+
+  function applyEvent(e) {
+    const cat = e.category || 'other';
+    const data = (e.data && typeof e.data === 'object') ? e.data : {};
+    const side = (data.side === 'owner' || data.side === 'contractor') ? data.side
+      : ((e.actor === 'owner' || e.actor === 'contractor') ? e.actor : null);
+
+    feedAdd(e);
+
+    if (side && (e.actor === 'owner' || e.actor === 'contractor')) setActivity(side, e.summary || '');
+
+    if (cat === 'turn') {
+      if (e.type === 'instance.start' || e.type === 'turn.start') setRunning(side, true);
+      else if (e.type === 'turn.end') setRunning(side, false);
+    }
+    if (cat === 'model') addModel(side || e.actor, data);
+    if (cat === 'message') addBubble(side || e.actor, data);
+    if (cat === 'refusal') addRefusal(e, side || e.actor);
+    if (cat === 'contract') onContract(e, data);
+    if (cat === 'delivery') onDelivery(e, data);
+    if (cat === 'gate') onGate(e, data);
+    if (cat === 'judgment') onJudgment(e, data);
+    if (cat === 'flag') onFlag(e, data);
+    markMentions(e);
+  }
+
+  /* ---------------- lanes ---------------- */
+  function setActivity(side, text) {
+    if (!side) return;
+    const a = $('#act-' + side);
+    if (a) a.querySelector('.txt').textContent = text || '—';
+  }
+  function setRunning(side, on) {
+    if (!side) return;
+    const l = $('#lane-' + side);
+    if (l) l.classList.toggle('running', !!on);
+  }
+  function renderCounters(side) {
+    const c = counters[side];
+    const node = $('#cnt-' + side);
+    node.innerHTML = '';
+    node.appendChild(el('span', null, 'calls ')).appendChild(el('b', null, String(c.calls)));
+    node.appendChild(el('span', null, 'tok ')).appendChild(el('b', null, fmtTok(c.tok)));
+    node.appendChild(el('span', null, 'cost ')).appendChild(el('b', null, fmtUsd(c.cost)));
+    if (c.refusals) {
+      const r = el('span', 'ref', 'refused ×' + c.refusals);
+      node.appendChild(r);
+    }
+  }
+  function addModel(side, data) {
+    if (!counters[side]) return;
+    const c = counters[side];
+    c.calls += 1;
+    c.tok += (data.prompt_tokens || 0) + (data.completion_tokens || 0);
+    c.cost += data.cost_usd || 0;
+    renderCounters(side);
+    renderCostRow(side); renderCostRow('total');
+  }
+  function addBubble(side, data) {
+    if (!side) return;
+    const box = $('#bub-' + side);
+    const empty = box.querySelector('.empty'); if (empty) empty.remove();
+    const b = el('div', 'bubble' + (data.role === 'final' ? ' final' : ''));
+    b.appendChild(el('span', 'btag', data.role === 'final' ? 'final answer' : 'message'));
+    b.appendChild(document.createTextNode(data.text || ''));
+    box.appendChild(b);
+    while (box.childElementCount > BUBBLE_CAP) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+  }
+  function addRefusal(e, side) {
+    const l = $('#lane-' + side);
+    if (l) { l.classList.remove('refusal'); void l.offsetWidth; l.classList.add('refusal'); }
+    if (counters[side]) { counters[side].refusals += 1; renderCounters(side); }
+    if (side) {
+      const box = $('#bub-' + side);
+      const empty = box.querySelector('.empty'); if (empty) empty.remove();
+      const b = el('div', 'bubble refused');
+      const reason = (e.data && e.data.reason) ? e.data.reason : 'refused';
+      b.appendChild(el('span', 'btag', 'refused · ' + reason));
+      b.appendChild(document.createTextNode(e.summary || (e.data && e.data.action) || 'refused action'));
+      box.appendChild(b);
+      while (box.childElementCount > BUBBLE_CAP) box.removeChild(box.firstChild);
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+  function renderCostRow(side) {
+    let calls, tok, cost, row;
+    if (side === 'total') {
+      const o = counters.owner, c = counters.contractor;
+      calls = o.calls + c.calls; tok = o.tok + c.tok; cost = o.cost + c.cost;
+      row = $('#cost-total');
+    } else {
+      const c = counters[side];
+      calls = c.calls; tok = c.tok; cost = c.cost;
+      row = $('#cost-' + side);
+    }
+    if (!row) return;
+    const tds = row.querySelectorAll('.n');
+    tds[0].textContent = String(calls);
+    tds[1].textContent = fmtTok(tok);
+    tds[2].textContent = fmtUsd(cost);
+  }
+
+  /* ---------------- contract / gate / judgment / flags ---------------- */
+  function onContract(e, data) {
+    if (data.version != null) $('#contract-version').textContent = 'v' + data.version;
+    if (e.type === 'contract.version' && data.number != null) $('#contract-version').textContent = 'v' + data.number;
+    if (e.type === 'contract.apply_reserved' || e.type === 'contract.approve') {
+      const cid = data.change_id;
+      if (cid) flashIds([cid]);
+    }
+  }
+  function onDelivery(e, data) {
+    if (e.type === 'verification.run') {
+      const p = data.passed, t = data.tests;
+      if (t != null) $('#gate-tests').textContent = (p != null ? p : '?') + '/' + t + ' acceptance tests passed';
+    }
+  }
+  function onGate(e, data) {
+    const d = data.decision;
+    const big = $('#gate-big');
+    big.className = 'gate-big ' + (d === 'PASS' ? 'pass' : d === 'CONCERNS' ? 'concerns' : d === 'FAIL' ? 'fail' : 'none');
+    big.textContent = d || '—';
+    if (data.outcomes && typeof data.outcomes === 'object') {
+      const keys = Object.keys(data.outcomes);
+      let ok = 0;
+      for (const k of keys) { const v = data.outcomes[k]; if (v === true || v === 'pass' || v === 'ok' || v === 'passed') ok++; }
+      $('#gate-tests').textContent = ok + '/' + keys.length + ' acceptance tests passed';
+    }
+    const hist = $('#gate-history');
+    const row = el('div', 'grow');
+    row.appendChild(el('span', 'd', data.delivery_id || '—'));
+    row.appendChild(el('span', 'mini ' + (d || ''), d || '—'));
+    row.appendChild(el('span', 'r', (e.t || '').slice(11, 19)));
+    hist.appendChild(row);
+    while (hist.childElementCount > 4) hist.removeChild(hist.firstChild);
+    hist.scrollTop = hist.scrollHeight;
+  }
+  function onJudgment(e, data) {
+    if (e.type === 'inspection.record' && data.object_id) {
+      const it = contractIndex.get(data.object_id);
+      if (it) {
+        const good = data.verdict === 'conforms';
+        it.classList.remove('ok', 'bad', 'active');
+        it.classList.add(good ? 'ok' : 'bad', 'active');
+        const mk = it.querySelector('.mk');
+        if (mk) { mk.hidden = false; mk.className = 'mk ' + (good ? 'ok' : 'bad'); mk.textContent = good ? '✓ conforms' : '✗ not conforms'; }
+        setTimeout(() => it.classList.remove('active'), 2200);
+      }
+    }
+    if (e.type === 'delivery.review') {
+      const v = data.verdict || '—';
+      const vb = $('#verdict-badge');
+      vb.className = 'verdict ' + v;
+      vb.textContent = v.replace(/_/g, ' ');
+      $('#verdict-reasons').textContent = data.reasons || '';
+    }
+  }
+  function onFlag(e, data) {
+    const fl = $('#flags-list');
+    if (fl.classList.contains('muted')) { fl.classList.remove('muted'); fl.textContent = ''; }
+    const row = el('div', 'flagrow');
+    const paths = Array.isArray(data.paths) ? data.paths.join(', ') : (data.paths || '—');
+    row.appendChild(el('div', 'fp', paths));
+    row.appendChild(el('div', 'fm', (data.rule || 'flag') + ' · by ' + (data.by || 'hub') +
+      (data.delivery_id ? ' · ' + data.delivery_id : '')));
+    fl.appendChild(row);
+    while (fl.childElementCount > 12) fl.removeChild(fl.firstChild);
+    fl.scrollTop = fl.scrollHeight;
+  }
+
+  function markMentions(e) {
+    const d = (e.data && typeof e.data === 'object') ? e.data : {};
+    const hay = [e.summary, d.text, d.observation, d.reasons, d.summary, d.object_id, d.change_id]
+      .filter(Boolean).join(' ');
+    const rx = /\b(EXG-\d+|CTR-\d+|US-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:\.\d+)?)\b/g;
+    let m, ids = [];
+    while ((m = rx.exec(hay)) !== null) ids.push(m[1]);
+    if (ids.length) flashIds(ids);
+  }
+  function flashIds(ids) {
+    const seen = new Set();
+    for (const id of ids) {
+      if (seen.has(id)) continue; seen.add(id);
+      const it = contractIndex.get(id);
+      if (!it) continue;
+      it.classList.add('active');
+      const node = it;
+      clearTimeout(node._t);
+      node._t = setTimeout(() => node.classList.remove('active'), 2200);
+    }
+  }
+  /* ---------------- feed ---------------- */
+  let feedStick = true;
+  let feedFrag = null;
+  function feedAdd(e) {
+    const feed = $('#feed');
+    const cat = e.category || 'other';
+    const row = el('div', 'frow cat-' + cat);
+    row.appendChild(el('span', 'ft', fmtOff(e.offset_ms)));
+    const a = el('span', 'fa actor-' + (e.actor || 'other'), e.actor || '');
+    row.appendChild(a);
+    const ic = el('span', 'ficon', CAT_ICON[cat] || '?');
+    ic.style.background = CAT_COLOR[cat] || CAT_COLOR.other;
+    row.appendChild(ic);
+    const s = el('span', 'fs' + (e.outcome === 'refused' ? ' refused' : ''), e.summary || e.type || '');
+    row.appendChild(s);
+    e._row = row;
+    if (feedFrag) { feedFrag.appendChild(row); return; }
+    feed.appendChild(row);
+    while (feed.childElementCount > FEED_CAP) feed.removeChild(feed.firstChild);
+    if (feedStick) feed.scrollTop = feed.scrollHeight;
+  }
+  function focusFeedRow(e) {
+    if (!e || !e._row || !e._row.isConnected) return;
+    const row = e._row;
+    row.classList.remove('focus'); void row.offsetWidth; row.classList.add('focus');
+    const feed = $('#feed');
+    const target = row.offsetTop - feed.clientHeight / 2;
+    feed.scrollTop = clamp(target, 0, feed.scrollHeight);
+    feedStick = (feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30);
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  playback                                                           *
+   * ------------------------------------------------------------------ */
+  function loop(now) {
+    if (!lastNow) lastNow = now;
+    const dt = now - lastNow; lastNow = now;
+    if (playing && loaded && N) {
+      ph += dt * speed;
+      if (ph >= endT) ph = endT;
+      let ni = curIdx;
+      while (ni < winEnd && ph >= pb[ni + 1]) ni++;
+      if (ni !== curIdx) goTo(ni);
+      updateHead();
+      updateClock();
+      if (ph >= endT && !done) finish();
+    }
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function updateHead() {
+    if (!N) return;
+    const p = ((ph - startT) / Math.max(1, endT - startT)) * 100;
+    $('#head').style.left = clamp(p, 0, 100) + '%';
+    $('#scrub-fill').style.width = clamp(p, 0, 100) + '%';
+  }
+  function updateClock() {
+    if (!N || curIdx < 0) { $('#clock').textContent = '+00:00 / +00:00'; return; }
+    $('#clock').textContent = fmtOff(events[curIdx].offset_ms) + ' / ' + fmtOff(events[winEnd].offset_ms);
+  }
+  function updatePlayBtn() { $('#btn-play').innerHTML = playing ? SVG.pause : SVG.play; }
+
+  function doPlay() {
+    if (!loaded || !N) return;
+    if (done) { doSeekByIdx(winStart); done = false; delete document.body.dataset.done; }
+    playing = true; lastNow = 0;
+    if (curIdx >= 0) ph = Math.max(ph, pb[curIdx]);
+    updatePlayBtn();
+    if (!rafId) rafId = requestAnimationFrame(loop);
+  }
+  function doPause() { playing = false; updatePlayBtn(); }
+
+  function finish() {
+    done = true; playing = false;
+    document.body.dataset.done = '1';
+    updatePlayBtn();
+  }
+
+  function clearDone() { if (done) { done = false; delete document.body.dataset.done; } }
+
+  function idxForId(eventId) {
+    if (typeof eventId === 'number' && byId.has(eventId)) return byId.get(eventId);
+    return null;
+  }
+  function doSeekByIdx(idx) {
+    if (!N) return;
+    idx = clamp(idx, 0, N - 1);
+    goTo(idx);
+    ph = pb[idx];
+    updateHead(); updateClock();
+  }
+  function doSeek(eventId, focus) {
+    if (!loaded || !N) return;
+    const idx = idxForId(eventId);
+    if (idx == null) return;
+    clearDone();
+    doSeekByIdx(idx);
+    if (focus) {
+      focusFeedRow(events[idx]);
+      const l = $('#lane-' + ((events[idx].data && events[idx].data.side) || events[idx].actor));
+      if (l) { l.classList.remove('refusal'); void l.offsetWidth; }
+    }
+  }
+  function doSetSpeed(n) {
+    n = parseFloat(n);
+    if (!isFinite(n) || n <= 0) return;
+    speed = n;
+    const sel = $('#speed');
+    if (sel && !Array.from(sel.options).some(o => parseFloat(o.value) === n)) {
+      const o = document.createElement('option'); o.value = String(n); o.textContent = n + '×';
+      sel.appendChild(o);
+    }
+    if (sel) sel.value = String(n);
+  }
+
+  function step(dir) {
+    if (!N) return;
+    let target = null;
+    if (dir > 0) { for (const i of keyIdx) if (i > curIdx) { target = i; break; } if (target == null) target = winEnd; }
+    else { for (let k = keyIdx.length - 1; k >= 0; k--) if (keyIdx[k] < curIdx) { target = keyIdx[k]; break; } if (target == null) target = winStart; }
+    doSeekByIdx(target);
+    doPause();
+  }
+
+  function doCaption(text) {
+    const cap = $('#caption');
+    if (!captionsEnabled) { cap.hidden = true; return; }
+    if (text == null || text === '') { cap.hidden = true; cap.textContent = ''; return; }
+    cap.textContent = String(text);
+    cap.hidden = false;
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  chrome wiring                                                      *
+   * ------------------------------------------------------------------ */
+  function wireChrome() {
+    $('#btn-play').innerHTML = SVG.play;
+    $('#btn-prev').innerHTML = SVG.prev;
+    $('#btn-next').innerHTML = SVG.next;
+
+    $('#btn-play').addEventListener('click', () => playing ? doPause() : doPlay());
+    $('#btn-prev').addEventListener('click', () => step(-1));
+    $('#btn-next').addEventListener('click', () => step(1));
+    $('#speed').addEventListener('change', e => doSetSpeed(e.target.value));
+    $('#compress').addEventListener('change', e => {
+      compress = e.target.checked;
+      buildPb();
+      buildTicks();
+      startT = pb[winStart]; endT = pb[winEnd];
+      if (curIdx >= 0) ph = pb[curIdx];
+      updateHead(); updateClock();
+    });
+
+    $('#scrub').addEventListener('click', ev => {
+      if (!N) return;
+      const r = $('#scrub').getBoundingClientRect();
+      const frac = clamp((ev.clientX - r.left) / r.width, 0, 1);
+      const tempo = startT + frac * (endT - startT);
+      // nearest event index by playback time
+      let lo = 0, hi = N - 1, best = 0;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (pb[mid] <= tempo) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+      best = clamp(best, winStart, winEnd);
+      clearDone();
+      doSeekByIdx(best);
+    });
+
+    const feed = $('#feed');
+    feed.addEventListener('scroll', () => {
+      feedStick = (feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 30);
+    });
+
+    document.addEventListener('keydown', ev => {
+      if (ev.target && /input|select|textarea/i.test(ev.target.tagName)) return;
+      if (ev.code === 'Space') { ev.preventDefault(); playing ? doPause() : doPlay(); }
+      else if (ev.code === 'ArrowRight') { ev.preventDefault(); step(1); }
+      else if (ev.code === 'ArrowLeft') { ev.preventDefault(); step(-1); }
+    });
+
+    // file input + drag and drop
+    $('#file').addEventListener('change', e => {
+      const f = e.target.files && e.target.files[0];
+      if (f) readFile(f);
+    });
+    const overlay = $('#overlay');
+    overlay.addEventListener('dragover', e => { e.preventDefault(); overlay.classList.add('drag'); });
+    overlay.addEventListener('dragleave', () => overlay.classList.remove('drag'));
+    overlay.addEventListener('drop', e => {
+      e.preventDefault(); overlay.classList.remove('drag');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(f);
+    });
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => {
+      e.preventDefault();
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) readFile(f);
+    });
+  }
+
+  function readFile(file) {
+    const fr = new FileReader();
+    fr.onload = () => {
+      try { loadDoc(JSON.parse(fr.result)); }
+      catch (err) { fatal('The file is not valid JSON: ' + err.message); }
+    };
+    fr.onerror = () => fatal('Could not read ' + file.name + '.');
+    fr.readAsText(file);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
+</body>
+</html>
