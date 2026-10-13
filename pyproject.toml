@@ -63,8 +63,6 @@ select = [
 "src/zephyros/app/**" = ["T201"]
 # SQL is built from constant column lists; every value is a bound parameter.
 "src/zephyros/adapters/sqlite/**" = ["S608"]
-# Spike fixtures listen on every interface and print on purpose; they are throwaway.
-"spikes/**" = ["S104", "T201"]
 # The pytest plugin of the "tests" kit: pytest hooks have a fixed signature, and the outcomes
 # line is printed for the filter to read.
 "images/kit-tests/**" = ["ARG001", "T201"]

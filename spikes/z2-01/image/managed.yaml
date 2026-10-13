@@ -1,7 +1,0 @@
-# Managed scope of Hermes (/etc/hermes/config.yaml): values the agent's own config cannot
-# override, on a read-only root file system. ${VAR} is expanded from the process environment.
-model:
-  provider: custom
-  default: ${ZEPHYROS_MODEL}
-  base_url: ${ZEPHYROS_HUB_URL}/v1
-  api_key: ${ZEPHYROS_TOKEN}
