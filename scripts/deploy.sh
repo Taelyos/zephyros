@@ -82,9 +82,12 @@ up() {
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^/"/' -e 's/$/"/' \
     | paste -sd, -)"
   make_credential_readable "$ZEPHYROS_GATEWAY_KEY_FILE"
+  # The schema version the code speaks, read from the code: never a copy that drifts.
+  schema_version="$(sed -n 's/^CONFIG_SCHEMA_VERSION = "\([0-9.]*\)"$/\1/p' src/zephyros/core/config.py)"
+  [[ "$schema_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "no schema version in the code" >&2; exit 1; }
   cat > "$ZEPHYROS_CONFIG" <<TOML
 # Written by scripts/deploy.sh; images by their local identifier.
-schema_version = "1.10.0"
+schema_version = "$schema_version"
 
 [images]
 guard = "$(image_id zephyros-guard:local)"
