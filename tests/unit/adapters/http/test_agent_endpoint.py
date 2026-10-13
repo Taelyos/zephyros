@@ -10,6 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from tests.unit.core.hub_fixtures import Env, make_env, seed_contract
+from zephyros import __version__
 from zephyros.adapters.http.agent import METADATA_PROBES, build_agent_app
 from zephyros.core.audit import Action, Reason
 from zephyros.core.hub import TOOL_SPECS
@@ -56,6 +57,7 @@ def test_the_mcp_handshake_and_a_tool_call(env: Env) -> None:
     result = initialized.json()["result"]
     assert result["protocolVersion"] == "2025-06-18"
     assert result["serverInfo"]["name"] == "zephyros-hub"
+    assert result["serverInfo"]["version"] == __version__
     assert result["capabilities"] == {"tools": {"listChanged": False}}
     notified = http.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
     assert notified.status_code == 202

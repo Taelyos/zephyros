@@ -1,6 +1,6 @@
 # Running Zephyros on one machine
 
-Zephyros is not released yet. This page describes the development deployment, which is also the one the runtime tests use.
+This page describes the deployment on one machine, which is also the one the runtime tests use.
 
 ## What runs
 
@@ -30,4 +30,4 @@ scripts/deploy.sh call instance.status '{"project_id": "p_…", "side": "contrac
 scripts/deploy.sh down
 ```
 
-`down` stops the hub and the filter. Instances keep their guards and volumes; the next `up` takes stock of them, stops any turn it finds and revokes its token. The model behind the gateway is the obedient stub unless the configuration names a provider (`ZEPHYROS_EXTRA_CONFIG`, see [configuration](configuration.md)).
+`down` stops the hub and the filter, then removes what the filter created outside compose: the guards, turns and sandboxes, and their networks. The instances keep their volumes; the hub creates a guard and a network again when it starts an instance. `down` removes every container and network labelled `org.zephyros.managed` on the host: run one deployment per machine. The model behind the gateway is the obedient stub unless the configuration names a provider (`ZEPHYROS_EXTRA_CONFIG`, see [configuration](configuration.md)).
