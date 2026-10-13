@@ -1,18 +1,40 @@
-"""The audit log in SQLite: an insert-only table, and a head kept in another table.
+"""The audit log in SQLite: an insert-only table, a head kept in another table, and an anchor kept
+in a file beside the database (ADR 0019).
 
 Triggers refuse every update and delete of a record, so that the hub's own code cannot
 rewrite the log by accident. They are not a defence against someone who owns the file:
-detecting that is the job of the chain and of the external anchor of a later milestone.
+detecting that is the job of the chain, of the head and of the anchor.
+
+The anchor names, for each stream, the last record the hub stored. Before a record goes into
+the database, the anchor names it as the next one; once it is stored, the anchor moves to it.
+It moves only from the head it names: a store whose records or heads were replaced does not
+take the anchor along, an anchor that is gone or unreadable is never written again, and a
+stream taken out of it comes back only with a first record. A hub stopped between the two
+writes leaves an anchor that names a next record: it counts when the store holds exactly that
+record, and is dropped otherwise.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from zephyros.adapters.sqlite.database import Database
-from zephyros.core.audit import Action, AuditRecord, Head, LogError, Outcome, Reason
+from zephyros.core.audit import (
+    GENESIS_HASH,
+    Action,
+    AnchorMissingError,
+    AnchorUnreadableError,
+    AuditRecord,
+    Head,
+    LogError,
+    Outcome,
+    Reason,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit_records (
@@ -40,6 +62,11 @@ CREATE TABLE IF NOT EXISTS audit_heads (
 """
 
 _COLUMNS = "stream, seq, time, principal, action, outcome, reason, parameters, previous, hash"
+_HASH = re.compile(r"[0-9a-f]{64}")
+
+Entry = dict[str, object]
+"""What the anchor keeps of a stream: `seq` and `hash` of its last stored record (0 and the
+genesis hash before the first), and `next` while a record is on its way to the store."""
 
 
 def _record(row: sqlite3.Row) -> AuditRecord:
@@ -54,6 +81,31 @@ def _record(row: sqlite3.Row) -> AuditRecord:
         parameters=row["parameters"],
         previous=row["previous"],
         hash=row["hash"],
+    )
+
+
+def _is_seq(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_hash(value: object) -> bool:
+    return isinstance(value, str) and _HASH.fullmatch(value) is not None
+
+
+def _check_entry(entry: object) -> bool:
+    if not isinstance(entry, dict) or not {"seq", "hash"} <= set(entry) <= {"seq", "hash", "next"}:
+        return False
+    if not (_is_seq(entry["seq"]) and _is_hash(entry["hash"])):
+        return False
+    if "next" not in entry:
+        return True
+    following = entry["next"]
+    return (
+        isinstance(following, dict)
+        and set(following) == {"seq", "hash"}
+        and _is_seq(following["seq"])
+        and following["seq"] == entry["seq"] + 1
+        and _is_hash(following["hash"])
     )
 
 
@@ -72,6 +124,7 @@ class SqliteLogStore:
                 expected = 1 if last is None else last + 1
                 if record.seq != expected:
                     raise LogError(f"expected sequence number {expected}, got {record.seq}")
+                self._announce(record)
                 connection.execute(
                     f"INSERT INTO audit_records ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -87,7 +140,7 @@ class SqliteLogStore:
                         record.hash,
                     ),
                 )
-        except sqlite3.Error as error:
+        except (sqlite3.Error, OSError) as error:
             raise LogError(f"the store refused the record: {error}") from error
 
     def last(self, stream: str) -> AuditRecord | None:
@@ -118,32 +171,100 @@ class SqliteLogStore:
                 "ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, hash = excluded.hash",
                 (head.stream, head.seq, head.hash),
             )
-        self._write_anchor(head)
+        self._settle(head)
 
-    def anchor(self, stream: str) -> Head | None:
-        """The head kept outside the database file (EXG-19, ATK-69): replacing the whole log,
-        its head table included, cannot move it."""
-        if self._anchor is None or not self._anchor.exists():
+    def anchor(self) -> Mapping[str, Head] | None:
+        """The heads kept outside the database file (EXG-19, ATK-69), by stream: replacing the
+        whole log, its head table included, cannot move them. None when this store keeps no
+        anchor; AnchorMissingError or AnchorUnreadableError when it keeps one it cannot read."""
+        if self._anchor is None:
+            return None
+        return {stream: self._head_of(stream, entry) for stream, entry in self._load().items()}
+
+    def start_anchor(self) -> None:
+        if self._anchor is None:
+            raise LogError("this store keeps no anchor")
+        if self._anchor.exists() or self.streams():
+            raise LogError("an anchor starts only with an empty log")
+        self._write({})
+
+    def _announce(self, record: AuditRecord) -> None:
+        """Name `record` in the anchor as the next record of its stream, when the anchor's head
+        is the record it follows (or when it is the first record of a stream the anchor does
+        not know). Otherwise the anchor stays as it is, for the verification to report."""
+        kept = self._load_if_readable()
+        if kept is None:
+            return
+        entry = kept.get(record.stream)
+        if entry is None:
+            if record.seq != 1:
+                return
+            head = Head(record.stream, 0, GENESIS_HASH)
+        else:
+            head = self._head_of(record.stream, entry)
+        if (head.seq, head.hash) != (record.seq - 1, record.previous):
+            return
+        kept[record.stream] = {
+            "seq": head.seq,
+            "hash": head.hash,
+            "next": {"seq": record.seq, "hash": record.hash},
+        }
+        self._write(kept)
+
+    def _settle(self, head: Head) -> None:
+        """The record the anchor named as next is stored: the anchor moves to it."""
+        kept = self._load_if_readable()
+        if kept is None:
+            return
+        entry = kept.get(head.stream)
+        if entry is None or entry.get("next") != {"seq": head.seq, "hash": head.hash}:
+            return
+        kept[head.stream] = {"seq": head.seq, "hash": head.hash}
+        self._write(kept)
+
+    def _head_of(self, stream: str, entry: Entry) -> Head:
+        """The head an entry stands for: its next record when the store holds exactly that
+        record (a hub stopped before the anchor moved), its own head otherwise."""
+        following = entry.get("next")
+        if isinstance(following, dict):
+            rows = self._db.query(
+                "SELECT hash FROM audit_records WHERE stream = ? AND seq = ?",
+                (stream, following["seq"]),
+            )
+            if rows and rows[0]["hash"] == following["hash"]:
+                return Head(stream, cast("int", following["seq"]), cast("str", following["hash"]))
+        return Head(stream, cast("int", entry["seq"]), cast("str", entry["hash"]))
+
+    def _load(self) -> dict[str, Entry]:
+        assert self._anchor is not None  # noqa: S101  # reason: the callers check it
+        try:
+            text = self._anchor.read_text(encoding="utf-8")
+        except FileNotFoundError as error:
+            raise AnchorMissingError(str(self._anchor)) from error
+        except OSError as error:
+            raise AnchorUnreadableError(error.strerror or type(error).__name__) from error
+        try:
+            kept = json.loads(text)
+        except ValueError as error:
+            raise AnchorUnreadableError("it is not JSON") from error
+        if not isinstance(kept, dict):
+            raise AnchorUnreadableError("it is not a table of streams")
+        if not all(_check_entry(entry) for entry in kept.values()):
+            raise AnchorUnreadableError("an entry is not the head of a stream")
+        return kept
+
+    def _load_if_readable(self) -> dict[str, Entry] | None:
+        """The anchor to update, or None when there is none to update: this store keeps no
+        anchor, or the one it keeps is gone or unreadable — then it is left as it is."""
+        if self._anchor is None:
             return None
         try:
-            kept = json.loads(self._anchor.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            return self._load()
+        except (AnchorMissingError, AnchorUnreadableError):
             return None
-        entry = kept.get(stream)
-        if not isinstance(entry, dict):
-            return None
-        return Head(stream, int(entry.get("seq", 0)), str(entry.get("hash", "")))
 
-    def _write_anchor(self, head: Head) -> None:
-        if self._anchor is None:
-            return
-        kept: dict[str, object] = {}
-        if self._anchor.exists():
-            try:
-                kept = json.loads(self._anchor.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                kept = {}
-        kept[head.stream] = {"seq": head.seq, "hash": head.hash}
+    def _write(self, kept: Mapping[str, Entry]) -> None:
+        assert self._anchor is not None  # noqa: S101  # reason: the callers check it
         temporary = self._anchor.with_suffix(self._anchor.suffix + ".tmp")
         temporary.write_text(json.dumps(kept, sort_keys=True), encoding="utf-8")
         temporary.replace(self._anchor)

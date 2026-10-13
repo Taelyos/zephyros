@@ -23,6 +23,14 @@ version. Each schema carries its own version number.
   in the log, the evidence report, the comments and the retitled title of a pull request; a
   canary glued to a separator (`add-sub-ghp_…`) is still masked. The log masks the keys of the
   parameters as it masks their values.
+- The anchor of the log (EXG-19, ATK-69, [ADR 0019](docs/decisions/0019-anchor-outside-the-store.md))
+  no longer turns itself off. An anchor that is gone, that cannot be read, or that does not name a
+  stream with records fails `log.verify` with a problem that says so (`first_bad_seq` is then
+  null), where it used to read as "no anchor". The anchor is never started again from the store,
+  and it no longer follows a store whose records were replaced: it moves only from the head it
+  names. It starts with the log, and the hub records its start, and any fault it finds when it
+  opens the log, as `log.anchor` in its own stream. A deployment whose anchor is lost now sees its
+  verification fail: the anchor goes with the database in a backup.
 
 ## [0.1.0] - 2026-10-13
 
