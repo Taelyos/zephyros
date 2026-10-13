@@ -41,6 +41,10 @@ def _record_body(record: DeliveryRecord) -> str:
             "report": record.report,
             "pull_request": record.pull_request,
             "detail": record.detail,
+            "contract_version": record.contract_version,
+            "inspections": {key: dict(value) for key, value in record.inspections.items()},
+            "review": dict(record.review) if record.review is not None else None,
+            "flagged_paths": list(record.flagged_paths),
         },
         sort_keys=True,
     )
@@ -60,6 +64,11 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         report=body["report"],
         pull_request=body["pull_request"],
         detail=body["detail"],
+        # Added by ADR 0020: a record written before has none of them.
+        contract_version=body.get("contract_version"),
+        inspections=body.get("inspections") or {},
+        review=body.get("review"),
+        flagged_paths=tuple(body.get("flagged_paths") or ()),
     )
 
 

@@ -20,6 +20,7 @@ from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
 from zephyros.core.deliveries import DeliveryService, DeliveryState
 from zephyros.core.errors import Refusal
+from zephyros.core.gate import Inspected
 from zephyros.core.ports.forge import ForgeError, RepositoryRef
 from zephyros.core.ports.verification import Outcome as VerificationOutcome
 from zephyros.core.ports.verification import (
@@ -331,3 +332,74 @@ def test_a_pass_breaks_the_loop_and_the_count_starts_over() -> None:
     for attempt in (4, 5):
         delivered_on(made, project, f"work{attempt}", {"calc.py": f"x = {attempt}\n".encode()})
     assert [event for event, _payload in events if event == "delivery.loop"] == []
+
+
+# ----------------------------------------------------------------------------- ADR 0020
+def with_constraint(made: DeliveryService, project: str) -> None:
+    """CTR-01, P0, verified by inspection: what tests cannot show."""
+    constraint = {
+        "type": "constraint",
+        "id": "CTR-01",
+        "text": "The service shall use only the standard library.",
+        "priority": "P0",
+        "methods": ["inspection"],
+    }
+    change = parse_change(
+        {"summary": "a constraint", "operations": [{"op": "put", "object": constraint}]}
+    )
+    made._contracts.apply_reserved(OPERATOR, project, change)
+
+
+def test_a_constraint_awaiting_its_inspection_holds_the_delivery_at_concerns() -> None:
+    made, project, _audit, _store = service()
+    with_constraint(made, project)
+    ready(made, project)
+    record = made.status(project, delivered(made, project))
+    assert record.decision == "CONCERNS"
+    assert record.contract_version == 2
+    assert record.state is DeliveryState.PROPOSED
+    assert record.report is not None
+    assert "CTR-01 (P0) awaits a recorded judgment: inspection" in record.report
+
+
+def test_a_recorded_inspection_decides_again_and_the_report_says_so() -> None:
+    made, project, audit, _store = service()
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    record = made.record_inspection(
+        "owner:p_service1", project, delivery, "CTR-01", Inspected.CONFORMS, "imports: stdlib only"
+    )
+    assert record.decision == "PASS"
+    assert record.inspections["CTR-01"]["verdict"] == "conforms"
+    assert record.report is not None
+    assert "## Inspections recorded after the gate" in record.report
+    assert "**Decision now: PASS** (it was CONCERNS before the last inspection)" in record.report
+    last = audit.read(project, 0, 1000)[-1]
+    assert (last.action, last.outcome) == (Action.GATE_DECISION, Outcome.OK)
+    again = made.record_inspection(
+        "owner:p_service1", project, delivery, "CTR-01", Inspected.DOES_NOT_CONFORM, "imports yaml"
+    )
+    assert again.decision == "FAIL"
+    assert again.report is not None
+    assert again.report.count("## Inspections recorded after the gate") == 1
+    assert made.status(project, delivery).decision == "FAIL"
+
+
+def test_an_inspection_needs_a_decided_delivery_and_an_object_to_inspect() -> None:
+    made, project, _audit, _store = service()
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    with pytest.raises(Refusal) as caught:
+        made.record_inspection("operator", project, delivery, "EXG-01", Inspected.CONFORMS, "x")
+    assert caught.value.reason is Reason.INVALID_REQUEST  # verified by tests only
+    with pytest.raises(Refusal) as caught:
+        made.record_inspection("operator", project, delivery, "CTR-09", Inspected.CONFORMS, "x")
+    assert caught.value.reason is Reason.NOT_FOUND
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w2")
+    with pytest.raises(Refusal) as caught:
+        made.record_inspection(
+            "operator", project, pushed.delivery_id, "CTR-01", Inspected.CONFORMS, "x"
+        )
+    assert caught.value.reason is Reason.NOT_PENDING

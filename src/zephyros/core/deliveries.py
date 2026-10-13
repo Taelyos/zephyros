@@ -32,17 +32,24 @@ from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.clock import Clock, format_time
 from zephyros.core.contract import ContractService
 from zephyros.core.errors import Refusal
-from zephyros.core.gate import Decision, compute_gate, every_acceptance_test
+from zephyros.core.gate import (
+    JUDGED_TYPES,
+    Decision,
+    Inspected,
+    compute_gate,
+    every_acceptance_test,
+)
 from zephyros.core.ports.delivery import Delivery, DeliveryArea, DeliveryError
 from zephyros.core.ports.forge import Forge, ForgeError, PullRequestRequest, RepositoryRef
 from zephyros.core.ports.verification import (
+    Outcome as TestOutcome,
     VerificationError,
     VerificationRequest,
     VerificationRunner,
 )
 from zephyros.core.principals import OPERATOR
 from zephyros.core.projects import ProjectService
-from zephyros.core.report import Cost, ReportInput, render
+from zephyros.core.report import Cost, ReportInput, render, with_inspections
 
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
@@ -84,6 +91,14 @@ class DeliveryRecord:
     report: str | None = None
     pull_request: str | None = None
     detail: str | None = None
+    contract_version: int | None = None
+    """The version of the contract the gate judged the delivery against."""
+    inspections: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """By object: the inspection the Owner side recorded (verdict, observation, by, at)."""
+    review: Mapping[str, str] | None = None
+    """The verdict of the Owner side on the delivery (verdict, reasons, by, at)."""
+    flagged_paths: tuple[str, ...] = ()
+    """The protected paths the delivery changes: flagged, never refused (ADR 0020)."""
 
 
 class DeliveryStore(Protocol):
@@ -216,6 +231,67 @@ class DeliveryService:
 
     def status(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         return self._record(project_id, delivery_id)
+
+    def record_inspection(
+        self,
+        by: str,
+        project_id: str,
+        delivery_id: str,
+        object_id: str,
+        verdict: Inspected,
+        observation: str,
+    ) -> DeliveryRecord:
+        """Record the Owner side's inspection of one requirement or constraint of a decided
+        delivery, and decide again from the same results (ADR 0020). A delivery that failed
+        stays failed: an inspection only evidences what tests cannot show."""
+        record = self._record(project_id, delivery_id)
+        if record.contract_version is None or record.state not in (
+            DeliveryState.DECIDED,
+            DeliveryState.PROPOSED,
+        ):
+            raise Refusal(Reason.NOT_PENDING, "the gate has not decided this delivery yet")
+        version = self._contracts.read(OPERATOR, project_id, record.contract_version)
+        item = version.objects.get(object_id)
+        if item is None or item.get("type") not in JUDGED_TYPES:
+            raise Refusal(Reason.NOT_FOUND, f"{object_id} is no requirement or constraint here")
+        raw = item.get("methods") or ()
+        methods = [str(m) for m in raw] if isinstance(raw, (list, tuple)) else []
+        if not [m for m in methods if m != "test"]:
+            raise Refusal(
+                Reason.INVALID_REQUEST, f"{object_id} is verified by tests only: nothing to inspect"
+            )
+        inspections = {key: dict(value) for key, value in record.inspections.items()}
+        inspections[object_id] = {
+            "verdict": verdict.value,
+            "observation": observation,
+            "by": by,
+            "at": format_time(self._clock.now()),
+        }
+        gate = compute_gate(
+            version.objects,
+            {test: TestOutcome(value) for test, value in record.outcomes.items()},
+            inspections={key: Inspected(value["verdict"]) for key, value in inspections.items()},
+        )
+        updated = replace(
+            record,
+            inspections=inspections,
+            decision=gate.decision.value,
+            report=with_inspections(
+                record.report or "", inspections, record.decision, gate, self._secrets()
+            ),
+        )
+        self._store.put_record(updated)
+        self._record_event(
+            project_id,
+            Action.GATE_DECISION,
+            Outcome.OK,
+            delivery=delivery_id,
+            decision=gate.decision.value,
+            previous=record.decision,
+            contract_version=record.contract_version,
+            after="inspection",
+        )
+        return updated
 
     def _record(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         record = self._store.get_record(project_id, delivery_id)
@@ -385,6 +461,7 @@ class DeliveryService:
             decision=gate.decision.value,
             outcomes={k: v.value for k, v in outcomes.items()},
             report=report,
+            contract_version=version.number,
         )
         self._store.put_record(decided)
         if gate.decision is not Decision.FAIL:

@@ -17,6 +17,7 @@ from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 
 LOG_EXCERPT = 4000
+INSPECTIONS_HEADING = "## Inspections recorded after the gate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,4 +140,45 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         f"Produced by {_plain(report.produced_by)} at {report.produced_at}.",
         "",
     ]
+    return mask("\n".join(lines), secrets)
+
+
+def with_inspections(
+    report: str,
+    inspections: Mapping[str, Mapping[str, str]],
+    previous: str | None,
+    gate: GateResult,
+    secrets: Iterable[str] = (),
+) -> str:
+    """The report of a delivery with its inspections and the decision they lead to (ADR 0020).
+
+    The inspections come after the gate: the report keeps what the gate saw, and an addendum,
+    rewritten at each inspection, lists every inspection and the decision now."""
+    body = report.split("\n" + INSPECTIONS_HEADING + "\n", 1)[0].rstrip("\n")
+    lines = [
+        body,
+        "",
+        INSPECTIONS_HEADING,
+        "",
+        "| Object | Verdict | Observation | By | At |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for key in sorted(inspections):
+        found = inspections[key]
+        verdict = "conforms" if found.get("verdict") == "conforms" else "does not conform"
+        lines.append(
+            f"| {_plain(key)} | {verdict} | {_code(found.get('observation', ''))} | "
+            f"{_plain(found.get('by', ''))} | {_plain(found.get('at', ''))} |"
+        )
+    lines += [
+        "",
+        f"**Decision now: {gate.decision.value}** (it was {_plain(previous or 'none')} before "
+        "the last inspection), computed by the gate from the same results and the inspections "
+        "above.",
+        "",
+        "Reservations now:",
+        "",
+    ]
+    lines += [f"- {_plain(r)}" for r in gate.reservations] or ["None."]
+    lines.append("")
     return mask("\n".join(lines), secrets)

@@ -50,6 +50,7 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
         "contract.approve",
         "contract.reject",
         "acceptance.put",
+        "inspection.record",
     }
     assert names("main") == set(TOOL_SPECS) - {
         "contract.apply_reserved",

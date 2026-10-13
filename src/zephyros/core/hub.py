@@ -40,6 +40,7 @@ from zephyros.core.contract import (
     validate_object,
 )
 from zephyros.core.deliveries import DeliveryRecord, DeliveryService
+from zephyros.core.gate import Inspected
 from zephyros.core.errors import Refusal, remedy
 from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
@@ -326,6 +327,37 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             scoped=True,
         ),
         _spec(
+            "inspection.record",
+            Action.INSPECTION_RECORD,
+            "Record your inspection of one requirement or constraint of a decided delivery, when "
+            "its methods include one that tests cannot show (inspection, analysis, "
+            "demonstration): verdict conforms or does_not_conform, and what you observed. The gate "
+            "decides again from the same results; until an inspection is recorded, such an "
+            "object keeps the delivery from PASS. Read the delivery first (GET "
+            "/staging/delivery/<delivery_id>).",
+            _PROJECT,
+            Field("delivery_id", Text(pattern=r"d[0-9]{1,6}"), "The delivery", required=True),
+            Field(
+                "object_id",
+                Text(pattern=r"(?:EXG|CTR)-[0-9]{2,3}"),
+                "The requirement or constraint inspected",
+                required=True,
+            ),
+            Field(
+                "verdict",
+                Choice(("conforms", "does_not_conform")),
+                "What the inspection found",
+                required=True,
+            ),
+            Field(
+                "observation",
+                Text(min_length=1, max_length=2000, multiline=True),
+                "What was inspected and what was seen",
+                required=True,
+            ),
+            scoped=True,
+        ),
+        _spec(
             "log.read",
             Action.LOG_READ,
             "Read records of the log. The operator only.",
@@ -440,6 +472,7 @@ class Hub:
             "acceptance.put": self._acceptance_put,
             "delivery.declare": self._delivery_declare,
             "delivery.status": self._delivery_status,
+            "inspection.record": self._inspection_record,
         }
         if set(self._handlers) != set(TOOL_SPECS):
             raise RuntimeError("the registry of tools and the specifications differ")
@@ -874,8 +907,39 @@ class Hub:
             "pull_request": record.pull_request,
             "detail": record.detail,
             "report": record.report,
+            "contract_version": record.contract_version,
+            "inspections": {key: dict(value) for key, value in record.inspections.items()},
+            "review": dict(record.review) if record.review is not None else None,
+            "flagged_paths": list(record.flagged_paths),
         }
         audit: dict[str, object] = {"project_id": project_id, "delivery_id": record.delivery_id}
+        return ToolResult(data, audit, project_id)
+
+    def _inspection_record(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
+        project_id = self._known_project(caller, arguments)
+        object_id = str(arguments["object_id"])
+        verdict = Inspected(str(arguments["verdict"]))
+        record = self._delivery_service().record_inspection(
+            caller.principal.id,
+            project_id,
+            str(arguments["delivery_id"]),
+            object_id,
+            verdict,
+            str(arguments["observation"]),
+        )
+        data: dict[str, object] = {
+            "delivery_id": record.delivery_id,
+            "object_id": object_id,
+            "verdict": verdict.value,
+            "decision": record.decision,
+        }
+        audit: dict[str, object] = {
+            "project_id": project_id,
+            "delivery_id": record.delivery_id,
+            "object_id": object_id,
+            "verdict": verdict.value,
+            "decision": record.decision,
+        }
         return ToolResult(data, audit, project_id)
 
     # ------------------------------------------------------------------ helpers for handlers

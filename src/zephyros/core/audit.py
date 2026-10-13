@@ -80,6 +80,7 @@ class Action(StrEnum):
     DELIVERY_PUSH = "delivery.push"
     DELIVERY_DECLARE = "delivery.declare"
     DELIVERY_STATUS = "delivery.status"
+    INSPECTION_RECORD = "inspection.record"
     STAGING_PREPARE = "staging.prepare"
     DELIVERY_CHECK = "delivery.check"
     VERIFICATION_RUN = "verification.run"

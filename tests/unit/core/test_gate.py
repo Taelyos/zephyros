@@ -9,7 +9,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from zephyros.core.gate import Decision, Rules, acceptance_tests, compute_gate, covering_stories
+from zephyros.core.gate import (
+    Decision,
+    Inspected,
+    Rules,
+    acceptance_tests,
+    compute_gate,
+    covering_stories,
+)
 from zephyros.core.ports.verification import Outcome
 
 PASS, FAIL, ERROR, NOT_RUN = Outcome.PASSED, Outcome.FAILED, Outcome.ERROR, Outcome.NOT_RUN
@@ -95,8 +102,69 @@ def test_a_requirement_without_tests_or_with_another_method_is_not_verified() ->
     result = compute_gate(objects, {"t.py::x": PASS, "t.py::y": PASS})
     whys = {j.id: (j.verified, j.why) for j in result.requirements}
     assert whys["EXG-01"] == (False, "no acceptance test is linked to it")
-    assert whys["EXG-02"] == (False, "no method of this requirement is computed by the hub yet")
-    assert whys["EXG-03"] == (False, "the tests passed; analysis needs a recorded judgment")
+    assert whys["EXG-02"] == (False, "inspection awaits a recorded judgment")
+    assert whys["EXG-03"] == (False, "the tests passed; analysis awaits a recorded judgment")
+
+
+def constraint(n: int, priority: str, methods: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "type": "constraint",
+        "id": f"CTR-{n:02d}",
+        "text": "The service shall.",
+        "priority": priority,
+        "methods": list(methods),
+    }
+
+
+def test_a_constraint_is_judged_like_a_requirement() -> None:
+    """ADR 0020: CTR-01 (P0, inspection) had no evidence in three deliveries that passed."""
+    objects = contract((1, "P0", ("test",), ("t.py::x",)))
+    objects["CTR-01"] = constraint(1, "P0", ("inspection",))
+    result = compute_gate(objects, {"t.py::x": PASS})
+    assert [j.id for j in result.requirements] == ["CTR-01", "EXG-01"]
+    assert result.decision is Decision.CONCERNS
+    assert result.reservations == ("CTR-01 (P0) awaits a recorded judgment: inspection",)
+    assert result.checks[0].verified == 1 and result.checks[0].total == 2
+
+
+def test_a_recorded_inspection_decides_the_object_it_judges() -> None:
+    objects = contract((1, "P0", ("test",), ("t.py::x",)))
+    objects["CTR-01"] = constraint(1, "P0", ("inspection",))
+    conforming = compute_gate(
+        objects, {"t.py::x": PASS}, inspections={"CTR-01": Inspected.CONFORMS}
+    )
+    assert conforming.decision is Decision.PASS
+    assert {j.id: j.why for j in conforming.requirements}["CTR-01"] == (
+        "the recorded inspection found it conforming"
+    )
+    refused = compute_gate(
+        objects, {"t.py::x": PASS}, inspections={"CTR-01": Inspected.DOES_NOT_CONFORM}
+    )
+    assert refused.decision is Decision.FAIL
+    assert {j.id: j.why for j in refused.requirements}["CTR-01"] == (
+        "the recorded inspection found it not conforming"
+    )
+
+
+def test_an_awaited_judgment_never_rescues_a_failing_delivery() -> None:
+    objects = contract((1, "P0", ("test",), ("t.py::x",)))
+    objects["CTR-01"] = constraint(1, "P0", ("inspection",))
+    assert compute_gate(objects, {"t.py::x": FAIL}).decision is Decision.FAIL
+
+
+def test_an_awaited_p1_judgment_is_a_reservation_even_when_the_rules_are_met() -> None:
+    """Nine P1 of ten meet the 90 % rule; the tenth, awaiting its inspection, still holds PASS."""
+    specs = [(n, "P1", ("test",), (f"t.py::t{n}",)) for n in range(1, 10)]
+    objects = contract(*specs, (10, "P1", ("inspection",), ()))
+    result = compute_gate(objects, {f"t.py::t{n}": PASS for n in range(1, 10)})
+    assert all(check.met for check in result.checks)
+    assert result.decision is Decision.CONCERNS
+
+
+def test_an_object_that_names_no_method_is_not_verified() -> None:
+    objects = contract((1, "P1", (), ()))
+    [judged] = compute_gate(objects, {}).requirements
+    assert (judged.verified, judged.why) == (False, "it names no verification method")
 
 
 def test_every_p0_must_be_verified() -> None:

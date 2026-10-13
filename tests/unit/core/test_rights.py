@@ -47,6 +47,7 @@ EXPECTED = {
     "delivery.push": ("none", "none", "none", "own"),
     "delivery.declare": ("none", "none", "none", "own"),
     "delivery.status": ("any", "any", "own", "own"),
+    "inspection.record": ("any", "any", "own", "none"),
 }
 KINDS = (
     PrincipalKind.OPERATOR,

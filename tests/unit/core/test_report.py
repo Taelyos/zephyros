@@ -42,7 +42,7 @@ def test_the_report_holds_the_decision_the_requirements_the_rules_and_the_cost()
     assert "**Decision: FAIL**" in text
     assert "| EXG-01 | `US-E1-01` | P0 | test | `tests/t.py::test_add` passed | yes |" in text
     assert "| EXG-02 | `US-E1-02` | P1 | test | `tests/t.py::test_sub` failed | no |" in text
-    assert "| P1 requirements verified | 90 % | 0 of 1 | no |" in text
+    assert "| P1 requirements and constraints verified | 90 % | 0 of 1 | no |" in text
     assert "3 model calls, 1200 prompt tokens, 80 completion tokens." in text
     assert "Not run by this version of the hub (EXG-35)." in text
     assert "The Contractor never renders a verdict." in text
