@@ -142,7 +142,15 @@ TOML
 
 down() {
   export ZEPHYROS_IMAGE=unused ZEPHYROS_CONFIG=/dev/null
+  # The filter creates the guards, turns and sandboxes of the instances, and their networks,
+  # outside compose: the second real run's `down` left four guards behind. Stop the hub first,
+  # so it starts nothing more, then remove them; their volumes stay, they hold the instances'
+  # state, and the hub creates the networks again when it starts an instance.
+  local managed=(--filter "label=org.zephyros.managed=true")
+  "${compose[@]}" stop
+  docker ps -aq "${managed[@]}" | xargs -r docker rm -f >/dev/null
   "${compose[@]}" down "$@"
+  docker network ls -q "${managed[@]}" | xargs -r docker network rm >/dev/null
 }
 
 call() {
