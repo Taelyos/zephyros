@@ -449,3 +449,24 @@ def test_output_that_prints_the_inspection_heading_cuts_nothing_from_the_report(
     report = status(world, delivery)["report"]
     assert report.startswith(decided.rstrip("\n"))  # every line the gate wrote is still there
     assert "**Decision now: PASS** (it was CONCERNS before the last inspection)" in report
+
+
+# ----------------------------------------------------------------------------- T10
+@pytest.mark.xfail(strict=True, reason="T10: the delivery passes vacuously until the fix")
+def test_a_delivery_declared_before_the_contract_never_passes(
+    world: World, forge_root: Path
+) -> None:
+    """T10: with no contract yet, every rule of the gate was met for want of anything to count:
+    the delivery passed, and its pull request said PASS. Nothing was judged: CONCERNS at best,
+    and the report says why."""
+    world.operator_tool(
+        "project.prepare", project_id=world.project_a, repository=REPOSITORY, branch="main"
+    )
+    world.run_jobs()
+    delivery = deliver(world, ADD_SUB)
+    found = status(world, delivery)
+    assert (found["decision"], found["outcomes"]) == ("CONCERNS", {})
+    reservation = "- nothing was judged: the contract has no requirement or constraint"
+    assert reservation in found["report"].splitlines()
+    pulls = json.loads((forge_root / "example" / "calc.pulls.json").read_text())
+    assert pulls[0]["title"] == f"add-sub (delivery {delivery}, CONCERNS)"
