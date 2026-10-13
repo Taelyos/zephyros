@@ -263,3 +263,23 @@ def test_a_comment_is_posted_where_github_keeps_the_comments_of_a_pull_request(
         asyncio.run(make(tmp_path).comment(RepositoryRef("org/project"), 8, "x"))
     with pytest.raises(ForgeError):
         asyncio.run(forge.comment(RepositoryRef("org/project"), 7, " "))
+
+
+def test_a_retitle_patches_the_pull_request_with_the_new_title(tmp_path: Path) -> None:
+    seen: dict[str, Any] = {}
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        seen["method"], seen["path"] = request.method, request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"number": 7, "title": "A new title"})
+
+    forge = make(tmp_path, handler)
+    asyncio.run(forge.update_title(RepositoryRef("org/project"), 7, "A new title"))
+    assert (seen["method"], seen["path"]) == ("PATCH", "/repos/org/project/pulls/7")
+    assert seen["body"] == {"title": "A new title"}
+    before = list(calls)
+    with pytest.raises(ForgeError, match="the title is empty"):
+        asyncio.run(forge.update_title(RepositoryRef("org/project"), 7, "  "))
+    assert calls == before

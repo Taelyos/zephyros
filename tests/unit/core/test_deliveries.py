@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
@@ -559,3 +560,50 @@ def test_an_acceptance_file_no_criterion_names_is_flagged_in_the_report() -> Non
     assert report is not None
     assert "Acceptance test files that no criterion names (they never run):" in report
     assert "- `checks/extra.txt`" in report
+
+
+def _title_of(forge: InMemoryForge, number: int) -> str:
+    return asyncio.run(forge.get_pull_request(RepositoryRef("example/calc"), number)).title
+
+
+def test_an_inspection_that_changes_the_decision_retitles_the_pull_request() -> None:
+    """ADR 0020: the third real run's pull request said CONCERNS while the decision was PASS."""
+    forge = calc_forge()
+    made, project, audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, CONCERNS)"
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    assert made.status(project, delivery).decision == "PASS"
+    while made.step():
+        pass
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
+    retitles = [r for r in audit.read(project, 0, 1000) if r.action is Action.PULL_REQUEST_RETITLE]
+    assert [r.outcome for r in retitles] == [Outcome.OK]
+
+
+def test_an_inspection_that_does_not_change_the_decision_does_not_retitle() -> None:
+    forge = calc_forge()
+    made, project, audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    while made.step():
+        pass
+    retitled = _title_of(forge, 1)
+    assert retitled == f"work (delivery {delivery}, PASS)"
+    # a second inspection that leaves the decision at PASS changes no title
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "still stdlib"
+    )
+    while made.step():
+        pass
+    assert _title_of(forge, 1) == retitled
+    retitles = [r for r in audit.read(project, 0, 1000) if r.action is Action.PULL_REQUEST_RETITLE]
+    assert len(retitles) == 1
