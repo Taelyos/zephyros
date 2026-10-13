@@ -14,7 +14,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from tests.unit.core.contract_fixtures import note, put, requirement, wire
+from tests.unit.core.contract_fixtures import note, put, requirement, story, wire
 from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
 from zephyros.core.audit import Action, Outcome, Reason
 from zephyros.core.hub import TOOL_SPECS
@@ -767,6 +767,46 @@ def test_acceptance_put_warns_when_no_criterion_names_the_file(env: Env) -> None
     assert response.ok, response.failure
     assert response.data is not None
     assert response.data["named_by"] == []
-    assert response.data["warning"] == (
-        "no criterion of the current contract names this file: the gate does not run it"
+    assert response.data["warning"] == _NOT_RUN
+
+
+_NOT_RUN = (
+    "no criterion of the current contract names this file in a story that covers a requirement "
+    "or a constraint: the gate does not run it"
+)
+
+
+def test_acceptance_put_warns_when_the_story_of_the_criterion_covers_nothing(env: Env) -> None:
+    """C49: the gate runs only the criteria of a story that covers a requirement or a constraint;
+    a criterion of a story that covers nothing names a file that never runs."""
+    attach_deliveries(env)
+    loose = {
+        "type": "criterion",
+        "id": "US-E3-01.1",
+        "story": "US-E3-01",
+        "text": "The system shall add.",
+        "verification": "T",
+        "test": "checks/loose.txt::test_loose",
+    }
+    proposed = env.call(
+        "owner_a",
+        "contract.propose",
+        summary="a story that covers nothing",
+        operations=[wire(put(story(3, 1))), wire(put(loose))],
     )
+    assert proposed.ok, proposed.failure
+    assert proposed.data is not None
+    approved = env.call(
+        "operator",
+        "contract.approve",
+        project_id=env.project_a,
+        change_id=proposed.data["change_id"],
+    )
+    assert approved.ok, approved.failure
+    response = env.call(
+        "owner_a", "acceptance.put", path="checks/loose.txt", content="test_loose: pass\n"
+    )
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == []
+    assert response.data["warning"] == _NOT_RUN

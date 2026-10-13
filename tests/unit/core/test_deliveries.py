@@ -585,6 +585,31 @@ def test_an_inspection_that_changes_the_decision_retitles_the_pull_request() -> 
     assert [r.outcome for r in retitles] == [Outcome.OK]
 
 
+class RetitleRefusingForge(InMemoryForge):
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        del repository, number, title
+        raise ForgeError("titles are locked")
+
+
+def test_a_retitle_the_forge_refuses_is_logged_and_the_decision_stays() -> None:
+    forge = RetitleRefusingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    made, project, audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    while made.step():
+        pass
+    retitles = [r for r in audit.read(project, 0, 1000) if r.action is Action.PULL_REQUEST_RETITLE]
+    assert [r.outcome for r in retitles] == [Outcome.ERROR]
+    assert "titles are locked" in retitles[0].parameters
+    assert made.status(project, delivery).decision == "PASS"
+
+
 def test_an_inspection_that_does_not_change_the_decision_does_not_retitle() -> None:
     forge = calc_forge()
     made, project, audit, _store = service(forge=forge)

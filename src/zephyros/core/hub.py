@@ -41,7 +41,7 @@ from zephyros.core.contract import (
 )
 from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict
 from zephyros.core.errors import Refusal, remedy
-from zephyros.core.gate import Inspected
+from zephyros.core.gate import Inspected, every_acceptance_test
 from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
@@ -300,7 +300,8 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             "acceptance.put",
             Action.ACCEPTANCE_PUT,
             "Keep an acceptance test of the Owner side. Every verification uses it, whatever a "
-            "delivery contains. A file runs only through the criteria that name it.",
+            "delivery contains. A file runs only through the criteria that name it, in a story "
+            "that covers a requirement or a constraint.",
             _PROJECT,
             Field(
                 "path",
@@ -910,12 +911,15 @@ class Hub:
     def _acceptance_put(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
         path = str(arguments["path"])
-        # The gate runs a file only through the criteria that name it: say which do, if any.
+        # The gate runs a file only through the criteria it runs, those of a story that covers a
+        # requirement or a constraint: say which of them name this file, if any.
         version = self._contracts.read(caller.principal, project_id)
+        run = set(every_acceptance_test(version.objects))
         named_by = sorted(
-            str(item["id"])
-            for item in version.objects.values()
+            key
+            for key, item in version.objects.items()
             if item.get("type") == "criterion"
+            and str(item.get("test") or "") in run
             and str(item.get("test") or "").startswith(path + "::")
         )
         digest = self._delivery_service().put_acceptance(
@@ -929,7 +933,8 @@ class Hub:
         }
         if not named_by:
             data["warning"] = (
-                "no criterion of the current contract names this file: the gate does not run it"
+                "no criterion of the current contract names this file in a story that covers a "
+                "requirement or a constraint: the gate does not run it"
             )
         audit: dict[str, object] = {
             "project_id": project_id,
