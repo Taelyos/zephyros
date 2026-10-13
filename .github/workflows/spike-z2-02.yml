@@ -1,0 +1,25 @@
+name: Spike Z2-02 (Linux)
+
+# Runs the throwaway experiments of spikes/z2-02 on a real Linux runtime, to settle the Linux half
+# of spike Z2-02. It runs when the spike changes and can be started by hand. It is not one of the
+# checks of the CI (CTR-09). Actions are pinned by commit hash (CTR-10).
+
+on:
+  push:
+    paths:
+      - spikes/z2-02/**
+      - .github/workflows/spike-z2-02.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the experiments
+        run: spikes/z2-02/run.sh

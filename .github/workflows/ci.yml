@@ -1,0 +1,47 @@
+name: CI
+
+# Every push and every pull request runs the checks of annex "Continuous integration checks"
+# (CTR-09), so every change to the main branch is covered. The steps live in scripts/check.sh
+# so that the CI and a local run are the same.
+# Actions are pinned by commit hash (CTR-10); the version is in the comment.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.24"
+      - name: Run every check
+        run: scripts/check.sh
+
+  runtime:
+    # The runtime suite (scripts/acceptance.sh): real containers, the real filter templates and
+    # the real network guard. Linux only: the GitHub-hosted macOS runners have no Docker.
+    name: runtime (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.24"
+      - name: Run the runtime suite
+        run: scripts/acceptance.sh

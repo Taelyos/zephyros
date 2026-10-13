@@ -1,0 +1,3 @@
+name: zs_probe
+version: "1.0"
+description: Spike Z2-01 probe plugin, reports the process id its code runs in

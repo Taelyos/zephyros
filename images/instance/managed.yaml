@@ -1,0 +1,9 @@
+# Managed scope of Hermes (/etc/hermes/config.yaml): values the agent's own configuration cannot
+# override. ${VAR} is expanded from the environment that the container filter sets for a turn.
+# Hermes' managed scope does not cover every key (spike Z2-01, F3), and no guarantee of
+# Zephyros rests on it: the guard, the hub and the hardening do not depend on Hermes obeying.
+model:
+  provider: custom
+  default: ${ZEPHYROS_MODEL}
+  base_url: ${ZEPHYROS_HUB_URL}/v1
+  api_key: ${ZEPHYROS_TOKEN}

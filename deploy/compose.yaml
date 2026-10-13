@@ -1,0 +1,81 @@
+# Zephyros on one machine: the hub and the container filter. Use scripts/deploy.sh, which builds
+# the images and writes the configuration; it sets every variable below.
+#
+# The instances are not here: the hub starts them through the filter, one network, one guard and
+# two volumes per side of a project, and one container per turn.
+name: ${ZEPHYROS_PROJECT:-zephyros}
+
+services:
+  filter:
+    # The only container that reaches the container runtime. No network; the runtime's socket is
+    # its one privilege; it serves the hub on a Unix socket in a volume they share. It runs as
+    # uid 0 so that it owns the runtime's socket, with every capability dropped, and with the
+    # group of the hub so that the socket it creates belongs to that group.
+    image: ${ZEPHYROS_IMAGE:?}
+    command: ["filter", "start", "--config", "/etc/zephyros/zephyros.toml"]
+    user: "0:10001"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+    volumes:
+      - ${ZEPHYROS_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - filter-socket:/run/zephyros
+      - filter-data:/var/lib/zephyros
+      - ${ZEPHYROS_CONFIG:?}:/etc/zephyros/zephyros.toml:ro
+
+  hub:
+    # The hub, attached by the filter to the network of every instance. Its operator channel and
+    # main-agent endpoint are published on the loopback interface of the machine only; inside the
+    # instance networks the guards let through its agent endpoint (port 8080) and nothing else.
+    image: ${ZEPHYROS_IMAGE:?}
+    container_name: ${ZEPHYROS_HUB_NAME:-zephyros-hub}
+    command: ["hub", "start", "--config", "/etc/zephyros/zephyros.toml"]
+    labels:
+      org.zephyros.managed: "true"
+      org.zephyros.role: hub
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 512m
+    restart: unless-stopped
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    networks: [core]
+    ports:
+      - "127.0.0.1:${ZEPHYROS_OPERATOR_PORT:-8081}:8081"
+      - "127.0.0.1:${ZEPHYROS_MAIN_AGENT_PORT:-8082}:8082"
+    volumes:
+      - filter-socket:/run/zephyros
+      - hub-data:/var/lib/zephyros
+      # The directory forge (pull requests as files) lives on a directory of the host, when the
+      # configuration asks for it; deploy.sh always sets the variable.
+      - ${ZEPHYROS_FORGE_DIR:?}:/var/lib/zephyros/forge
+      # The credential files of the gateway and of the GitHub forge, read-only, at the paths
+      # the configuration names; deploy.sh always sets both variables, to an empty file when
+      # neither is asked for. The files themselves are mounted — never a copy.
+      - ${ZEPHYROS_GATEWAY_KEY_FILE:?}:/run/zephyros-credentials/gateway.key:ro
+      - ${ZEPHYROS_FORGE_TOKEN_FILE:?}:/run/zephyros-credentials/forge.key:ro
+      - ${ZEPHYROS_CONFIG:?}:/etc/zephyros/zephyros.toml:ro
+    healthcheck:
+      test: ["CMD", "/opt/zephyros/bin/python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/operator/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on: [filter]
+
+networks:
+  core:
+    labels:
+      org.zephyros.deployment: ${ZEPHYROS_PROJECT:-zephyros}
+
+volumes:
+  filter-socket:
+  filter-data:
+  hub-data:

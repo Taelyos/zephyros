@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Taelyos/zephyros/schemas/contract.schema.json",
+  "title": "Zephyros contract object",
+  "x-zephyros-schema-version": "1.1.0",
+  "oneOf": [
+    {
+      "title": "requirement",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "requirement"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:EXG-[0-9]{2,3})$",
+          "description": "EXG-nn"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "description": "The requirement, in the form 'The system shall ...'"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "description": "Priority"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "inspection",
+              "analysis",
+              "demonstration",
+              "test"
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "One to two verification methods"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "text",
+        "priority",
+        "methods"
+      ]
+    },
+    {
+      "title": "constraint",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "constraint"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:CTR-[0-9]{2,3})$",
+          "description": "CTR-nn"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "description": "The constraint"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "description": "Priority"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "inspection",
+              "analysis",
+              "demonstration",
+              "test"
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "One to two verification methods"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "text",
+        "priority",
+        "methods"
+      ]
+    },
+    {
+      "title": "story",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "story"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:US-E[0-9]{1,2}-[0-9]{2})$",
+          "description": "US-Enn-nn"
+        },
+        "epic": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:E[0-9]{1,2})$",
+          "description": "The epic"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "description": "A short title"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "description": "As a ..., I want ..., so that ..."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "epic",
+        "title",
+        "text"
+      ]
+    },
+    {
+      "title": "criterion",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "criterion"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:US-E[0-9]{1,2}-[0-9]{2}\\.[0-9]{1,2})$",
+          "description": "US-Enn-nn.k"
+        },
+        "story": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:US-E[0-9]{1,2}-[0-9]{2})$",
+          "description": "The story it belongs to"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "description": "The acceptance criterion"
+        },
+        "verification": {
+          "type": "string",
+          "maxLength": 80,
+          "pattern": "^(?:[A-Za-z0-9 ,()-]*)$",
+          "description": "How it is verified: an attack identifier or a method letter"
+        },
+        "test": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^(?:(?!.*\\.\\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}::[A-Za-z0-9_][A-Za-z0-9_.\\[\\]-]{0,80})$",
+          "description": "The acceptance test that verifies it, as its kit names it (path::name)"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "story",
+        "text"
+      ]
+    },
+    {
+      "title": "link",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "link"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:LNK:US-E[0-9]{1,2}-[0-9]{2}>(?:EXG-[0-9]{2,3}|CTR-[0-9]{2,3}))$",
+          "description": "LNK:<story>><requirement>"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "covers"
+          ],
+          "description": "What the link states"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:US-E[0-9]{1,2}-[0-9]{2})$",
+          "description": "The story"
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:EXG-[0-9]{2,3}|CTR-[0-9]{2,3})$",
+          "description": "The requirement or constraint"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "kind",
+        "source",
+        "target"
+      ]
+    },
+    {
+      "title": "note",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "note"
+          ],
+          "description": "The kind of the object"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:NB-[0-9]{3})$",
+          "description": "NB-nnn"
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:(?:EXG-[0-9]{2,3}|CTR-[0-9]{2,3}|US-E[0-9]{1,2}-[0-9]{2}|US-E[0-9]{1,2}-[0-9]{2}\\.[0-9]{1,2}))$",
+          "description": "The object it is about"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "description": "The note"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "target",
+        "text"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+[
+ {
+  "tool": "execute_code",
+  "args": {
+   "code": "\nimport os, socket, sys, subprocess\nprint(\"EXEC uid\", os.getuid(), \"pid\", os.getpid(), \"ppid\", os.getppid(), \"host\", socket.gethostname())\nprint(\"EXEC exe\", sys.executable)\nfor target in (\"/etc/hermes/config.yaml\", \"/opt/hermes/hermes_cli/main.py\", \"/usr/bin/zs-test\", \"/work/zs-test.txt\", \"/opt/data/zs-test.txt\"):\n    try:\n        with open(target, \"w\") as handle:\n            handle.write(\"x\")\n        print(\"EXEC write\", target, \"OK\")\n    except Exception as exc:\n        print(\"EXEC write\", target, \"REFUSED\", type(exc).__name__)\nprint(\"EXEC ppid cmd\", open(\"/proc/%d/cmdline\" % os.getppid()).read().replace(\"\\0\", \" \")[:100])\nprint(\"EXEC docker.sock\", os.path.exists(\"/var/run/docker.sock\"))\n"
+  }
+ },
+ {
+  "tool": "terminal",
+  "args": {
+   "command": "id; grep -E 'CapEff|NoNewPrivs' /proc/self/status; ls -l /var/run/docker.sock /run/docker.sock 2>&1 | head -2; which docker; env | grep -c ZEPHYROS_TOKEN"
+  }
+ },
+ {
+  "tool": "write_file",
+  "args": {
+   "path": "/etc/hermes/config.yaml",
+   "content": "model: {}"
+  }
+ },
+ {
+  "tool_like": "whoami",
+  "args": {}
+ },
+ {
+  "text": "all done"
+ }
+]

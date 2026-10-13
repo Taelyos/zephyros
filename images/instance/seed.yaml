@@ -1,0 +1,18 @@
+# Seed of the instance configuration, copied over $HERMES_HOME/config.yaml at every start.
+# ${VAR} is expanded from the environment of the turn; the project token is the only secret.
+# The model gateway and the MCP server of the hub are at the same address, the one destination
+# the network guard lets through.
+model:
+  provider: custom
+  default: ${ZEPHYROS_MODEL}
+  base_url: ${ZEPHYROS_HUB_URL}/v1
+  api_key: ${ZEPHYROS_TOKEN}
+  streaming: false
+mcp_servers:
+  zephyros:
+    url: ${ZEPHYROS_HUB_URL}/mcp
+    headers:
+      Authorization: "Bearer ${ZEPHYROS_TOKEN}"
+tools:
+  tool_search:
+    enabled: "off"

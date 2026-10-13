@@ -1,0 +1,6 @@
+# a user configuration that names no MCP server
+model:
+  provider: custom
+  default: ${ZEPHYROS_MODEL}
+  base_url: ${ZEPHYROS_HUB_URL}/v1
+  api_key: ${ZEPHYROS_TOKEN}

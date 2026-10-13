@@ -1,0 +1,477 @@
+{
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "maxLength": 4096,
+      "x-zephyros-kind": "version",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "Version of this schema the file was written for"
+    },
+    "hub": {
+      "type": "object",
+      "properties": {
+        "agent_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port of the agent endpoint, the one hub destination open to instances (/mcp and /v1)",
+          "default": 8080
+        },
+        "operator_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port of the operator channel",
+          "default": 8081
+        },
+        "main_agent_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port of the main-agent endpoint",
+          "default": 8082
+        },
+        "operator_bind": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "ip-address",
+          "description": "Address the operator channel listens on; never an instance network",
+          "default": "127.0.0.1"
+        },
+        "main_agent_bind": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "ip-address",
+          "description": "Address the main-agent endpoint listens on; never an instance network",
+          "default": "127.0.0.1"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Listeners of the hub"
+    },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "data_dir": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "Directory of the state of the hub; mounted in no execution context",
+          "default": "/var/lib/zephyros"
+        },
+        "filter_socket": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "Unix socket of the container filter",
+          "default": "/run/zephyros/filter.sock"
+        },
+        "operator_token_file": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "File that holds the operator token, readable by the operating-system user of the human only",
+          "default": "/var/lib/zephyros/operator.token"
+        },
+        "main_agent_token_file": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "File that holds the main-agent token",
+          "default": "/var/lib/zephyros/main-agent.token"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Files and directories"
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "core_network": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "name",
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "description": "Network of the hub and the filter",
+          "default": "zephyros-core"
+        },
+        "hub_container": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "name",
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "description": "Name of the hub container, which the filter attaches to each instance network",
+          "default": "zephyros-hub"
+        },
+        "guard_health_seconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "description": "How long the hub waits for a network guard to report healthy; after that the instance does not start",
+          "default": 60
+        },
+        "poll_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60,
+          "description": "How often the hub looks at its instances: a turn that ended or ran too long, a guard that stopped",
+          "default": 5
+        }
+      },
+      "additionalProperties": false,
+      "description": "Container runtime objects"
+    },
+    "images": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "image-digest",
+          "pattern": "^(?:[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$",
+          "description": "Image of an agent container, by digest"
+        },
+        "guard": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "image-digest",
+          "pattern": "^(?:[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$",
+          "description": "Image of the network guard, by digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instance",
+        "guard"
+      ],
+      "description": "Images, by digest"
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "instance_pool": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "ipv4-network",
+          "description": "Range the subnets of the instance networks are taken from; it overlaps no network of the user",
+          "default": "10.200.0.0/16"
+        },
+        "instance_prefix": {
+          "type": "integer",
+          "minimum": 24,
+          "maximum": 30,
+          "description": "Prefix length of the subnet of one instance network",
+          "default": 28
+        },
+        "resolvers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096,
+            "x-zephyros-kind": "ipv4-address"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "description": "Name resolvers the instances use; an address of a protected network is refused, because the network guard blocks it",
+          "default": [
+            "9.9.9.9"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "Instance networks"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "cpus": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 16.0,
+          "description": "CPUs of an agent container",
+          "default": 2.0
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 128,
+          "maximum": 65536,
+          "description": "Memory of an agent container, in MiB",
+          "default": 1024
+        },
+        "pids": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 4096,
+          "description": "Processes and threads of an agent container",
+          "default": 256
+        },
+        "guard_memory_mib": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 512,
+          "description": "Memory of a network guard, in MiB",
+          "default": 32
+        },
+        "turn_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400,
+          "description": "Longest duration of a turn",
+          "default": 3600
+        },
+        "silence_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400,
+          "description": "A turn that has called the hub, the model included, none of the time for this long is stopped",
+          "default": 600
+        },
+        "refusals_per_minute": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100000,
+          "description": "Refused actions of one instance in a minute before the hub answers without doing the work (ATK-71)",
+          "default": 120
+        }
+      },
+      "additionalProperties": false,
+      "description": "Limits of the containers and of a turn"
+    },
+    "tokens": {
+      "type": "object",
+      "properties": {
+        "lifetime_seconds": {
+          "type": "integer",
+          "minimum": 120,
+          "maximum": 604800,
+          "description": "Lifetime of a project token; longer than the longest turn",
+          "default": 14400
+        },
+        "rotate_before_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400,
+          "description": "A turn that starts when less than this remains of the lifetime gets a new token",
+          "default": 900
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project tokens"
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "stub",
+            "openai-compatible"
+          ],
+          "description": "Model provider behind the gateway: the obedient stub, or an OpenAI-compatible service",
+          "default": "stub"
+        },
+        "upstream_url": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "http-url",
+          "pattern": "^https?://",
+          "description": "Base URL of the provider, when it is openai-compatible"
+        },
+        "credential_file": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "File that holds the model credential, when the provider is openai-compatible"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "name",
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "description": "Name of the model instances ask for",
+          "default": "zephyros-default"
+        },
+        "upstream_model": {
+          "type": "string",
+          "maxLength": 100,
+          "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*)$",
+          "description": "Name of the model at the provider, when it differs from the one instances ask for"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 100,
+            "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*)$"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "description": "The models the gateway may serve at the provider, when it is openai-compatible: the configured model must be one of them, and the hub refuses to start for any other (the owner's model policy)"
+        },
+        "session_header": {
+          "type": "string",
+          "maxLength": 80,
+          "pattern": "^(?:[A-Za-z0-9-]+)$",
+          "description": "Name of the session header the gateway sends to the provider, when it asks for one (OpenCode Go requires x-opencode-session); unset sends none. The value is one stable session name per hub process"
+        },
+        "simulation": {
+          "type": "boolean",
+          "description": "Run with the simulated provider and mark the report, the pull request and the events as a simulation (EXG-46)",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "Model gateway"
+    },
+    "forge": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "none",
+            "directory",
+            "github"
+          ],
+          "description": "Where pull requests are opened: none, the forge in a directory (bare git repositories, for the development deployment and the tests), or GitHub (the repositories of the person, through its API and git over https)",
+          "default": "none"
+        },
+        "root": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "Directory of the forge, when the provider is directory",
+          "default": "/var/lib/zephyros/forge"
+        },
+        "token_file": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "File of the token GitHub is called with, when the provider is github; read at each call, never copied and never written down"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Forge"
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "runner": {
+          "type": "string",
+          "enum": [
+            "none",
+            "sandbox"
+          ],
+          "description": "What runs the acceptance tests: none (every verification ends in an error), or a sandbox created through the container filter",
+          "default": "none"
+        },
+        "kit": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "name",
+          "pattern": "^[a-z][a-z0-9_-]{0,62}$",
+          "description": "The verification kit of the projects",
+          "default": "tests"
+        },
+        "kit_image": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "image-digest",
+          "pattern": "^(?:[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$",
+          "description": "The image of that kit, by digest, when the runner is sandbox"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "Longest run of the acceptance tests of one delivery",
+          "default": 300
+        }
+      },
+      "additionalProperties": false,
+      "description": "Verification of deliveries"
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 2048,
+          "description": "Where the hub posts its signed notifications; empty turns them off",
+          "default": ""
+        },
+        "secret": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Shared secret the receiver verifies the signatures with (EXG-43); at least 16 characters when a url is set",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "description": "Signed notifications to the main agent"
+    },
+    "continuity": {
+      "type": "object",
+      "properties": {
+        "inactivity_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400,
+          "description": "A task without activity for this long: wake the instance, then restart it (US-E7-01)",
+          "default": 900
+        },
+        "restarts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "description": "How many restarts before the main agent is alerted",
+          "default": 2
+        },
+        "unblock_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400,
+          "description": "How long the main agent has to unblock a task before the human is alerted",
+          "default": 3600
+        },
+        "rejections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Rejected deliveries on one branch before the main agent is alerted (EXG-23)",
+          "default": 3
+        }
+      },
+      "additionalProperties": false,
+      "description": "The escalation ladder of a task without activity"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "images"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
+  "title": "Zephyros configuration",
+  "x-zephyros-schema-version": "1.10.0",
+  "x-zephyros-rules": [
+    "hub.agent_port, hub.operator_port and hub.main_agent_port are three different ports",
+    "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
+    "network.instance_prefix is longer than the prefix of network.instance_pool",
+    "network.resolvers holds no address of a protected network (the guard blocks them)",
+    "forge.token_file is set when forge.provider is github",
+    "gateway.upstream_url and gateway.credential_file are set when gateway.provider is openai-compatible, and the model it serves is one of gateway.models",
+    "verification.kit_image is set when verification.runner is sandbox",
+    "gateway.simulation runs only with the stub provider",
+    "notifications.url and notifications.secret are set together, the url is http(s), and the secret is at least 16 characters"
+  ]
+}

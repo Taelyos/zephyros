@@ -1,0 +1,39 @@
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Build output and logs
+dist/
+build/
+*.log
+
+# Local development runtime (isolated Hermes home, test servers)
+.hermes-home/
+hermes-home/
+
+# Tool caches and coverage
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local pointers to private working documents
+CLAUDE.local.md
+deploy/state/

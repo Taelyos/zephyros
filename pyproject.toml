@@ -1,0 +1,117 @@
+[build-system]
+requires = ["uv_build==0.12.24"]
+build-backend = "uv_build"
+
+[project]
+name = "zephyros"
+version = "0.0.0"
+description = "Project engineering for autonomous AI agents, built on Hermes Agent."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "httpx>=0.28.1",
+    "starlette>=1.7.0",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+zephyros = "zephyros.app.cli:main"
+
+[dependency-groups]
+dev = [
+    "detect-secrets",
+    "hypothesis>=6.168.5",
+    "import-linter",
+    "mypy",
+    "pip-audit",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.uv]
+required-version = "==0.12.24"
+
+# ---------------------------------------------------------------- types (CTR-08)
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src", "tools", "tests"]
+warn_unused_ignores = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+# ---------------------------------------------------------------- lint and format
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = [
+    "A", "ARG", "B", "C4", "E", "F", "I", "N", "PERF", "PGH", "PT",
+    "RUF", "S", "SIM", "T20", "UP", "W",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert and fixed fake credentials.
+"tests/**" = ["S101", "S105", "S106", "ARG001", "ARG005"]  # callbacks have a fixed signature
+# The repository checks are command-line tools: they print their findings.
+"tools/**" = ["T201"]
+# The command line of Zephyros prints its results.
+"src/zephyros/app/**" = ["T201"]
+# SQL is built from constant column lists; every value is a bound parameter.
+"src/zephyros/adapters/sqlite/**" = ["S608"]
+# Spike fixtures listen on every interface and print on purpose; they are throwaway.
+"spikes/**" = ["S104", "T201"]
+# The pytest plugin of the "tests" kit: pytest hooks have a fixed signature, and the outcomes
+# line is printed for the filter to read.
+"images/kit-tests/**" = ["ARG001", "T201"]
+# The runtime tests name paths inside containers, listen on every interface of a fixture, and
+# print what the runtime alone does (information for the threat model).
+"tests/runtime/**" = ["S104", "S108", "T201"]
+# The suites build requests that carry fake tokens.
+"src/zephyros/conformance/**" = ["S105", "S106", "S107"]
+
+# ---------------------------------------------------------------- tests and coverage (CTR-09)
+[tool.pytest.ini_options]
+minversion = "8"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+filterwarnings = [
+    # Starlette would like its test client on a fork of httpx; the project uses httpx itself.
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated",
+]
+markers = [
+    "integration: needs a container runtime",
+    "runtime: needs a container runtime and the images (set ZEPHYROS_RUNTIME_TESTS=1)",
+    "acceptance: executable attack catalog",
+    "slow: takes minutes",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["zephyros"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_empty = true
+exclude_also = ["if __name__ == .__main__.:"]
+
+# ---------------------------------------------------------------- dependency rule (CTR-11)
+[tool.importlinter]
+root_package = "zephyros"
+
+[[tool.importlinter.contracts]]
+name = "Adapters depend on the core, never the reverse"
+type = "layers"
+layers = ["zephyros.app", "zephyros.adapters", "zephyros.core"]
+
+[[tool.importlinter.contracts]]
+name = "Conformance suites use the core, never the adapters"
+type = "forbidden"
+source_modules = ["zephyros.conformance"]
+forbidden_modules = ["zephyros.adapters"]

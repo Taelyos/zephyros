@@ -1,0 +1,1 @@
+[{"tool": "zs_probe", "args": {}}, {"tool": "terminal", "args": {"command": "ps -eo pid,ppid,args | grep -v 'ps -eo' | cut -c1-110"}}, {"text": "plugin probe done"}]

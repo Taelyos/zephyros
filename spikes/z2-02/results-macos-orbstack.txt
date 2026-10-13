@@ -1,0 +1,137 @@
+
+== S2-01 runtime facts
+INFO  S2-01  docker 29.4.0 on linux/arm64, kernel 7.0.14-orbstack-00380-ga7e0a2dc9535, client OS Darwin
+INFO  S2-01  memory visible to the runtime: 4180443136 bytes, cpus: 8
+PASS  S2-01  ok       nftables usable in a container namespace
+INFO  fixt   hub on zs-core + zs-i1 at 192.168.107.2, gateway 192.168.107.1, lan-sim 192.168.107.3, host alias 0.250.250.254
+
+== S2-02 the instance cannot change the rules or its network (user 10001, no capability)
+PASS  S2-02  denied   as the instance: nft flush ruleset
+PASS  S2-02  denied   as the instance: nft delete table inet zeph
+PASS  S2-02  denied   as the instance: nft add rule inet zeph output accept
+PASS  S2-02  denied   as the instance: ip route add blackhole 1.2.3.4
+PASS  S2-02  denied   as the instance: ip link add d0 type dummy
+PASS  S2-02  denied   as the instance: ip addr add 10.9.9.9/24 dev eth0
+PASS  S2-02  denied   as the instance: unshare -n true
+PASS  S2-02  denied   as root without capability: nft flush ruleset
+PASS  S2-02  denied   as root without capability: ip route add blackhole 1.2.3.4
+PASS  S2-02  inet zeph the rules are loaded in the namespace the instance shares
+INFO  S2-02  tables in the namespace: table ip nat;table inet zeph; (Docker keeps its embedded-DNS redirect in one of them on this runtime; the guard touches only inet zeph)
+
+== S2-03 the hub endpoint and the public Internet stay open
+PASS  S2-03  reached  hub agent endpoint, TCP 8080
+PASS  S2-03  reached  public IPv4 address, TCP 443
+PASS  S2-03  yes      public name over HTTPS (name resolution works)
+PASS  S2-03  hub      the hub's name resolves (embedded DNS)
+
+== S2-04 the same hub address on other ports and protocols is blocked
+PASS  S2-04  blocked  hub address, TCP 9090 (the operator-port stand-in)
+PASS  S2-04  blocked  hub address, UDP 8080
+PASS  S2-04  blocked  hub address, ICMP echo
+PASS  S2-04  blocked  hub address, ICMP echo from the instance itself (ping socket, no capability)
+PASS  S2-04  1        the hub's listeners saw none of the attempts (O-NET)
+INFO  S2-04  ICMP echo to a public address from the instance (no capability, ping socket): reached (public destinations are not restricted)
+PASS  S2-04c reached  control, rules off: TCP 9090 reaches the hub
+PASS  S2-04c reached  control, rules off: UDP 8080 reaches the hub
+PASS  S2-04c reached  control, rules off: ICMP reaches the hub
+
+== S2-05 protected ranges: control with rules off, then blocked with rules on
+PASS  S2-05c reached  control, rules off: 192.168.107.3 reached (on-link neighbour (RFC 1918 network of the instance))
+PASS  S2-05  blocked  192.168.107.3 TCP/80 (on-link neighbour (RFC 1918 network of the instance))
+PASS  S2-05  blocked  192.168.107.3 UDP/80 (on-link neighbour (RFC 1918 network of the instance))
+PASS  S2-05  0        the listener behind 192.168.107.3 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 10.77.0.5 reached (10.0.0.0/8)
+PASS  S2-05  blocked  10.77.0.5 TCP/80 (10.0.0.0/8)
+PASS  S2-05  blocked  10.77.0.5 UDP/80 (10.0.0.0/8)
+PASS  S2-05  0        the listener behind 10.77.0.5 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 172.31.250.5 reached (172.16.0.0/12)
+PASS  S2-05  blocked  172.31.250.5 TCP/80 (172.16.0.0/12)
+PASS  S2-05  blocked  172.31.250.5 UDP/80 (172.16.0.0/12)
+PASS  S2-05  0        the listener behind 172.31.250.5 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 192.168.77.5 reached (192.168.0.0/16)
+PASS  S2-05  blocked  192.168.77.5 TCP/80 (192.168.0.0/16)
+PASS  S2-05  blocked  192.168.77.5 UDP/80 (192.168.0.0/16)
+PASS  S2-05  0        the listener behind 192.168.77.5 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 169.254.169.254 reached (link-local, cloud metadata)
+PASS  S2-05  blocked  169.254.169.254 TCP/80 (link-local, cloud metadata)
+PASS  S2-05  blocked  169.254.169.254 UDP/80 (link-local, cloud metadata)
+PASS  S2-05  0        the listener behind 169.254.169.254 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 100.64.7.7 reached (100.64.0.0/10)
+PASS  S2-05  blocked  100.64.7.7 TCP/80 (100.64.0.0/10)
+PASS  S2-05  blocked  100.64.7.7 UDP/80 (100.64.0.0/10)
+PASS  S2-05  0        the listener behind 100.64.7.7 saw nothing (O-NET)
+PASS  S2-05c reached  control, rules off: 100.100.100.200 reached (cloud metadata (100.64/10))
+PASS  S2-05  blocked  100.100.100.200 TCP/80 (cloud metadata (100.64/10))
+PASS  S2-05  blocked  100.100.100.200 UDP/80 (cloud metadata (100.64/10))
+PASS  S2-05  0        the listener behind 100.100.100.200 saw nothing (O-NET)
+PASS  S2-05  hub      after all that, the hub endpoint still answers
+
+== S2-06 the host alias, the bridge gateway and a host service
+INFO  S2-06  host alias address: 0.250.250.254, inside 0.0.0.0/8, which the annex does not list (the guard blocks 0.0.0.0/8 too)
+PASS  S2-06c reached  control, rules off: listener on the machine's host side via the host alias (0.250.250.254)
+PASS  S2-06c reached  control, rules off: listener in the runtime's host namespace via the bridge gateway (192.168.107.1)
+PASS  S2-06  blocked  host alias 0.250.250.254:18080
+PASS  S2-06  blocked  bridge gateway 192.168.107.1:18081
+PASS  S2-06  0        the host-namespace listener saw nothing (O-NET)
+PASS  S2-06  blocked  host alias by name (resolved inside the namespace)
+
+== S2-07 a public name that resolves to a protected address
+PASS  S2-07c reached  control, rules off: the name leads to the listener
+PASS  S2-07  blocked  10.77.0.5.nip.io resolves to 10.77.0.5 and the connection is blocked
+
+== S2-08 the hub may open connections toward the instance; nobody else
+PASS  S2-08  reached  hub -> instance port 7000: connects and the instance replies
+PASS  S2-08  blocked  hub -> instance port 7001: not opened
+PASS  S2-08  blocked  another host on the network -> instance port 7000
+
+== S2-09 source address seen by the hub (EXG-60)
+PASS  S2-09  192.168.107.4 the hub sees the instance's own address, untranslated
+PASS  S2-09  192.168.117.3 a second instance, on its own network, is seen at its own address
+PASS  S2-09  different the two instances have distinct source addresses at the hub
+PASS  S2-09  blocked  instance 1 -> instance 2 (other network, a listening port), all rules on
+INFO  S2-09  same attempt with the egress rules of instance 1 off: blocked; with the rules of both guards off: reached (what the runtime's own network isolation does alone)
+INFO  S2-09  a connection from the machine's host side through the published port is seen by the hub as 192.168.97.1 (never an instance address)
+
+== S2-10 name lookups: other containers' names must fail
+PASS  S2-10  fail     per-instance networks: the name of a container on another network
+PASS  S2-10  found    a container on the SAME network resolves (the fixture; in production only the hub shares the network)
+PASS  S2-10  found    the instance's own guard name resolves (its own address; see the report)
+PASS  S2-10  found    ONE shared network: the instance resolves the name of another instance's guard (the leak the per-instance design avoids)
+
+== S2-11 fail-closed behavior
+PASS  S2-11  reached  no gate: an instance started while the guard has not loaded its rules reaches a protected address (the race)
+PASS  S2-11  blocked  after the guard is healthy the same probe is blocked
+PASS  S2-11  blocked  with the gate (instance created only after the guard is healthy) the first probe is blocked
+INFO  S2-11  after the guard is killed: instance state 'running', public probe 'blocked', protected probe 'blocked'
+INFO  S2-11  after the guard is restarted: instance state 'running', public probe 'blocked' (the instance keeps the old namespace)
+
+== S2-12 the hub joins many instance networks
+PASS  S2-12  40       networks with an explicit /28 subnet created and joined by the running hub without a restart (11 s)
+PASS  S2-12  reached  the first instance still reaches the hub after forty more networks were joined
+INFO  S2-12  networks that the runtime's default address pool can still create before it is exhausted: 23 (the filter must allocate explicit subnets)
+
+== S2-13 the container filter: no network, a runtime socket, a Unix socket shared with the hub
+PASS  S2-13  runtime api the hub-side container (no network) gets the runtime's answer through the filter (runtime api 1.54)
+PASS  S2-13  lifecycle create=201 start=204 running=True remove=204 the filter created, started, inspected and removed a labelled container through the runtime socket
+PASS  S2-13  gone     the container the filter made is gone
+PASS  S2-13  none     the filter container has no network interface but the loopback
+PASS  S2-13  blocked  the filter container cannot open a network connection
+
+== S2-14 memory
+INFO  S2-14 zs-g1: 520KiB / 32MiB
+INFO  S2-14 zs-i1c: 180KiB / 32MiB
+INFO  S2-14 zs-hub: 6.273MiB / 3.893GiB
+INFO  S2-14 zs-filter: 12.22MiB / 3.893GiB
+
+== S2-15 what a macOS host firewall can see
+INFO  S2-15  route to the instance network from the Mac:  interface: bridge102;
+INFO  S2-15  connections to 1.1.1.1:443 on the Mac while the instance holds one: 2 (owner process(es): OrbStack amsengage )
+INFO  S2-15  pf rules were not tried: they need root. Observation only
+
+== S2-16 IPv6
+INFO  S2-16  public IPv6 is not reachable from this runtime ('not applicable', never 'passed')
+# Warning: table ip nat is managed by iptables-nft, do not touch!
+# Warning: table ip nat is managed by iptables-nft, do not touch!
+PASS  S2-16  yes      a connection to a neighbour's IPv6 address (fd00:7a:2::3, ULA) hits the protected6 drop rule (counter 0 -> 2)
+
+== summary: 82 passed, 0 failed

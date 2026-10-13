@@ -1,0 +1,1 @@
+[{"tool": "terminal", "args": {"command": "echo backend-probe; id -u"}}, {"text": "terminal probe done"}]
