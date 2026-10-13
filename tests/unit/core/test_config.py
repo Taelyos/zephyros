@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -429,3 +431,47 @@ def test_the_clients_contract_file_is_protected_by_default_and_the_list_is_read(
         assert [problem.key for problem in caught.value.problems] == [
             "verification.protected_paths[0]"
         ]
+
+
+CONFIGURATION_PAGE = Path(__file__).parents[3] / "docs" / "configuration.md"
+
+
+def _key_table(text: str) -> dict[str, list[str]]:
+    """The rows of the table "Every key and its default", by key: [key, default, values]."""
+    section = text.split("## Every key and its default\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in section.splitlines() if line.startswith("| `")]
+    cells = [[cell.strip() for cell in row.strip("|").split("|")] for row in rows]
+    return {row[0].strip("`"): row for row in cells}
+
+
+def test_the_configuration_page_gives_the_version_and_every_key_with_its_default() -> None:
+    """docs/configuration.md once said 1.7.0 for a 1.12.0 schema and left keys out: the page
+    names the version the code speaks, and its table gives every key with its default."""
+    text = CONFIGURATION_PAGE.read_text(encoding="utf-8")
+    assert f"version {CONFIG_SCHEMA_VERSION}." in text
+    assert f'schema_version = "{CONFIG_SCHEMA_VERSION}"' in text
+    rows = _key_table(text)
+    leaves: dict[str, Field] = {}
+
+    def walk(table: Table, prefix: str) -> None:
+        for field in table.fields:
+            if isinstance(field.spec, Table):
+                walk(field.spec, f"{prefix}{field.name}.")
+            else:
+                leaves[f"{prefix}{field.name}"] = field
+
+    walk(SCHEMA.root, "")
+    assert sorted(rows) == sorted(leaves)
+    for path, field in leaves.items():
+        _, default, values = rows[path]
+        if field.required:
+            assert default == "required", path
+        elif field.default is None:
+            assert default == "unset", path
+        else:
+            assert default == f"`{json.dumps(field.default)}`", path
+        spec = field.spec
+        if isinstance(spec, Integer | Number):
+            assert values.startswith(f"{spec.minimum} to {spec.maximum}"), path
+        if isinstance(spec, Choice):
+            assert all(f"`{value}`" in values for value in spec.values), path
