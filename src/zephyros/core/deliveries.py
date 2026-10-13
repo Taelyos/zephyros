@@ -119,6 +119,16 @@ class DeliveryStore(Protocol):
     def get_source(self, project_id: str) -> Source | None: ...
 
 
+def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple[str, ...]:
+    """The changed paths that are the client's own files: a protected path itself, or anything
+    under a protected directory (one ending with /)."""
+    return tuple(
+        path
+        for path in changed
+        if any(path == p or (p.endswith("/") and path.startswith(p)) for p in protected)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _Job:
     kind: str
@@ -144,6 +154,7 @@ class DeliveryService:
         *,
         kit: str = "tests",
         timeout_seconds: int = 300,
+        protected_paths: tuple[str, ...] = ("CONTRACT.md",),
         version: str = "Zephyros",
         secrets: Callable[[], list[str]] | None = None,
         run_async: Callable[[Coroutine[Any, Any, Any]], Any] = _run_async,
@@ -161,6 +172,7 @@ class DeliveryService:
         self._clock = clock
         self._kit = kit
         self._timeout = timeout_seconds
+        self._protected_paths = protected_paths
         self._version = version
         self._secrets = secrets or list
         self._run_async = run_async
@@ -415,6 +427,15 @@ class DeliveryService:
                 paths=len(touched),
             )
             return
+        flagged = flagged_paths(delivery.changed_paths, self._protected_paths)
+        if flagged:
+            self._record_event(
+                project_id,
+                Action.DELIVERY_CHECK,
+                Outcome.OK,
+                delivery=record.delivery_id,
+                flagged=len(flagged),
+            )
         files = dict(self._area.tree(project_id, delivery.delivery_id).files)
         for path in protected:
             if path in acceptance:
@@ -462,6 +483,7 @@ class DeliveryService:
                 produced_at=format_time(self._clock.now()),
                 produced_by=self._version,
                 simulation=self._simulation,
+                flagged_paths=flagged,
             ),
             secrets=self._secrets(),
         )
@@ -472,6 +494,7 @@ class DeliveryService:
             outcomes={k: v.value for k, v in outcomes.items()},
             report=report,
             contract_version=version.number,
+            flagged_paths=flagged,
         )
         self._store.put_record(decided)
         if gate.decision is not Decision.FAIL:

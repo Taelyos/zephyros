@@ -81,3 +81,10 @@ def test_a_simulated_delivery_says_so_in_the_report() -> None:
     text = render(make(simulation=True))
     assert "**SIMULATION**" in text
     assert "simulated model provider" in text
+
+
+def test_the_flagged_paths_are_listed_and_none_says_so() -> None:
+    assert "## Flags\n\nNone." in render(make())
+    flagged = render(make(flagged_paths=("CONTRACT.md",)))
+    assert "The delivery changes the client's own files" in flagged
+    assert "- `CONTRACT.md`" in flagged

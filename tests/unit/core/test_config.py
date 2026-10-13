@@ -391,3 +391,16 @@ def test_the_session_header_is_unset_by_default_and_read_when_written() -> None:
     assert parse_config(minimal()).gateway.session_header is None
     document = with_value("gateway.session_header", "x-opencode-session")
     assert parse_config(document).gateway.session_header == "x-opencode-session"
+
+
+def test_the_clients_contract_file_is_protected_by_default_and_the_list_is_read() -> None:
+    """ADR 0020: a delivery that changes one of these paths is flagged."""
+    assert parse_config(minimal()).verification.protected_paths == ("CONTRACT.md",)
+    document = with_value("verification.protected_paths", ["CONTRACT.md", "spec/"])
+    assert parse_config(document).verification.protected_paths == ("CONTRACT.md", "spec/")
+    for wrong in (["../escape"], ["/etc/passwd"], ["a" * 151]):
+        with pytest.raises(ConfigError) as caught:
+            parse_config(with_value("verification.protected_paths", wrong))
+        assert [problem.key for problem in caught.value.problems] == [
+            "verification.protected_paths[0]"
+        ]

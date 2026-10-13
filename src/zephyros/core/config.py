@@ -443,6 +443,17 @@ def _verification() -> Table:
                 "Longest run of the acceptance tests of one delivery",
                 default=300,
             ),
+            Field(
+                "protected_paths",
+                Array(
+                    Text(max_length=150, pattern=r"(?!.*\.\.)[A-Za-z0-9_.][A-Za-z0-9_./-]*"),
+                    min_items=1,
+                    max_items=32,
+                ),
+                "Paths of the client's own files (a path, or a directory ending with /): a delivery "
+                "that changes one is flagged in its report and its pull request, never refused",
+                default=["CONTRACT.md"],
+            ),
         )
     )
 
@@ -766,6 +777,7 @@ class VerificationConfig:
     kit: str
     timeout_seconds: int
     kit_image: str | None
+    protected_paths: tuple[str, ...] = ("CONTRACT.md",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -897,6 +909,7 @@ def parse_config(data: object) -> Config:
             kit=cast("str", verification["kit"]),
             timeout_seconds=_int(verification, "timeout_seconds"),
             kit_image=cast("str | None", verification.get("kit_image")),
+            protected_paths=tuple(cast("list[str]", verification["protected_paths"])),
         ),
         notifications=NotificationsConfig(
             url=cast("str", notifications["url"]),

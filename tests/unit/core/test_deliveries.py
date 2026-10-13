@@ -18,7 +18,7 @@ from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
-from zephyros.core.deliveries import DeliveryService, DeliveryState
+from zephyros.core.deliveries import DeliveryService, DeliveryState, flagged_paths
 from zephyros.core.errors import Refusal
 from zephyros.core.gate import Inspected
 from zephyros.core.ports.forge import ForgeError, RepositoryRef
@@ -403,3 +403,22 @@ def test_an_inspection_needs_a_decided_delivery_and_an_object_to_inspect() -> No
             "operator", project, pushed.delivery_id, "CTR-01", Inspected.CONFORMS, "x"
         )
     assert caught.value.reason is Reason.NOT_PENDING
+
+
+def test_a_change_to_the_clients_own_files_is_flagged_never_refused() -> None:
+    """ADR 0020: a Contractor of the second real run rewrote the client's CONTRACT.md."""
+    made, project, _audit, _store = service()
+    ready(made, project)
+    delivery = delivered(made, project, {**BASE, "calc.py": b"x = 2\n", "CONTRACT.md": b"# mine\n"})
+    record = made.status(project, delivery)
+    assert record.flagged_paths == ("CONTRACT.md",)
+    assert record.state is DeliveryState.PROPOSED
+    assert record.report is not None
+    assert "## Flags" in record.report
+    assert "- `CONTRACT.md`" in record.report
+
+
+def test_the_flagged_paths_are_the_protected_files_and_directories() -> None:
+    changed = ("CONTRACT.md", "docs/CONTRACT.md", "spec/a.md", "specs.md", "app.py")
+    assert flagged_paths(changed, ("CONTRACT.md", "spec/")) == ("CONTRACT.md", "spec/a.md")
+    assert flagged_paths(changed, ()) == ()

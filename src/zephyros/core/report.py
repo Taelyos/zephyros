@@ -43,6 +43,8 @@ class ReportInput:
     checks_run: bool = False
     simulation: bool = False
     """The simulated model provider carried this delivery (EXG-46): the report says so."""
+    flagged_paths: tuple[str, ...] = ()
+    """The client's own files the delivery changes (ADR 0020): flagged, never refused."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -95,7 +97,7 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         "",
         "## Requirements",
         "",
-        "| Requirement | Covered by | Priority | Methods | Acceptance tests | Verified | Why |",
+        "| Requirement or constraint | Covered by | Priority | Methods | Acceptance tests | Verified | Why |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for judged in gate.requirements:
@@ -121,7 +123,18 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
     lines += [f"- {_code(test)}: {outcome.value}" for test, outcome in report.outcomes.items()]
     excerpt = report.log[-LOG_EXCERPT:]
     lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
+    lines += ["## Flags", ""]
+    lines += (
+        [
+            "The delivery changes the client's own files: the Owner side reviews these changes.",
+            "",
+        ]
+        + [f"- {_code(path)}" for path in report.flagged_paths]
+        if report.flagged_paths
+        else ["None."]
+    )
     lines += [
+        "",
         "## Automated delivery checks",
         "",
         "Run." if report.checks_run else "Not run by this version of the hub (EXG-35).",

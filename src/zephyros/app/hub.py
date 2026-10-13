@@ -211,6 +211,7 @@ class DeliverySetup:
     forge: Forge | None = None
     kit: str = "tests"
     timeout_seconds: int = 300
+    protected_paths: tuple[str, ...] = ("CONTRACT.md",)
 
 
 def build_hub(
@@ -264,6 +265,7 @@ def build_hub(
             clock,
             kit=delivery.kit,
             timeout_seconds=delivery.timeout_seconds,
+            protected_paths=delivery.protected_paths,
             version="Zephyros " + __version__,
             secrets=lambda: known.secrets() if known is not None else [],
             events=events,
@@ -355,6 +357,7 @@ async def run(
             forge=forge,
             kit=config.verification.kit,
             timeout_seconds=config.verification.timeout_seconds,
+            protected_paths=config.verification.protected_paths,
         ),
         provider=provider,
         model=config.gateway.model,

@@ -401,6 +401,20 @@
           "maximum": 3600,
           "description": "Longest run of the acceptance tests of one delivery",
           "default": 300
+        },
+        "protected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 150,
+            "pattern": "^(?:(?!.*\\.\\.)[A-Za-z0-9_.][A-Za-z0-9_./-]*)$"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "description": "Paths of the client's own files (a path, or a directory ending with /): a delivery that changes one is flagged in its report and its pull request, never refused",
+          "default": [
+            "CONTRACT.md"
+          ]
         }
       },
       "additionalProperties": false,
