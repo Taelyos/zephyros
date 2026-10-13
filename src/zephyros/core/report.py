@@ -45,6 +45,8 @@ class ReportInput:
     """The simulated model provider carried this delivery (EXG-46): the report says so."""
     flagged_paths: tuple[str, ...] = ()
     """The client's own files the delivery changes (ADR 0020): flagged, never refused."""
+    acceptance_files: tuple[tuple[str, str], ...] = ()
+    """The acceptance tests of the Owner side the run used, with the digest of their content."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -91,6 +93,13 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         f"- Branch: {_code(delivery.branch)}",
         f"- Base: {_code(delivery.base[:12])}, head: {_code(delivery.head[:12])}",
         f"- Contract: version {report.contract_version} ({_code(report.contract_hash[:12])})",
+        f"- Acceptance tests of the Owner side ({len(report.acceptance_files)}): "
+        + (
+            ", ".join(
+                f"{_code(path)} ({_code(digest)})" for path, digest in report.acceptance_files
+            )
+            or "none"
+        ),
         f"- Changed paths ({len(delivery.changed_paths)}): "
         + (", ".join(_code(p) for p in delivery.changed_paths[:50]) or "none")
         + (" ..." if len(delivery.changed_paths) > 50 else ""),

@@ -539,3 +539,12 @@ def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_chang
             },
         ),
     ]
+
+
+def test_the_report_names_the_version_of_each_acceptance_test_that_ran() -> None:
+    made, project, _audit, _store = service()
+    ready(made, project)
+    digest = made.put_acceptance(project, "checks/add.txt", "test_add: pass\n")
+    report = made.status(project, delivered(made, project)).report
+    assert report is not None
+    assert f"`checks/add.txt` (`{digest}`)" in report

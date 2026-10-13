@@ -88,3 +88,10 @@ def test_the_flagged_paths_are_listed_and_none_says_so() -> None:
     flagged = render(make(flagged_paths=("CONTRACT.md",)))
     assert "The delivery changes the client's own files" in flagged
     assert "- `CONTRACT.md`" in flagged
+
+
+def test_the_report_names_each_acceptance_test_file_it_ran_with_its_digest() -> None:
+    """The Owner of the second and third real runs asked twice: which version of its tests ran?"""
+    rendered = render(make(acceptance_files=(("test_a.py", "0123456789ab"),)))
+    assert "- Acceptance tests of the Owner side (1): `test_a.py` (`0123456789ab`)" in rendered
+    assert "- Acceptance tests of the Owner side (0): none" in render(make())

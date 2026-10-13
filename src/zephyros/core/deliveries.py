@@ -546,6 +546,11 @@ class DeliveryService:
                 files[path] = acceptance[path]
             elif path in base_files:
                 files[path] = base_files[path]
+        # Which version of each acceptance test ran: the Owner side may put a new one later.
+        ran = tuple(
+            (path, hashlib.sha256(acceptance[path]).hexdigest()[:12])
+            for path in sorted(protected & set(acceptance))
+        )
         outcomes: dict[str, Any] = {}
         log = ""
         if tests:
@@ -588,6 +593,7 @@ class DeliveryService:
                 produced_by=self._version,
                 simulation=self._simulation,
                 flagged_paths=flagged,
+                acceptance_files=ran,
             ),
             secrets=self._secrets(),
         )
