@@ -2,7 +2,7 @@
 
 The hub tells the main agent about the transitions it must not miss. It does so over the
 signed webhooks of EXG-43: one HTTP delivery per event, signed, fresh and single-use. When
-`[notifications]` is empty, nothing is sent — the events are still recorded in the log.
+`[notifications]` sets neither key, nothing is sent — the events are still recorded in the log.
 
 The hub never waits for the receiver. An event is queued where it happens, and a thread of the
 hub that does nothing else sends the queue in order. A receiver that takes its time delays only
@@ -66,8 +66,9 @@ url = "https://main-agent.example.invalid/zephyros"
 secret = "a-shared-secret-of-at-least-16-characters"  # pragma: allowlist secret
 ```
 
-Both keys are set together; either empty turns notifications off. The secret signs every
-delivery and never leaves the hub (EXG-49 masks it in logs and reports).
+Set both keys, or neither: with neither, notifications are off. The hub refuses to start with a
+`url` and no `secret` of at least 16 characters, or with a `secret` and no `url`. The secret
+signs every delivery and never leaves the hub (EXG-49 masks it in logs and reports).
 
 ## What the receiver sees
 

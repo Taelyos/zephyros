@@ -47,32 +47,36 @@ from recorded results and written rules, the same way every time.
   verdict is posted on the pull request; the title follows the decision.
 - **Isolation**: one network and one guard per instance, a token per project and side, protected
   networks unreachable, a model gateway that holds the provider key and sends only the models the
-  configuration authorises, and a hash-chained log of every call and refusal, anchored outside its
-  store.
+  configuration authorises, and a hash-chained log of every call and refusal, whose head is also
+  kept in a separate anchor file, so that a replaced or truncated database is detected (see
+  [Limits](#limits) for what the anchor does not stop).
 - **Network access in three levels** ([ADR 0024](docs/decisions/0024-three-levels-of-network-access.md)).
   By default (`regulated`) an instance reaches the hub and the package registries, through a proxy
   in the hub that logs every destination; `sealed` reaches the hub alone; `open` reaches the
   Internet, as version 0.1.0 did.
-- **The main agent hears what it must not miss**: every decision (refusals and errors included),
-  loops of failed deliveries, verdicts, and stalled tasks, through signed webhooks. The continuity
-  ladder that wakes, restarts and escalates a stalled instance survives a restart of the hub.
+- **The main agent is told** of every decision (refusals and errors included), loops of failed
+  deliveries, verdicts, and stalled tasks, through signed webhooks. Each is sent once, in order,
+  from a queue of its own, and its outcome is logged; one that fails is not sent again (see
+  [Limits](#limits)). The continuity ladder that wakes, restarts and escalates a stalled instance
+  survives a restart of the hub.
 - **A threat model of 93 attacks**, kept with the project's working documents (not published).
   66 have at least one automated test that carries their identifier: 60 in the acceptance and
   runtime suites, run as the attacker would, and 6 in unit tests only. 25 of the others belong to
-  features not built yet (signed approvals, budget, dashboard, backups, previews). 2 have no
-  automated test yet: a repository URL that points at a private host (ATK-75), and an instance
-  that re-submits a rejected delivery in a loop or reports stale work (ATK-79). A test that names
-  an attack shows that the hub refuses that attack as written, not that every variant of it is
-  closed.
+  features not built yet (signed approvals, budget, dashboard, backups, previews, automated
+  delivery checks). For the last 2, no test carries their identifier: a repository URL that points
+  at a private host (ATK-75), and an instance that re-submits a rejected delivery in a loop or
+  reports stale work (ATK-79). Part of their scenarios is covered by tests filed under ATK-74 and
+  EXG-44 (repository URLs such as `file:///` or a private address are refused) and EXG-23 (the
+  alert for a loop of failed deliveries). A test that names an attack shows that the hub refuses
+  that attack as written, not that every variant of it is closed.
 
 ## Three runs with real models
 
 DeepSeek V4.1 Flash on the Owner and Contractor sides, through OpenCode Go, on small Python
-projects. The operator's part (writing the requirements, approving the changes, starting the
-instances) was not played by a person: in run 1 by a Hermes agent on DeepSeek V4.1 Flash, in runs
-2 and 3 by a Claude Opus 5.5 session. Its model calls did not go through the gateway and are
-**not** in the table: in run 1, about 274 calls (about $1.5 at the same list price); in run 2,
-about 205 calls of Claude Opus 5.5, on a subscription.
+projects, on one Linux machine. The operator's part (writing the requirements, approving the
+changes, starting the instances) was not played by a person but by an orchestrating agent, a
+Claude Opus 5.5 session in runs 2 and 3. Its model calls did not go through the gateway and are
+**not** in the table.
 
 | Run | Project | Real agents | Result | Model calls | Tokens in / out | Cost* |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -136,19 +140,24 @@ suite, on real containers. As collected by pytest, parametrized cases each count
 | `tests/acceptance/` | 533 | Whole stories and attacks of the threat model through a real hub, with fakes for containers and the forge |
 | `tests/runtime/` | 141 | Real containers: the turn's hardening, the network guard and levels, the sandbox and the kit, real Hermes turns with a scripted model |
 
-`scripts/check.sh` skips the runtime suite, so it reports 2,897 passed and 142 skipped. It fails
-below 85 % branch coverage of the hub; for this release, 1,717 of the hub's 1,842 branches are
-covered (93 %), and 96.7 % of the code in all, which counts the conformance suites and the dummy
-implementations shipped in the package.
+Without a container runtime, `scripts/check.sh` reports 2,897 passed and 142 skipped: every
+skipped test needs a container runtime (the runtime suite, with the conformance cases it runs
+against the real sandbox). It fails below 85 % branch coverage of the hub; on the CI run of this
+release, 1,716 of the hub's 1,842 branches are covered (93 %), and 96.7 % of the code in all,
+which counts the conformance suites and the dummy implementations shipped in the package.
 
 ## Limits
 
 What holds and what does not, in version 0.2.0:
 
-- **One machine, IPv4 only.** Linux and macOS; not Windows.
+- **One machine, IPv4 only.** Linux and macOS; not Windows. The CI runs the unit and acceptance
+  suites on both, but the runtime suite (real containers) on Linux only, and the three real runs
+  were on Linux.
 - **One verification kit**, `tests` (pytest, Python 3.12). Its acceptance tests are black box:
   they run the delivery as a subprocess and read its output. A test that imports the delivered
-  code, or a support module next to it, fails to load and reads `error`.
+  code, or a support module next to it, fails to load and reads `error`. Instances run Python 3.14:
+  a test that depends on the minor version of Python may behave differently in the instance and
+  in the sandbox.
 - **The Owner's other files in the sandbox can be rewritten by the delivery.** The kit holds the
   acceptance test files to what the hub sent, but a reference file or a helper script that a test
   reads from the working directory can be replaced by the delivered code before the test reads it.
@@ -163,21 +172,38 @@ What holds and what does not, in version 0.2.0:
 - **An allowed registry is still a channel** at the `regulated` level: data can be encoded in the
   names and paths an instance asks for, and the log keeps the host, not the path. The proxy checks
   the name of a connection, not what goes through it, and does not make a registry read-only
-  ([ADR 0024](docs/decisions/0024-three-levels-of-network-access.md)). `open` reaches the whole
-  Internet.
+  ([ADR 0024](docs/decisions/0024-three-levels-of-network-access.md)). Installing a package runs
+  code from the registry inside the instance. `open` reaches the whole Internet.
+- **What the hub does not see of the network.** A client that ignores `HTTPS_PROXY` reaches
+  nothing, but the guard drops its attempts without a record in the hub's log. There is no ceiling
+  on the tunnels an instance opens at once, and refusals of the proxy do not count toward
+  `limits.refusals_per_minute`: an authenticated instance can fill the log with `instance.egress`
+  records.
+- **Notifications are sent once.** One that fails (the receiver is down, answers an error, or
+  takes too long) is logged and not sent again; the queue holds 1,000 notifications, and what is
+  still queued when the hub stops is logged as `hub_stopped`, not sent. The log and
+  `delivery.status` keep the facts; the main agent must read them after an outage
+  ([webhooks](docs/webhooks.md)).
 - **The continuity ladder waits for a contract that names an acceptance test.** A contract judged
-  by inspection alone starts no ladder for the Contractor; an Owner side that proposes and
-  rejects its own change again and again ends its decision task each time
+  by inspection alone starts no ladder for the Contractor. One named test is enough, so a contract
+  written in proposals approved further apart than `continuity.inactivity_seconds` can wake the
+  Contractor in between. An Owner side that proposes and rejects its own change again and again
+  ends its decision task each time
   ([ADR 0021](docs/decisions/0021-the-ladder-waits-for-a-ready-contract.md),
   [ADR 0023](docs/decisions/0023-a-decision-is-awaited-from-whoever-takes-it.md)).
-- **A lost log anchor keeps the log verification failing**: restore it with the database; there is
-  no re-anchoring yet ([ADR 0019](docs/decisions/0019-anchor-outside-the-store.md)).
+- **The log anchor is a file next to the database.** It detects a database replaced or cut on its
+  own, but whoever can write the hub's data directory can forge both the log and the anchor; the
+  anchor belongs on another medium when that matters. A lost anchor keeps the log verification
+  failing: back it up with the database; there is no re-anchoring yet
+  ([ADR 0019](docs/decisions/0019-anchor-outside-the-store.md), Proposed for these reasons).
 - **The model policy is the configuration file.** The gateway sends only the models `gateway.models`
   names; the policy is as safe as the file that holds it.
 - The gate judges what the contract says, nothing more: a contract with no design requirement
   gets a page with no design.
 - **Not built yet**: approvals signed by the human (the operator's token approves), budgets,
-  a dashboard, backups, previews.
+  a dashboard, backups, previews, and the automated delivery checks for vulnerable dependencies
+  and committed secrets (EXG-35: the report says "Not run by this version of the hub"). The 25
+  attacks of the threat model that target these features have no test.
 - Three real runs, all small Python projects, driven by an agent in the operator's place. Not a
   benchmark. Turns take minutes and real runs cost tokens.
 

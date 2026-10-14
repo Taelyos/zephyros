@@ -32,12 +32,13 @@ delivery is accepted.
 
 ```toml
 [notifications]
-url = "https://main.example.test/zephyros/hook"  # empty turns notifications off (default)
-secret = ""  # 16+ characters, shared with the receiver out of band
+url = "https://main.example.test/zephyros/hook"  # http(s); empty turns notifications off (default)
+secret = ""  # 16+ characters when url is set; empty when url is
 ```
 
-Both keys are set together, or neither; the secret travels out of band, never through the hub's
-answers or the log. The events that fire a delivery, and their payloads, are listed in
+Set both keys, or neither: with neither, notifications are off. The hub refuses to start with a
+`url` and no `secret` of at least 16 characters, or with a `secret` and no `url`. The secret
+travels out of band, never through the hub's answers or the log. The events that fire a delivery, and their payloads, are listed in
 [notifications](notifications.md): a delivery decided (refused and in error included), a loop of
 failed deliveries, a verdict of the Owner side, and the alerts of the continuity ladder.
 

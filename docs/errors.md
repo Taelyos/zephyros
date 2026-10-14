@@ -17,8 +17,11 @@ Some answers carry less, on purpose:
   that it tells an attacker nothing. The log records why.
 - A body that cannot be read (not JSON, too large, a malformed delivery identifier) is answered
   with `error` alone, before any tool runs. The log records it as `invalid_request`.
-- Every refusal of the gateway is also logged with its refusal code (the `reason` of the log
-  record), which this table documents.
+- A refusal of the gateway is logged as `gateway.call`, refused, with a refusal code of the table
+  below as its `reason` (`invalid_request` for a call the gateway cannot read, the code of the
+  access decision for a caller it does not serve), and the gateway's own code and detail in its
+  parameters (`code`, `detail`). A failure of the provider is logged as an error with its masked
+  detail.
 
 This file is kept in step with `Reason` and `REMEDIES` by `tests/unit/core/test_errors.py`.
 

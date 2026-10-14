@@ -163,4 +163,4 @@ before the Owner side writes its tests is safe; while it waits, the log says why
   Contractor's report without the run output), which the test suites cover but no real run has
   tried. The report counts only the calls that go through the gateway: an operator who drives
   a run with an agent of their own pays for it outside Zephyros. In the three runs the operator
-  was an agent (a Hermes agent in run 1, a Claude Opus 5.5 session in runs 2 and 3), not a person.
+  was an orchestrating agent (a Claude Opus 5.5 session in runs 2 and 3), not a person.
