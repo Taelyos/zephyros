@@ -132,7 +132,7 @@ def test_a_token_presented_from_another_context_is_refused(service: TokenService
     # An instance of another project presents a token of project A.
     assert reason(project_call(service, owner.secret, "10.200.0.34")) is Reason.WRONG_SOURCE
     # A host on the LAN presents a valid token.
-    assert reason(project_call(service, owner.secret, "192.168.1.50")) is Reason.WRONG_SOURCE
+    assert reason(project_call(service, owner.secret, "192.168.7.50")) is Reason.WRONG_SOURCE
     assert reason(project_call(service, foreign.secret, OWNER_ADDRESS)) is Reason.WRONG_SOURCE
 
 

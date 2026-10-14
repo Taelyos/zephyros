@@ -118,7 +118,7 @@ def test_atk_85_a_token_works_only_from_the_context_it_was_issued_to(restarted: 
             world["contractor_a"].secret,
             world["contractor_b"].address,
         ),
-        "a valid token from a host on the LAN": (world["owner_a"].secret, "192.168.1.50"),
+        "a valid token from a host on the LAN": (world["owner_a"].secret, "192.168.7.50"),
         "a valid token from the host loopback": (world["owner_a"].secret, "127.0.0.1"),
         "a valid token from the hub's own address": (world["owner_a"].secret, "172.18.0.1"),
     }

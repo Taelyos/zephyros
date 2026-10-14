@@ -220,7 +220,7 @@ def test_a_token_copied_to_another_context_is_refused_and_logged(env: Env) -> No
     assert record.reason is Reason.WRONG_SOURCE
     assert json.loads(record.parameters)["source"] == env.addresses["contractor_a"]
     # A host on the LAN and an instance of another project fare no better.
-    for address in ("192.168.1.50", env.addresses["owner_b"], env.addresses["contractor_b"]):
+    for address in ("192.168.7.50", env.addresses["owner_b"], env.addresses["contractor_b"]):
         assert rpc(client_for(env, "owner_a", address=address), "tools/list").status_code == 401
     # The positive control: each context with its own token.
     for who in ("owner_a", "contractor_a", "owner_b", "contractor_b"):

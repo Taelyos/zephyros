@@ -128,7 +128,7 @@ def test_an_unknown_token_is_logged_as_unauthenticated_in_the_hub_stream(env: En
     before = len(env.audit.read("hub"))
     assert (
         env.hub.authenticate(
-            "zph_c_" + "A" * 43, peer_address="192.168.1.5", endpoint=Endpoint.AGENT
+            "zph_c_" + "A" * 43, peer_address="192.168.7.5", endpoint=Endpoint.AGENT
         )
         is None
     )
