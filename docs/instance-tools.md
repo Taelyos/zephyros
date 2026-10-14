@@ -41,6 +41,8 @@ ZEPHYROS_TOKEN=zph_c_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
 
 On the hub, a Contractor instance reaches the tools of `docs/tools.md` that a Contractor instance may use (`whoami`, `project.list`, `project.get`, `contract.read`, `delivery.declare`, `delivery.status`), the model gateway (`/v1`), and the staging area of its project (`GET /staging/base`, `POST /staging/delivery`). Every call is authenticated, scoped to the project of its token and logged.
 
+A push names its branch in the query (`POST /staging/delivery?branch=<name>`). The name is plain: lower-case letters, digits, `.`, `_` and `-`, 63 characters at most, starting with a letter or a digit. The hub refuses a name that holds a secret it knows, or a string shaped like a credential (`sk-…`, `ghp_…`, `zph_…`), because the name goes to the forge and into the title of the pull request (ATK-84). Such a name is refused even when it is innocent: `sk-learn-upgrade-2026` reads as a provider key. The refusal shows the name masked; push the same work again under a name taken from the work, such as `add-subtraction`.
+
 ## Nothing in that list reaches the contract
 
 The contract lives in the hub, outside every path mounted in an instance. The tools above can write only inside the container (read-only root file system, two owned volumes), the hub refuses a Contractor any write to the contract (ATK-09, ATK-10), and the network guard blocks everything but the hub's agent endpoint (ATK-13, ATK-39). ATK-08 executes the claim: it invokes every tool above with the path of the contract as an argument, in a real instance, and checks that the contract is bit-identical before and after.

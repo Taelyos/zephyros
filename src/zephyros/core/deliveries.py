@@ -408,6 +408,7 @@ class DeliveryService:
                 inspections=inspections,
                 decision=gate.decision.value,
                 addendum=addendum,
+                gate_report=base,
                 report=with_addendum(base or "", addendum),
             )
 
@@ -630,15 +631,21 @@ class DeliveryService:
                 return replace(current, state=DeliveryState.ERROR, detail=detail)
 
             before, after = self._update(project_id, delivery_id, failed)
-            self._record_event(
-                project_id,
-                Action.VERIFICATION_RUN,
-                Outcome.ERROR,
-                delivery=delivery_id,
-                error=detail,
-            )
-            if after is not before:
-                self._tell_decision(after, ERROR)
+            try:
+                self._record_event(
+                    project_id,
+                    Action.VERIFICATION_RUN,
+                    Outcome.ERROR,
+                    delivery=delivery_id,
+                    error=detail,
+                )
+            finally:
+                # Every declared delivery is told once, the log taking it or not: a refusal the
+                # checks kept before failing is told here, an error made here too.
+                if after.state is DeliveryState.REFUSED:
+                    self._tell_decision(after, REFUSED)
+                elif after is not before:
+                    self._tell_decision(after, ERROR)
             return
         if checked.state is DeliveryState.REFUSED:
             self._tell_decision(checked, REFUSED)
@@ -649,25 +656,33 @@ class DeliveryService:
         # request from opening; and told as it stands now, an inspection recorded meanwhile
         # included, so that the last decision the main agent hears of is the one in force.
         now = self._record(project_id, delivery_id)
-        self._tell_decision(now, str(now.decision))
-        if checked.decision == Decision.FAIL.value and self._rejections_alert is not None:
-            # EXG-23: the loop the Owner and the Contractor may fall into — a streak of
-            # refused deliveries that a pass breaks. Counted per project, not per branch:
-            # the areas take one delivery per branch, so a branch cannot refuse twice.
-            streak = 0
-            for found in reversed(self._store.records(project_id)):
-                if found.decision != Decision.FAIL.value:
-                    break
-                streak += 1
-            if streak >= self._rejections_alert:
-                self._events(
-                    "delivery.loop",
-                    {
-                        "project_id": project_id,
-                        "branch": mask(checked.branch, self._secrets()),
-                        "rejections": streak,
-                    },
-                )
+        try:
+            self._tell_decision(now, str(now.decision))
+        finally:
+            # EXG-23: a decision that cannot be told never hides the loop it closes.
+            if checked.decision == Decision.FAIL.value:
+                self._alert_loop(project_id, checked.branch)
+
+    def _alert_loop(self, project_id: str, branch: str) -> None:
+        """EXG-23: the loop the Owner and the Contractor may fall into — a streak of refused
+        deliveries that a pass breaks. Counted per project, not per branch: the areas take one
+        delivery per branch, so a branch cannot refuse twice."""
+        if self._rejections_alert is None:
+            return
+        streak = 0
+        for found in reversed(self._store.records(project_id)):
+            if found.decision != Decision.FAIL.value:
+                break
+            streak += 1
+        if streak >= self._rejections_alert:
+            self._events(
+                "delivery.loop",
+                {
+                    "project_id": project_id,
+                    "branch": mask(branch, self._secrets()),
+                    "rejections": streak,
+                },
+            )
 
     def _verify(self, record: DeliveryRecord) -> tuple[DeliveryRecord, Delivery]:
         """Check, run and decide a declared delivery. Returns the record as the checks left it

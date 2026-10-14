@@ -60,6 +60,8 @@ def requirements() -> list[dict[str, Any]]:
 
 PUSHED = "add-sub"
 """The name the delivery goes under, once the hub refused BRANCH (ATK-84)."""
+NOTES = f"notes-{CANARY}.txt"
+"""ATK-84: a canary planted in the name of a delivered file, which the report lists."""
 
 
 def delivery_prompt() -> str:
@@ -74,7 +76,7 @@ def delivery_prompt() -> str:
             f"RUN git -C /work/repo checkout -qb {PUSHED}",
             "RUN printf '\\n\\ndef sub(a, b):\\n    return a - b\\n' >> /work/repo/calc.py",
             # ATK-84: a canary planted in a delivered file
-            "RUN printf 'token: sk-live-abcdefghijklmnop1234\\n' >> /work/repo/notes.txt",
+            f"RUN printf 'token: sk-live-abcdefghijklmnop1234\\n' >> /work/repo/{NOTES}",
             "RUN git -C /work/repo -c user.name=contractor "
             "-c user.email=contractor@example.invalid add -A",
             "RUN git -C /work/repo -c user.name=contractor "
@@ -170,11 +172,13 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
             "test_calc.py::test_add": "passed",
             "test_sub.py::test_sub": "passed",
         }
-        assert found["changed_paths"] == ["calc.py", "notes.txt"]
+        assert found["changed_paths"] == ["calc.py", NOTES]
 
         report = str(found["report"])
-        # ATK-84, EXG-49: the canaries planted in the delivery (a delivered file, the output of
-        # its test) come back masked — in the report, in the status and in the log store.
+        # ATK-84, EXG-49: the canaries planted in the delivery (the name and the content of a
+        # delivered file, the output of its test) come back masked — in the report and in the
+        # log store. The report lists the changed paths: the name of the file shows it masked.
+        assert "`notes-[masked].txt`" in report
         for canary in (
             "sk-live-abcdefghijklmnop1234",  # pragma: allowlist secret (a canary of ATK-84)
             "ghp_abcdefghijklmnopqrstuvwxyz012345",  # pragma: allowlist secret (ATK-84)
