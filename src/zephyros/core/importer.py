@@ -1,7 +1,6 @@
-"""Importing a contract from the Markdown document of a project (Q-09: the Markdown importer
-is Z3).
+"""Importing a contract from the Markdown document of a project.
 
-The document is written the way the method asks (requirements writing guide, section 5):
+The document is written the way the method asks:
 requirement and constraint tables, one row per object; story sections, one heading per story
 (`#### US-Enn-nn · Epic Enn`), the story's sentence, a `Covers:` line, and the acceptance
 criteria as bullets. The importer reads those four shapes and nothing else: the rest of the

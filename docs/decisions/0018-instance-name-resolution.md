@@ -22,7 +22,7 @@ Consequences for the suites on such a host: the ATK-44 positive control ("a publ
 ## Decision
 
 - The configuration gains `network.resolvers`: the name resolvers the instances use, one to four IPv4 addresses. The guard of an instance carries them as its DNS, and the turn, which joins the guard's network namespace, uses them.
-- The default is `9.9.9.9` (Quad9), chosen by the Owner on 2026-10-12: a public resolver that filters malicious domains and does not log the client address. A deployment overrides it (`ZEPHYROS_RESOLVERS` for `scripts/deploy.sh`, or the key in the configuration file).
+- The default is `9.9.9.9` (Quad9), chosen on 2026-10-12: a public resolver that filters malicious domains and does not log the client address. A deployment overrides it (`ZEPHYROS_RESOLVERS` for `scripts/deploy.sh`, or the key in the configuration file).
 - A resolver address inside a protected network is refused at startup, naming the key: the guard would block it, so it can never work (EXG-50 says the refusal names the faulty key). This is what keeps the default honest on the homelab.
 - No guard rule change: a public resolver is a destination the network rules of the time already permitted, since the public Internet was open to instances.
 

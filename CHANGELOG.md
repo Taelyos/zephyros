@@ -38,8 +38,8 @@ verification kit that delivered code cannot forge. Release notes:
   requirement or constraint, or a delivery where no acceptance test of the judged objects ran and
   passed, is CONCERNS at best, with a reservation that says nothing was judged. A contract judged
   by inspection alone no longer reaches PASS. A conforming inspection still turns CONCERNS into
-  PASS once at least one acceptance test ran and passed, and never makes up for a failed test
-  (decision D16, recorded in ADR 0020) (#9, #15, #18).
+  PASS once at least one acceptance test ran and passed, and never makes up for a failed test of
+  the object it judges (decision D16, recorded in ADR 0020) (#9, #15, #18).
 - `contract.import` takes a document whole or not at all. An identifier defined twice, a
   verification method that is not T, I, A or D (`TBD`, `Test`), and a requirement or constraint
   row without its five cells are refused and named with their line, where they used to be
@@ -47,12 +47,12 @@ verification kit that delivered code cannot forge. Release notes:
 - The events schema is 2.0.0: every notification says `"schema_version": "2.0.0"`. No field is
   added or removed, but two fields take values they never took, which breaks a receiver that
   checked them against a closed list:
-  `delivery.decided` is emitted for every declared delivery, exactly once: its `decision` can now
-  be `REFUSED` (the checks refused it) or `ERROR` (its verification could not finish), besides
-  `PASS`, `CONCERNS` and `FAIL`. A receiver that accepted three values must accept five (#9, #15,
-  #17). The alerts of the continuity ladder can carry `side: main-agent`, for a change the Owner
-  side proposed and the main agent is to decide (ADR 0023) (#13). A receiver that reads
-  `schema_version` can tell the two apart (#18).
+  `delivery.decided` is emitted once when a delivery is declared, and again if an inspection
+  changes its decision: its `decision` can now be `REFUSED` (the checks refused it) or `ERROR`
+  (its verification could not finish), besides `PASS`, `CONCERNS` and `FAIL`. A receiver that
+  accepted three values must accept five (#9, #15, #17). The alerts of the continuity ladder can
+  carry `side: main-agent`, for a change the Owner side proposed and the main agent is to decide
+  (ADR 0023) (#13). A receiver that reads `schema_version` can tell the two apart (#18).
 
 ### Added
 - Three levels of network access for instances (ADR 0024, superseding ADR 0009): `regulated`

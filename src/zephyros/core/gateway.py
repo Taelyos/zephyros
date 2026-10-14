@@ -7,8 +7,7 @@ credential lives behind the provider and nowhere else: it is never part of a req
 answer, an error or a log record. Every call leaves one record naming the instance, the model
 and the tokens used.
 
-This is the minimal gateway of milestone Z2. Presets, budgets and several providers are later
-work.
+This is a minimal gateway. Presets, budgets and several providers are later work.
 """
 
 from __future__ import annotations
