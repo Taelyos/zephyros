@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import replace
+import json
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -18,22 +19,64 @@ from zephyros.adapters.memory.contract_store import InMemoryContractStore
 from zephyros.adapters.memory.delivery_store import InMemoryDeliveryStore
 from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
-from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
+from zephyros.core.audit import Action, AuditEvent, AuditLog, AuditRecord, LogError, Outcome, Reason
 from zephyros.core.contract import ContractService, parse_change
-from zephyros.core.deliveries import DeliveryService, DeliveryState, Verdict, flagged_paths
+from zephyros.core.deliveries import (
+    WRITE_ATTEMPTS,
+    DeliveryRecord,
+    DeliveryService,
+    DeliveryState,
+    StaleRecordError,
+    Verdict,
+    deselected_tests,
+    flagged_paths,
+    report_for,
+)
 from zephyros.core.errors import Refusal
-from zephyros.core.gate import Inspected
-from zephyros.core.ports.forge import ForgeError, RepositoryRef
+from zephyros.core.gate import NOTHING_JUDGED, Inspected
+from zephyros.core.ports.agent_engine import Side
+from zephyros.core.ports.forge import (
+    ForgeError,
+    PullRequest,
+    PullRequestRequest,
+    RepositoryRef,
+)
 from zephyros.core.ports.verification import Outcome as VerificationOutcome
 from zephyros.core.ports.verification import (
     VerificationError,
     VerificationRequest,
     VerificationResult,
 )
-from zephyros.core.principals import OPERATOR
+from zephyros.core.principals import MAIN_AGENT, OPERATOR, instance_principal
 from zephyros.core.projects import ProjectService
 
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
+
+
+@dataclass(frozen=True)
+class KitResult(VerificationResult):
+    """The answer of a kit of the verification interface 0.2.0: besides the outcomes, the tests
+    it found in the asked files and did not run, since no criterion names them (`path::name`)."""
+
+    deselected: tuple[str, ...] = ()
+
+
+class DeselectingRunner(AssertionRunner):
+    """The assertions runner, answering like a kit of the interface 0.2.0: every other test line
+    of an asked file is a test it saw and did not run."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        result = super().run(request)
+        asked = set(request.tests)
+        seen = [
+            f"{path}::{line.partition(':')[0].strip()}"
+            for path in sorted({test.partition("::")[0] for test in asked})
+            for line in request.files.get(path, b"").decode(errors="replace").splitlines()
+            if ":" in line
+        ]
+        return KitResult(
+            result.outcomes, result.log, deselected=tuple(t for t in seen if t not in asked)
+        )
 
 
 class Exploding(AssertionRunner):
@@ -66,25 +109,40 @@ class RefusingForge(InMemoryForge):
         raise ForgeError("the forge is read-only today")
 
 
+ADD_ONLY = ((1, "P0", ("test",), ("checks/add.txt::test_add",)),)
+"""EXG-01 (P0), verified by checks/add.txt::test_add, which the base holds."""
+ADD_AND_SUB = (*ADD_ONLY, (2, "P1", ("test",), ("checks/sub.txt::test_sub",)))
+"""And EXG-02 (P1), verified by checks/sub.txt::test_sub, which nobody holds yet."""
+
+
 def service(
-    runner: Any = None, forge: Any = "default"
+    runner: Any = None,
+    forge: Any = "default",
+    specs: tuple[tuple[int, str, tuple[str, ...], tuple[str, ...]], ...] = ADD_ONLY,
+    store: InMemoryDeliveryStore | None = None,
+    events: Callable[[str, Mapping[str, object]], None] | None = None,
+    log_store: InMemoryLogStore | None = None,
+    secrets: Callable[[], list[str]] | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
+    """A delivery service on a project with a contract; `events` hears what the service tells
+    the hub."""
     clock = FakeClock()
-    audit = AuditLog(InMemoryLogStore(), clock)
+    audit = AuditLog(log_store or InMemoryLogStore(), clock)
     projects = ProjectService(InMemoryProjectStore(), clock, new_id=lambda: "p_service1")
     contracts = ContractService(InMemoryContractStore(), clock, new_change_id=lambda: "c_00000001")
     project = projects.create(OPERATOR, {"name": "Calc"}).id
-    objects = contract((1, "P0", ("test",), ("checks/add.txt::test_add",)))
-    change = parse_change(
-        {"summary": "s", "operations": [{"op": "put", "object": o} for o in objects.values()]}
-    )
-    contracts.apply_reserved(OPERATOR, project, change)
+    objects = contract(*specs)
+    if objects:
+        change = parse_change(
+            {"summary": "s", "operations": [{"op": "put", "object": o} for o in objects.values()]}
+        )
+        contracts.apply_reserved(OPERATOR, project, change)
     if forge == "default":
         forge = InMemoryForge(
             {"example/calc": frozenset({"main"})},
             {("example/calc", "main"): make_package(BASE)},
         )
-    store = InMemoryDeliveryStore()
+    store = store or InMemoryDeliveryStore()
     made = DeliveryService(
         InMemoryDeliveryArea(),
         runner or AssertionRunner(),
@@ -95,6 +153,8 @@ def service(
         audit,
         clock,
         kit="assertions",
+        events=events,
+        secrets=secrets,
     )
     return made, project, audit, store
 
@@ -209,13 +269,14 @@ def test_the_cost_in_the_report_is_the_gateway_usage_of_the_project() -> None:
     assert "2 model calls, 350 prompt tokens, 20 completion tokens." in report
 
 
-def test_a_contract_without_acceptance_tests_runs_nothing_and_passes_vacuously() -> None:
-    made, project, _audit, _store = service()
-    made._contracts = ContractService(InMemoryContractStore(), FakeClock())  # an empty contract
+def test_a_delivery_declared_before_the_contract_runs_nothing_and_never_passes() -> None:
+    """T10: it passed for want of anything to judge. The runner would fail if it ran."""
+    made, project, _audit, _store = service(runner=Exploding(), specs=())
     ready(made, project)
     record = made.status(project, delivered(made, project))
-    assert record.outcomes == {}
-    assert record.decision == "PASS"
+    assert (record.outcomes, record.decision, record.contract_version) == ({}, "CONCERNS", 0)
+    assert record.report is not None
+    assert f"- {NOTHING_JUDGED}" in record.report.splitlines()
 
 
 def test_the_worker_hooks_are_harmless() -> None:
@@ -377,6 +438,8 @@ def test_a_recorded_inspection_decides_again_and_the_report_says_so() -> None:
     assert record.report is not None
     assert "## Inspections recorded after the gate" in record.report
     assert "**Decision now: PASS** (it was CONCERNS before the last inspection)" in record.report
+    assert record.contractor_report is not None  # T07: the Contractor reads the addendum too
+    assert record.contractor_report.endswith(str(record.addendum))
     last = audit.read(project, 0, 1000)[-1]
     assert (last.action, last.outcome) == (Action.GATE_DECISION, Outcome.OK)
     again = made.record_inspection(
@@ -466,6 +529,7 @@ def test_an_inspection_is_posted_on_the_pull_request_too() -> None:
     made.record_inspection(
         "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
     )
+    assert forge.comments == {}  # posted by the worker, never on the request
     assert made.step()
     [comment] = forge.comments[("example/calc", 1)]
     assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
@@ -496,7 +560,10 @@ def test_a_comment_the_forge_refuses_is_logged_and_the_verdict_stays() -> None:
 
 
 def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_local() -> None:
-    made, project, _audit, _store = service()
+    forge = RefusingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    made, project, audit, _store = service(forge=forge)
     ready(made, project)
     pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w2")
     with pytest.raises(Refusal) as caught:
@@ -505,17 +572,20 @@ def test_a_verdict_needs_a_decided_delivery_and_without_a_pull_request_stays_loc
     made.declare(project, pushed.delivery_id)
     while made.step():
         pass
-    decided = replace(made.status(project, pushed.delivery_id), pull_number=None)
-    made._store.put_record(decided)
+    assert made.status(project, pushed.delivery_id).pull_number is None  # the forge refused
     made.record_review("operator", project, pushed.delivery_id, Verdict.ACCEPT, "fine")
-    assert not made.step()  # no pull request: nothing to post
+    while made.step():
+        pass
+    assert forge.comments == {}  # no pull request: nothing was posted
+    assert Action.PULL_REQUEST_COMMENT not in [r.action for r in audit.read(project, 0, 1000)]
 
 
 def test_the_main_agent_hears_of_a_verdict_and_of_a_decision_an_inspection_changes() -> None:
     """ADR 0020: a reject is the main agent's to act on; a new decision is a transition."""
     events: list[tuple[str, Mapping[str, object]]] = []
-    made, project, _audit, _store = service()
-    made._events = lambda event, payload: events.append((event, payload))
+    made, project, _audit, _store = service(
+        events=lambda event, payload: events.append((event, payload))
+    )
     with_constraint(made, project)
     ready(made, project)
     delivery = delivered(made, project)
@@ -551,15 +621,47 @@ def test_the_report_names_the_version_of_each_acceptance_test_that_ran() -> None
     assert f"`checks/add.txt` (`{digest}`)" in report
 
 
-def test_an_acceptance_file_no_criterion_names_is_flagged_in_the_report() -> None:
-    """C49: the Owner of the third real run put a test no criterion named; it never ran."""
-    made, project, _audit, _store = service()
+def test_the_report_names_the_tests_the_kit_never_ran_and_marks_no_file() -> None:
+    """A2a: the third real run's Owner found a test of a named file that never ran, and kept a
+    support module its tests used. The report names the test, and of the files only which one
+    no criterion names."""
+    made, project, audit, _store = service(runner=DeselectingRunner())
     ready(made, project)
-    made.put_acceptance(project, "checks/extra.txt", "test_extra: pass\n")
+    made.put_acceptance(project, "checks/add.txt", "test_add: pass\ntest_add_twice: pass\n")
+    made.put_acceptance(project, "checks/support.txt", "helper: used\n")
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {"checks/add.txt::test_add": "passed"}
+    assert record.report is not None
+    lines = record.report.splitlines()
+    assert "- `checks/add.txt::test_add_twice`" in lines
+    delivery_line = next(line for line in lines if line.startswith("- Files of the Owner side"))
+    assert "`checks/support.txt` (`" in delivery_line
+    assert delivery_line.endswith(", named by no criterion)")  # support.txt only
+    assert delivery_line.count("named by no criterion") == 1
+    runs = [r for r in audit.read(project, 0, 1000) if r.action is Action.VERIFICATION_RUN]
+    assert json.loads(runs[-1].parameters)["never_run"] == 1
+
+
+def test_a_delivery_whose_kit_ran_every_test_of_its_files_has_no_flag() -> None:
+    """The computation, not only the rendering: nothing unnamed, nothing deselected, no flag."""
+    made, project, _audit, _store = service(runner=DeselectingRunner())
+    ready(made, project)
+    made.put_acceptance(project, "checks/add.txt", "test_add: pass\n")
     report = made.status(project, delivered(made, project)).report
     assert report is not None
-    assert "Acceptance test files that no criterion names (they never run):" in report
-    assert "- `checks/extra.txt`" in report
+    assert "## Flags\n\nNone." in report
+    assert "named by no criterion" not in report
+
+
+def test_only_tests_of_the_files_the_kit_ran_and_never_one_asked_count_as_never_run() -> None:
+    """What a kit names as deselected is taken only where it can be true."""
+    result = KitResult(
+        {"a.py::test_a": VerificationOutcome.PASSED},
+        deselected=("a.py::test_b", "a.py::test_a", "elsewhere.py::test_c", "a.py::test_b"),
+    )
+    assert deselected_tests(result, ("a.py::test_a",)) == ("a.py::test_b",)
+    plain = VerificationResult({"a.py::test_a": VerificationOutcome.PASSED})
+    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a runner of the interface 0.1.0
 
 
 def _title_of(forge: InMemoryForge, number: int) -> str:
@@ -578,6 +680,7 @@ def test_an_inspection_that_changes_the_decision_retitles_the_pull_request() -> 
         "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
     )
     assert made.status(project, delivery).decision == "PASS"
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, CONCERNS)"  # the worker retitles
     while made.step():
         pass
     assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
@@ -632,3 +735,354 @@ def test_an_inspection_that_does_not_change_the_decision_does_not_retitle() -> N
     assert _title_of(forge, 1) == retitled
     retitles = [r for r in audit.read(project, 0, 1000) if r.action is Action.PULL_REQUEST_RETITLE]
     assert len(retitles) == 1
+
+
+# ----------------------------------------------------------------------------- T02, ATK-16
+def checks_logged(audit: AuditLog, project: str, outcome: Outcome) -> list[dict[str, Any]]:
+    return [
+        json.loads(r.parameters)
+        for r in audit.read(project, 0, 1000)
+        if r.action is Action.DELIVERY_CHECK and r.outcome is outcome
+    ]
+
+
+def test_a_named_test_file_nobody_holds_does_not_run_and_the_report_tells_the_owner() -> None:
+    """T02: a criterion names checks/sub.txt, the Owner side never put it and the delivery does
+    not bring it: its test cannot run, and the report says which file is missing."""
+    made, project, audit, _store = service(specs=ADD_AND_SUB)
+    ready(made, project)
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {
+        "checks/add.txt::test_add": "passed",
+        "checks/sub.txt::test_sub": "not_run",
+    }
+    assert record.decision == "FAIL"
+    assert record.report is not None
+    assert "- `checks/sub.txt`" in record.report.splitlines()  # not set aside: never delivered
+    [check] = checks_logged(audit, project, Outcome.OK)
+    assert (check["missing"], check["set_aside"], check["flagged"]) == (["checks/sub.txt"], [], 0)
+
+
+def test_a_named_test_file_the_base_holds_runs_in_the_version_of_the_base() -> None:
+    """The delivery leaves checks/add.txt alone; the tree verified holds the base's copy, and
+    nothing is flagged or logged as missing."""
+    made, project, audit, _store = service()
+    ready(made, project)
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {"checks/add.txt::test_add": "passed"}
+    assert checks_logged(audit, project, Outcome.OK) == []
+
+
+def test_a_refusal_names_twenty_paths_at_most_and_counts_them_all() -> None:
+    """ATK-16: the refusal names the paths the delivery touched. A record of the log holds 4 KiB
+    of parameters: thirty long paths would turn it into a bare "truncated" mark."""
+    made, project, audit, _store = service()
+    ready(made, project)
+    paths = [f"checks/{'x' * 130}{n:02d}.txt" for n in range(30)]
+    for path in paths:
+        made.put_acceptance(project, path, "test_x: pass\n")
+    delivered(made, project, {**BASE, **dict.fromkeys(paths, b"test_x: pass\n")})
+    [refusal] = checks_logged(audit, project, Outcome.REFUSED)
+    assert (refusal["paths"], refusal["count"]) == (sorted(paths)[:20], 30)
+
+
+# ----------------------------------------------------------------------------- T05
+class BusyForge(InMemoryForge):
+    """A forge that takes its time to open a pull request: `meanwhile` runs while it does, as a
+    request that a thread of the hub serves while the worker waits on the network."""
+
+    meanwhile: Callable[[], object] = staticmethod(lambda: None)
+
+    async def open_pull_request(self, request: PullRequestRequest) -> PullRequest:
+        self.meanwhile()
+        return await super().open_pull_request(request)
+
+
+def busy_forge() -> BusyForge:
+    return BusyForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+
+
+def test_an_inspection_recorded_while_the_pull_request_opens_is_kept_posted_and_retitled() -> None:
+    """T05: the worker wrote the decision, then waited on the forge. An inspection recorded
+    meanwhile must survive the worker's next write, and reach the pull request once it exists:
+    its comment, and the title of the decision it leads to."""
+    forge = busy_forge()
+    told: list[Mapping[str, object]] = []
+    made, project, _audit, _store = service(
+        forge=forge,
+        events=lambda event, payload: told.append(payload) if event == "delivery.decided" else None,
+    )
+    with_constraint(made, project)
+    ready(made, project)
+    forge.meanwhile = lambda: made.record_inspection(
+        "operator", project, "d1", "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    delivery = delivered(made, project)
+    assert told[-1]["decision"] == "PASS"  # the last decision the main agent hears of is in force
+    record = made.status(project, delivery)
+    assert record.inspections["CTR-01"]["verdict"] == "conforms"
+    assert (record.state, record.decision, record.pull_number) == (
+        DeliveryState.PROPOSED,
+        "PASS",
+        1,
+    )
+    [comment] = forge.comments[("example/calc", 1)]
+    assert "**Inspection recorded** by operator: CTR-01 conforms." in comment
+    assert _title_of(forge, 1) == f"work (delivery {delivery}, PASS)"
+
+
+class RacingStore(InMemoryDeliveryStore):
+    """A store where, once, another writer gets in between a read and the write that follows."""
+
+    cut_in: Callable[[DeliveryRecord], DeliveryRecord] | None = None
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        cut_in, self.cut_in = self.cut_in, None
+        if cut_in is not None:
+            stored = self.get_record(record.project_id, record.delivery_id)
+            assert stored is not None
+            super().put_record(cut_in(stored))
+        return super().put_record(record)
+
+
+def test_a_write_that_lost_the_race_is_made_again_on_the_record_as_it_is_now() -> None:
+    """T05: a verdict lands between the read and the write of an inspection. The store refuses
+    the stale write, and the inspection is applied again: both stay."""
+    store = RacingStore()
+    made, project, _audit, _store = service(store=store)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    verdict = {"verdict": "accept", "reasons": "fine", "by": "operator", "at": "now"}
+    store.cut_in = lambda record: replace(record, review=verdict)
+    answered = made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.CONFORMS, "stdlib only"
+    )
+    kept = made.status(project, delivery)
+    assert kept == answered
+    assert (kept.review, kept.inspections["CTR-01"]["verdict"], kept.decision) == (
+        verdict,
+        "conforms",
+        "PASS",
+    )
+
+
+def test_a_push_never_writes_over_a_recorded_delivery() -> None:
+    """The area numbers deliveries; an area emptied under a kept database would number a new
+    one like an old one. The old record stays, and the push is refused."""
+    made, project, _audit, store = service()
+    ready(made, project)
+    old = store.put_record(
+        DeliveryRecord(project, "d1", "old", DeliveryState.DECIDED, "2026-10-01T00:00:00Z")
+    )
+    with pytest.raises(Refusal, match="already recorded"):
+        made.push(project, make_package({**BASE, "calc.py": b"x = 3\n"}, state_id(BASE)), "w")
+    assert made.status(project, "d1") == old
+
+
+# ----------------------------------------------------------------------------- T07
+HIDDEN = "assert sub(7, 3) == 4  # the Owner side's own check"
+
+
+class TracebackRunner(AssertionRunner):
+    """The assertions runner, whose output shows the file of every test that did not pass, as
+    a pytest traceback shows the lines of the test."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        result = super().run(request)
+        shown = [
+            request.files[test.partition("::")[0]].decode()
+            for test, outcome in result.outcomes.items()
+            if outcome is not VerificationOutcome.PASSED
+        ]
+        return VerificationResult(result.outcomes, "\n".join([result.log, *shown]))
+
+
+def test_the_contractor_reads_every_outcome_and_never_the_output_of_the_run() -> None:
+    """T07: the output of the run shows the Owner side's acceptance tests, which the Contractor
+    must not read; it reads the outcome of each test. The Owner side reads it all."""
+    made, project, _audit, _store = service(runner=TracebackRunner(), specs=ADD_AND_SUB)
+    ready(made, project)
+    made.put_acceptance(project, "checks/sub.txt", f"test_sub: fail\n{HIDDEN}\n")
+    record = made.status(project, delivered(made, project))
+    owner = report_for(record, instance_principal(Side.OWNER, project))
+    contractor = report_for(record, instance_principal(Side.CONTRACTOR, project))
+    assert owner is not None
+    assert contractor is not None
+    assert HIDDEN in owner
+    assert HIDDEN not in contractor
+    for test, outcome in (
+        ("checks/add.txt::test_add", "passed"),
+        ("checks/sub.txt::test_sub", "failed"),
+    ):
+        assert f"- `{test}`: {outcome}" in contractor.splitlines()
+    assert report_for(record, OPERATOR) == report_for(record, MAIN_AGENT) == owner == record.report
+
+
+# ----------------------------------------------------------------------------- T03
+@pytest.mark.parametrize(
+    ("runner", "files", "decision"),
+    [
+        (None, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"}, "REFUSED"),
+        (Exploding(), None, "ERROR"),
+        (None, None, "PASS"),
+        (Failing(), None, "FAIL"),
+    ],
+)
+def test_the_main_agent_hears_once_of_what_became_of_a_delivery(
+    runner: AssertionRunner | None, files: dict[str, bytes] | None, decision: str
+) -> None:
+    """T03: a refusal and an error are told like a decision of the gate, once each."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, _audit, _store = service(
+        runner=runner, events=lambda event, payload: events.append((event, payload))
+    )
+    ready(made, project)
+    delivery = delivered(made, project, files)
+    told = [payload for event, payload in events if event == "delivery.decided"]
+    assert told == [
+        {"project_id": project, "delivery_id": delivery, "branch": "work", "decision": decision}
+    ]
+
+
+def test_a_receiver_that_fails_keeps_neither_the_decision_nor_the_pull_request_back() -> None:
+    """The worker tells of a decision once the forge has answered: a notification that fails
+    leaves the record decided, and its pull request open."""
+
+    def unreachable(event: str, payload: Mapping[str, object]) -> None:
+        if event == "delivery.decided":
+            raise ConnectionError("the receiver is down")
+
+    forge = calc_forge()
+    made, project, _audit, _store = service(forge=forge, events=unreachable)
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "w")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(ConnectionError):
+        made.step()  # the worker's loop reports it and goes on
+    record = made.status(project, pushed.delivery_id)
+    assert (record.state, record.decision, record.pull_number) == (
+        DeliveryState.PROPOSED,
+        "PASS",
+        1,
+    )
+
+
+class RefusalUnlogged(InMemoryLogStore):
+    """A log that cannot take the record of a refusal: the job fails once the refusal is kept."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.DELIVERY_CHECK and record.outcome is Outcome.REFUSED:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused() -> None:
+    """The job fails after the refusal is kept: the delivery stays refused, never ERROR."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, audit, _store = service(
+        events=lambda event, payload: events.append((event, payload)),
+        log_store=RefusalUnlogged(),
+    )
+    ready(made, project)
+    delivery = delivered(made, project, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"})
+    record = made.status(project, delivery)
+    assert record.state is DeliveryState.REFUSED
+    assert audit.read(project, 0, 1000)[-1].action is Action.VERIFICATION_RUN  # the error, logged
+    assert [payload for event, payload in events if event == "delivery.decided"] == []
+
+
+class Contended(InMemoryDeliveryStore):
+    """A store where, once `busy`, another writer always gets in first."""
+
+    busy = False
+    attempts = 0
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        if self.busy:
+            self.attempts += 1
+            raise StaleRecordError("written by someone else")
+        return super().put_record(record)
+
+
+def test_a_change_that_is_never_written_fails_after_a_bounded_number_of_attempts() -> None:
+    store = Contended()
+    made, project, _audit, _store = service(store=store)
+    ready(made, project)
+    delivery = delivered(made, project)
+    store.busy = True
+    with pytest.raises(StaleRecordError):
+        made.record_review("operator", project, delivery, Verdict.ACCEPT, "fine")
+    assert store.attempts == WRITE_ATTEMPTS
+    assert made.status(project, delivery).review is None
+
+
+class TitleRecordingForge(InMemoryForge):
+    """Keeps every title the worker sets, in order."""
+
+    titles: list[str]
+
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        self.titles.append(title)
+        await super().update_title(repository, number, title)
+
+
+def test_the_worker_titles_the_pull_request_with_the_decision_when_the_job_runs() -> None:
+    """C50: two inspections change the decision before the worker runs; each retitle job sets
+    the title of the decision in force when it runs, never the one of when it was queued."""
+    forge = TitleRecordingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    forge.titles = []
+    made, project, _audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_inspection("operator", project, delivery, "CTR-01", Inspected.CONFORMS, "ok")
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.DOES_NOT_CONFORM, "imports yaml"
+    )
+    assert forge.titles == []  # the worker retitles, never the request
+    while made.step():
+        pass
+    assert forge.titles == [f"work (delivery {delivery}, FAIL)"] * 2
+
+
+# ----------------------------------------------------------------------------- ATK-84, EXG-49
+def test_a_branch_name_that_holds_a_secret_is_refused_before_the_area_keeps_it() -> None:
+    made, project, _audit, store = service(secrets=lambda: ["s3cretvalue"])
+    ready(made, project)
+    package = make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE))
+    with pytest.raises(Refusal, match=r"the branch name work-\[masked\] holds a secret") as caught:
+        made.push(project, package, "work-s3cretvalue")
+    assert caught.value.reason is Reason.INVALID_REQUEST
+    assert "s3cretvalue" not in str(caught.value)
+    assert store.records(project) == []
+    assert made.push(project, package, "work").delivery_id == "d1"  # the area kept nothing
+
+
+def test_a_secret_the_hub_learns_after_the_push_stays_off_the_forge_and_the_events() -> None:
+    """A record kept before the name of its branch was checked, or a secret the hub learned
+    since: the title is masked, the branch pushed to the forge leaves the name out, and the
+    events mask it."""
+    known: list[str] = []
+    told: list[Mapping[str, object]] = []
+    forge = calc_forge()
+    made, project, _audit, _store = service(
+        forge=forge,
+        secrets=lambda: list(known),
+        events=lambda event, payload: told.append(payload) if event == "delivery.decided" else None,
+    )
+    ready(made, project)
+    pushed = made.push(
+        project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "work-s3cretvalue"
+    )
+    known.append("s3cretvalue")
+    made.declare(project, pushed.delivery_id)
+    while made.step():
+        pass
+    opened = asyncio.run(forge.get_pull_request(RepositoryRef("example/calc"), 1))
+    assert (opened.title, opened.head) == ("work-[masked] (delivery d1, PASS)", "zephyros/d1")
+    assert [payload["branch"] for payload in told] == ["work-[masked]"]
