@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from zephyros.core.audit import AuditRecord, Head, LogError
 
 
@@ -30,8 +32,11 @@ class InMemoryLogStore:
     def set_head(self, head: Head) -> None:
         self._heads[head.stream] = head
 
-    def anchor(self, _stream: str) -> Head | None:
+    def anchor(self) -> Mapping[str, Head] | None:
         return None  # a store in memory keeps no anchor outside itself
+
+    def start_anchor(self) -> None:
+        raise LogError("a store in memory keeps no anchor")
 
     def streams(self) -> list[str]:
         return sorted(self._records)

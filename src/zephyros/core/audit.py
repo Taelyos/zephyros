@@ -3,7 +3,9 @@
 The log is an ordered sequence of records per stream, a stream being a project or the hub
 itself. Each record is hashed over its canonical form and the hash of the previous record, so
 that a verification tool finds the first altered record. A separate head (the sequence number
-and hash of the last record) is kept apart from the records, so that a truncation is found.
+and hash of the last record) is kept apart from the records, so that a truncation is found. A
+store may also keep an anchor, a copy of the heads outside itself, so that a replacement of the
+whole store is found (ADR 0019).
 
 What the log never holds is free text from an agent in a field that names something. The
 action is one of a closed set, the reason is one of a closed set, and the principal is an
@@ -30,6 +32,8 @@ from zephyros.core.masking import mask_text
 
 GENESIS_HASH = "0" * 64
 HUB_STREAM = "hub"
+SYSTEM_PRINCIPAL = "hub"
+"""The principal of what the hub records of its own accord."""
 MAX_STRING = 512
 MAX_PARAMETERS_BYTES = 4096
 MAX_DEPTH = 4
@@ -73,6 +77,7 @@ class Action(StrEnum):
     GATEWAY_CALL = "gateway.call"
     LOG_READ = "log.read"
     LOG_VERIFY = "log.verify"
+    LOG_ANCHOR = "log.anchor"
     OPERATOR_CHANNEL = "operator.channel"
     PROJECT_PREPARE = "project.prepare"
     ACCEPTANCE_PUT = "acceptance.put"
@@ -183,9 +188,15 @@ class LogStore(Protocol):
 
     def set_head(self, head: Head) -> None: ...
 
-    def anchor(self, stream: str) -> Head | None:
-        """The head kept outside the store, when the store keeps one (EXG-19, ATK-69): a
-        replacement of the whole log cannot move it."""
+    def anchor(self) -> Mapping[str, Head] | None:
+        """The heads kept outside the store, by stream, or None when this store keeps no anchor
+        (EXG-19, ATK-69): a replacement of the whole store cannot move them. A store that keeps
+        one raises AnchorMissingError or AnchorUnreadableError when it cannot read it, and never
+        answers as if it kept none."""
+        ...
+
+    def start_anchor(self) -> None:
+        """Start an empty anchor, for a store that keeps one, has none yet and holds no record."""
         ...
 
     def streams(self) -> list[str]: ...
@@ -193,6 +204,18 @@ class LogStore(Protocol):
 
 class LogError(Exception):
     """The log cannot take the record (a store fault, a broken sequence)."""
+
+
+class AnchorError(LogError):
+    """The store keeps an anchor, and cannot read it."""
+
+
+class AnchorMissingError(AnchorError):
+    """The anchor is gone."""
+
+
+class AnchorUnreadableError(AnchorError):
+    """The anchor is there, and is not an anchor: `str()` says why."""
 
 
 # ----------------------------------------------------------------------------- canonical form
@@ -211,7 +234,10 @@ def _clean(value: object, depth: int) -> object:
     if depth >= MAX_DEPTH:
         return "[too deep]"
     if isinstance(value, Mapping):
-        return {str(key)[:MAX_STRING]: _clean(item, depth + 1) for key, item in value.items()}
+        # EXG-49: a key is text the log keeps, as much as a value is.
+        return {
+            mask_text(str(key))[:MAX_STRING]: _clean(item, depth + 1) for key, item in value.items()
+        }
     if isinstance(value, list | tuple):
         return [_clean(item, depth + 1) for item in value]
     return f"[{type(value).__name__}]"
@@ -310,6 +336,29 @@ class AuditLog:
         self._store = store
         self._clock = clock
         self._lock = threading.Lock()
+        self._open_anchor()
+
+    def _open_anchor(self) -> None:
+        """ADR 0019: the anchor starts with the log, when the store holds no record yet, and
+        nothing starts it again. Its start is logged, and so is an anchor that is gone or
+        unreadable when the log opens: the hub goes on, and the verification reports it."""
+        try:
+            self._store.anchor()
+        except AnchorMissingError:
+            if self._store.streams():
+                self._anchor_event(Outcome.ERROR, {"anchor": "missing"})
+            else:
+                self._store.start_anchor()
+                self._anchor_event(Outcome.OK, {"anchor": "started"})
+        except AnchorError as error:
+            self._anchor_event(Outcome.ERROR, {"anchor": "unreadable", "detail": str(error)})
+
+    def _anchor_event(self, outcome: Outcome, parameters: Mapping[str, object]) -> None:
+        self.append(
+            AuditEvent(
+                HUB_STREAM, SYSTEM_PRINCIPAL, Action.LOG_ANCHOR, outcome, Reason.NONE, parameters
+            )
+        )
 
     def append(self, event: AuditEvent) -> AuditRecord:
         with self._lock:
@@ -353,7 +402,12 @@ class AuditLog:
 
     def verify(self, stream: str) -> VerifyReport:
         """Check every record of `stream`: its hash, its link to the one before, the sequence,
-        and the head. Report the first bad record."""
+        the head, and the anchor when the store keeps one. Report the first bad record; when the
+        fault is the anchor itself, no record is named (`first_bad_seq` is None)."""
+        with self._lock:  # no append between the records, the head and the anchor
+            return self._verify(stream)
+
+    def _verify(self, stream: str) -> VerifyReport:
         expected_seq = 1
         previous = GENESIS_HASH
         count = 0
@@ -390,25 +444,57 @@ class AuditLog:
                 last = record
                 cursor = record.seq
         head = self._store.head(stream)
+        try:
+            anchor = self._store.anchor()
+        except AnchorMissingError:
+            return VerifyReport(
+                stream, count, False, None, "the anchor kept outside the store is missing"
+            )
+        except AnchorError as error:
+            return VerifyReport(
+                stream,
+                count,
+                False,
+                None,
+                f"the anchor kept outside the store cannot be read: {error}",
+            )
+        anchored = None if anchor is None else anchor.get(stream)
         if last is None:
             if head is not None and head.seq > 0:
                 return VerifyReport(
                     stream, 0, False, 1, "the log is empty but its head names records"
+                )
+            if anchored is not None and anchored.seq > 0:
+                return VerifyReport(
+                    stream,
+                    0,
+                    False,
+                    1,
+                    "the log is empty but the anchor kept outside the store names records",
                 )
             return VerifyReport(stream, 0, True, None, None)
         if head is None or head.seq != last.seq or head.hash != last.hash:
             return VerifyReport(
                 stream, count, False, last.seq, "the last record does not match the head"
             )
-        anchor = self._store.anchor(stream)
-        if anchor is not None and (anchor.seq != last.seq or anchor.hash != last.hash):
+        if anchor is not None and anchored is None:
+            # The stream has records, and the anchor that holds every stream knows nothing of
+            # it: an entry taken out reads as a fault, never as a stream without an anchor.
+            return VerifyReport(
+                stream,
+                count,
+                False,
+                None,
+                "the anchor kept outside the store does not name this stream",
+            )
+        if anchored is not None and (anchored.seq != last.seq or anchored.hash != last.hash):
             # EXG-19, ATK-69: the whole log, head included, was replaced or truncated — the
             # anchor kept outside the store still names the records it had.
             return VerifyReport(
                 stream,
                 count,
                 False,
-                min(anchor.seq, last.seq) or 1,
+                min(anchored.seq, last.seq) or 1,
                 "the log does not match the anchor kept outside the store",
             )
         return VerifyReport(stream, count, True, None, None)
