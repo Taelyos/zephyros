@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from zephyros.core.config import DEFAULT_RESOLVERS, Config
+from zephyros.core.config import DEFAULT_EGRESS, DEFAULT_RESOLVERS, Config
 from zephyros.core.ports.agent_engine import AgentEngine, Side, TurnRequest
 from zephyros.core.principals import is_project_id
 
@@ -72,6 +72,10 @@ class Policy:
     resolvers: tuple[str, ...] = DEFAULT_RESOLVERS
     """The name resolvers the guard of an instance gives to its network namespace, so that
     the instance can resolve names without reaching a protected network (ADR 0018)."""
+    egress: str = DEFAULT_EGRESS
+    """What an instance reaches besides the hub (ADR 0024): the guard loads the rules of this
+    level, and a regulated turn is given the egress proxy of the hub."""
+    egress_port: int = 8083
 
     def sandbox_image(self, kit: str) -> str:
         for name, image in self.sandbox_images:
@@ -94,6 +98,8 @@ class Policy:
             network_pool=config.network.instance_pool,
             network_prefix=config.network.instance_prefix,
             resolvers=config.network.resolvers,
+            egress=config.network.egress,
+            egress_port=config.hub.egress_port,
             sandbox_images=(
                 ((config.verification.kit, config.verification.kit_image),)
                 if config.verification.kit_image
@@ -268,7 +274,12 @@ def guard_spec(
     return {
         "Image": policy.guard_image,
         "User": "0:0",
-        "Env": [f"HUB_IP={hub_address}", f"HUB_PORT={policy.hub_port}"],
+        "Env": [
+            f"HUB_IP={hub_address}",
+            f"HUB_PORT={policy.hub_port}",
+            f"EGRESS={policy.egress}",
+            f"PROXY_PORT={policy.egress_port}",
+        ],
         "Labels": labels(Role.GUARD, project_id, side),
         "Healthcheck": {
             "Test": ["CMD", "/usr/local/bin/guard.sh", "check"],
@@ -344,6 +355,7 @@ def turn_spec(
     command = list(description.command)
     environment = dict(description.environment)
     _check_description(command, environment, token)
+    environment.update(proxy_environment(policy, hub_address, token))
     host = _hardening(policy.memory_mib, policy.pids, policy.cpus)
     host.update(
         {
@@ -374,6 +386,22 @@ def turn_spec(
         "Labels": labels(Role.TURN, project_id, side),
         "HostConfig": host,
     }
+
+
+def proxy_environment(policy: Policy, hub_address: str, token: str) -> dict[str, str]:
+    """What sends the HTTP clients of a regulated turn through the egress proxy of the hub
+    (ADR 0024): the proxy, in both spellings that clients read (curl reads the lower case
+    only), and the hub itself kept off the proxy. The token authenticates the instance to the
+    proxy as it does to the agent endpoint. Any other level gets nothing: a sealed instance has
+    no proxy to reach, and an open one goes out directly."""
+    if policy.egress != "regulated":
+        return {}
+    proxy = f"http://instance:{token}@{hub_address}:{policy.egress_port}"
+    found: dict[str, str] = {}
+    for name, value in (("http_proxy", proxy), ("https_proxy", proxy), ("no_proxy", hub_address)):
+        found[name] = value
+        found[name.upper()] = value
+    return found
 
 
 def _check_description(command: list[str], environment: dict[str, str], token: str) -> None:
@@ -473,6 +501,8 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
         raise SpecError("a guard joins its instance network")
     if role is Role.SANDBOX and mode != "none":
         raise SpecError("a sandbox has no network")
+    if role is Role.GUARD and f"EGRESS={policy.egress}" not in list(spec.get("Env", [])):
+        raise SpecError("the guard loads the egress level of the configuration")
     dns = host.get("Dns")
     if role is Role.GUARD:
         if list(dns or []) != list(policy.resolvers):

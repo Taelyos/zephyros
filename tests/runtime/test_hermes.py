@@ -407,3 +407,54 @@ def test_the_deployment_writes_its_configuration_where_it_was_told(
 
     assert f'schema_version = "{CONFIG_SCHEMA_VERSION}"' in text
     assert f'hub_container = "{zephyros.hub}"' in text
+
+
+# ----------------------------------------------------------------------------- ADR 0024
+def _egress(zephyros: Deployment, project: str) -> list[dict[str, object]]:
+    return [r for r in zephyros.records(project) if r["action"] == "instance.egress"]
+
+
+def test_adr_0024_a_regulated_turn_reaches_a_registry_through_the_hub_and_nothing_else(
+    zephyros: Deployment, project: str
+) -> None:
+    """The default level: a real turn, with the proxy its environment gives it. A registry of
+    the allow-list is relayed, another host is refused, a fetch around the proxy reaches
+    nothing; the hub logs both destinations under the instance, and no byte of the requests.
+    pytest runs from the image, without the network."""
+    before = len(_egress(zephyros, project))
+    prompt = lines(
+        "RUN curl -sS -m 20 -o /dev/null -w 'registry=%{http_code}' https://pypi.org/simple/pip/",
+        "RUN curl -sS -m 20 -o /dev/null -w 'other=%{http_code}' https://example.org/?q=leak-24",
+        "RUN curl -sS -m 5 --noproxy '*' -o /dev/null -w 'direct=%{http_code}' https://pypi.org/",
+        "RUN python3 -m pytest --version",
+        "RUN echo control-24 > /work/control-24",
+    )
+    assert zephyros.turn(project, CONTRACTOR, prompt) == "completed"
+    assert zephyros.work_file(project, CONTRACTOR, "control-24") == "control-24\n"
+    results = "\n".join(zephyros.tool_results(project, CONTRACTOR))
+    assert "pytest 9.1.1" in results
+    assert "direct=200" not in results
+    assert "other=200" not in results
+    found = _egress(zephyros, project)[before:]
+    principal = f"contractor:{project}"
+    refused = [
+        r for r in found if r["outcome"] == "refused" and r["parameters"]["host"] == "example.org"
+    ]
+    assert refused, found
+    assert refused[0]["principal"] == principal
+    assert refused[0]["parameters"]["why"] == "not_allowed"
+    assert all("leak-24" not in json.dumps(r) for r in found)
+    relayed = [r for r in found if r["parameters"]["host"] == "pypi.org"]
+    assert relayed, found
+    online = docker(
+        "exec",
+        zephyros.hub,
+        "/opt/zephyros/bin/python",
+        "-c",
+        "import socket; socket.create_connection(('pypi.org', 443), 5)",
+        check=False,
+    )
+    if online.returncode != 0:
+        pytest.skip("not applicable here: the hub has no route to the Internet")
+    assert relayed[0]["outcome"] == "ok", relayed
+    assert "registry=200" in results

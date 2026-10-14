@@ -35,7 +35,7 @@ from datetime import datetime
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.broker import Broker, BrokerError, ContainerInfo
 from zephyros.core.clock import Clock, format_time
-from zephyros.core.config import Config
+from zephyros.core.config import DEFAULT_EGRESS, Config
 from zephyros.core.containers import Role, VolumeKind, guard_address
 from zephyros.core.continuity import RESTART, WAKE, Continuity
 from zephyros.core.errors import Refusal
@@ -71,6 +71,7 @@ class Timing:
     rotate_before_seconds: int
     pool: str
     prefix: int
+    egress: str = DEFAULT_EGRESS
 
     @classmethod
     def from_config(cls, config: Config) -> Timing:
@@ -83,6 +84,7 @@ class Timing:
             rotate_before_seconds=config.tokens.rotate_before_seconds,
             pool=config.network.instance_pool,
             prefix=config.network.instance_prefix,
+            egress=config.network.egress,
         )
 
 
@@ -309,6 +311,16 @@ class InstanceManager:
             prompt_chars=len(prompt),
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
         )
+        if self._timing.egress == "open":
+            # An exception the operator wrote down (ADR 0024): said again at every start.
+            self._record(
+                project_id,
+                Action.INSTANCE_EGRESS,
+                Outcome.OK,
+                side=side.value,
+                level="open",
+                warning="this instance reaches every public destination",
+            )
 
     def _token_for_turn(self, live: _Live, record: InstanceRecord) -> str:
         """The secret to give the turn. A new token replaces the old when the hub no longer holds

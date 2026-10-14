@@ -4,7 +4,8 @@ Instances are brought up by the filter's executor, with its templates and its al
 the runtime's socket: what runs is exactly what the hub would run, except that the agent engine
 is a probe image that waits, so that the attempts can be run inside it with the hardening of a
 real turn. The hub is a stand-in that records every peer (it plays the agent endpoint on port
-8080, and has a second port, 9090, that no instance may reach).
+8080 and the egress proxy on port 8083, and has another port, 9090, that no instance may
+reach).
 
 The Docker command line is used only to observe and to set up fixtures (the stand-in of the
 local network, the controls that take the guard's rules off). Every object carries the label
@@ -53,6 +54,9 @@ It is deliberately outside every protected range: a configured resolver in a pro
 is refused at startup (ADR 0018), and the scripted resolver is a test fixture, not a loophole."""
 FAKE_RESOLVER = "11.22.33.53"
 OTHER_HUB_PORT = 9090
+PROXY_PORT = 8083
+"""The port of the egress proxy of the hub (ADR 0024). The stand-in of the hub listens on it, so
+that a test shows which levels of the guard let a turn reach it."""
 RESOLVERS = tuple(
     part.strip()
     for part in os.environ.get("ZEPHYROS_RESOLVERS", "9.9.9.9").split(",")
@@ -118,6 +122,8 @@ class Runtime:
     sandbox_volumes: list[str] = field(default_factory=list)
     fake_dns: bool = False
     """A scripted resolver on the core network, at a known address (decision 38)."""
+    egress: str = "regulated"
+    """The level the guards load (ADR 0024); the product's default unless a module says."""
 
     def __post_init__(self) -> None:
         self.label = f"org.zephyros.test={self.suffix}"
@@ -137,6 +143,8 @@ class Runtime:
             network_prefix=28,
             sandbox_images=(("tests", self.images["probe"]),),
             resolvers=(FAKE_RESOLVER,) if self.fake_dns else RESOLVERS,
+            egress=self.egress,
+            egress_port=PROXY_PORT,
         )
         self.journal = MemoryJournal()
         self.executor = Executor(DockerApi.over_socket(SOCKET), self.policy, self.journal)
@@ -179,6 +187,7 @@ class Runtime:
             self.images["observer"],
             f"tcp:{HUB_PORT}",
             f"tcp:{OTHER_HUB_PORT}",
+            f"tcp:{PROXY_PORT}",
             f"udp:{HUB_PORT}",
         )
 

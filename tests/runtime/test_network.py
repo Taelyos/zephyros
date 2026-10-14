@@ -4,6 +4,11 @@ Every "blocked" is paired with a control that takes the guard's rules off and sh
 attempt reaching its listener, so a block is the guard's doing and not an accident of the test
 network. The listeners record every peer (oracle O-NET): a blocked attempt leaves no line.
 On a network without IPv6, the IPv6 steps are skipped as "not applicable", never passed.
+
+The guards of this module run the `open` level (ADR 0024), the one where every public
+destination stays reachable, so that what blocks a protected address is the protected set
+itself and not the final drop of the other levels. test_egress_levels.py shows the three levels
+side by side, protected networks included.
 """
 
 from __future__ import annotations
@@ -17,6 +22,16 @@ from tests.runtime.rig import HUB_PORT, LAN_ADDRESSES, OTHER_HUB_PORT, Instance,
 from zephyros.core.ports.agent_engine import Side
 
 pytestmark = [pytest.mark.runtime, pytest.mark.acceptance]
+
+
+@pytest.fixture(scope="module")
+def runtime(images: dict[str, str]) -> Iterator[Runtime]:
+    world = Runtime(images, egress="open")
+    world.setup()
+    try:
+        yield world
+    finally:
+        world.teardown()
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +246,11 @@ def test_atk_43_raw_sockets_and_a_second_interface_are_refused(
 
 
 # ----------------------------------------------------------------------------- ATK-44
-def test_atk_44_control_public_destinations_stay_open(runtime: Runtime, one: Instance) -> None:
+def test_atk_44_control_at_the_open_level_public_destinations_stay_open(
+    runtime: Runtime, one: Instance
+) -> None:
+    """Open only: at the default level (regulated) the same fetch is refused unless it goes
+    through the egress proxy of the hub, and at sealed it is refused (test_egress_levels.py)."""
     host_online = docker(
         "run",
         "--rm",

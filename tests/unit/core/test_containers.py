@@ -183,13 +183,60 @@ def test_a_turn_is_the_agent_engine_as_the_unprivileged_user_in_the_guards_names
     ]
     assert "ZEPHYROS_HUB_URL=http://10.200.0.19:8080" in spec["Env"]
     # and no other variable of any kind travels with a turn (ATK-49): no git-hosting
-    # identifier, no forge address, nothing that is not the engine's three.
+    # identifier, no forge address, nothing but the engine's three and, at the default
+    # level (regulated), the egress proxy of the hub (ADR 0024).
+    assert {entry.split("=", 1)[0] for entry in spec["Env"]} == {
+        "ZEPHYROS_HUB_URL",
+        "ZEPHYROS_MODEL",
+        "ZEPHYROS_TOKEN",
+        *PROXY_VARIABLES,
+    }
+    check_spec(spec, Role.TURN, POLICY)
+
+
+PROXY_VARIABLES = ("http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
+
+
+def test_a_regulated_turn_reaches_out_through_the_egress_proxy_of_the_hub_only() -> None:
+    environment = dict(entry.split("=", 1) for entry in turn()["Env"])
+    proxy = f"http://instance:{TOKEN}@10.200.0.19:8083"
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        assert environment[name] == proxy, name
+    # the hub itself is called directly: the model and the tools never go through the proxy
+    assert environment["no_proxy"] == environment["NO_PROXY"] == "10.200.0.19"
+
+
+@pytest.mark.parametrize("level", ["sealed", "open"])
+def test_a_sealed_or_open_turn_is_given_no_proxy(level: str) -> None:
+    policy = replace(POLICY, egress=level)
+    spec = turn_spec(
+        policy, HermesEngine(), PROJECT, Side.CONTRACTOR, "10.200.0.19", TOKEN, "Do it."
+    )
     assert {entry.split("=", 1)[0] for entry in spec["Env"]} == {
         "ZEPHYROS_HUB_URL",
         "ZEPHYROS_MODEL",
         "ZEPHYROS_TOKEN",
     }
-    check_spec(spec, Role.TURN, POLICY)
+    check_spec(spec, Role.TURN, policy)
+
+
+@pytest.mark.parametrize("level", ["regulated", "sealed", "open"])
+def test_the_guard_loads_the_egress_level_of_the_configuration(level: str) -> None:
+    policy = replace(POLICY, egress=level, egress_port=8090)
+    spec = guard_spec(policy, PROJECT, Side.CONTRACTOR, SUBNET, "10.200.0.19")
+    assert f"EGRESS={level}" in spec["Env"]
+    assert "PROXY_PORT=8090" in spec["Env"]
+    check_spec(spec, Role.GUARD, policy)
+
+
+def test_check_spec_refuses_a_guard_with_another_egress_level() -> None:
+    spec = guard()
+    spec["Env"] = [e if not e.startswith("EGRESS=") else "EGRESS=open" for e in spec["Env"]]
+    with pytest.raises(SpecError, match="egress level"):
+        check_spec(spec, Role.GUARD, POLICY)
+    del spec["Env"]
+    with pytest.raises(SpecError, match="egress level"):
+        check_spec(spec, Role.GUARD, POLICY)
 
 
 @pytest.mark.parametrize(

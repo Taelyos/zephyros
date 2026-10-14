@@ -9,7 +9,13 @@
 #   guard.sh check   exit 0 when the rules are in place (the health check of the container)
 #   guard.sh load    load the rules again (used by the tests, which take them off for controls)
 #
-# Environment: HUB_IP and HUB_PORT, the one permitted destination (the agent endpoint, TCP).
+# Environment: HUB_IP and HUB_PORT, the agent endpoint (TCP), permitted at every level;
+# EGRESS, the level of ADR 0024 (regulated, the default; sealed; open); PROXY_PORT, the egress
+# proxy of the hub, permitted to a regulated instance only.
+#
+#   regulated  the hub's agent endpoint and its egress proxy; everything else is dropped
+#   sealed     the hub's agent endpoint; everything else is dropped
+#   open       every destination outside the protected networks (ADR 0009, superseded)
 set -eu
 
 fail() { echo "guard: $*" >&2; exit 1; }
@@ -17,6 +23,17 @@ fail() { echo "guard: $*" >&2; exit 1; }
 # Values that go into the rules are checked first: the rules are text.
 printf '%s' "${HUB_IP:-}" | grep -Eqx '([0-9]{1,3}\.){3}[0-9]{1,3}' || fail "HUB_IP is not an IPv4 address"
 printf '%s' "${HUB_PORT:-}" | grep -Eqx '[0-9]{1,5}' || fail "HUB_PORT is not a port"
+EGRESS="${EGRESS:-regulated}"
+case "$EGRESS" in
+  regulated)
+    printf '%s' "${PROXY_PORT:-}" | grep -Eqx '[0-9]{1,5}' || fail "PROXY_PORT is not a port"
+    [ "$PROXY_PORT" != "$HUB_PORT" ] || fail "PROXY_PORT is the port of the agent endpoint"
+    proxy_rule="ip daddr ${HUB_IP} tcp dport ${PROXY_PORT} accept"
+    last_rule="counter drop" ;;
+  sealed) proxy_rule="" last_rule="counter drop" ;;
+  open) proxy_rule="" last_rule="" ;;
+  *) fail "EGRESS is not regulated, sealed or open" ;;
+esac
 
 load() {
   # Only the table of the guard is touched. Docker keeps the redirect of its embedded name
@@ -42,9 +59,11 @@ table inet zeph {
     oifname "lo" accept
     ct state established,related accept
     ip daddr ${HUB_IP} tcp dport ${HUB_PORT} accept
+    ${proxy_rule}
     icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit } accept
     ip daddr @protected4 counter drop
     ip6 daddr @protected6 counter drop
+    ${last_rule}
   }
   chain input {
     type filter hook input priority 0; policy drop;
@@ -65,6 +84,19 @@ check() {
   printf '%s' "$output" | grep -q "ip6 daddr @protected6 counter" || fail "no IPv6 drop"
   printf '%s' "$input" | grep -q "policy drop" || fail "the input policy is not drop"
   nft list set inet zeph protected4 | grep -q "192.168.0.0/16" || fail "the IPv4 set is incomplete"
+  # The level: a regulated or sealed guard ends its output chain with a drop, an open one does
+  # not; only a regulated one lets the egress proxy of the hub through.
+  if [ -n "$last_rule" ]; then
+    printf '%s' "$output" | tail -n 3 | grep -Eq "^[[:space:]]*counter packets [0-9]+ bytes [0-9]+ drop$" \
+      || fail "the output chain of a $EGRESS guard does not end with a drop"
+  elif printf '%s' "$output" | grep -Eq "^[[:space:]]*counter packets [0-9]+ bytes [0-9]+ drop"; then
+    fail "an open guard drops more than the protected networks"
+  fi
+  if [ -n "$proxy_rule" ]; then
+    printf '%s' "$output" | grep -q "$proxy_rule" || fail "no proxy rule"
+  elif printf '%s' "$output" | grep -q "ip daddr ${HUB_IP} tcp dport ${PROXY_PORT:-none} accept"; then
+    fail "a $EGRESS guard lets the egress proxy through"
+  fi
 }
 
 case "${1:-run}" in

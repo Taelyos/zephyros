@@ -851,3 +851,23 @@ def test_an_alert_refused_by_the_egress_policy_is_logged(rig: Rig) -> None:
     sent = [r for r in records if r.action is Action.NOTIFICATION]
     assert sent
     assert sent[-1].outcome is Outcome.ERROR
+
+
+# ----------------------------------------------------------------------------- egress (ADR 0024)
+def test_an_open_instance_is_warned_about_in_the_log_when_a_turn_starts(rig: Rig) -> None:
+    rig.manager = rig.make_manager(replace(TIMING, egress="open"))
+    rig.manager.reconcile()
+    rig.start()
+    warnings = [r for r in rig.records() if r.action is Action.INSTANCE_EGRESS]
+    assert len(warnings) == 1
+    assert warnings[0].outcome is Outcome.OK
+    assert '"level":"open"' in warnings[0].parameters
+    assert '"side":"contractor"' in warnings[0].parameters
+
+
+@pytest.mark.parametrize("level", ["regulated", "sealed"])
+def test_a_regulated_or_sealed_instance_starts_without_a_warning(rig: Rig, level: str) -> None:
+    rig.manager = rig.make_manager(replace(TIMING, egress=level))
+    rig.manager.reconcile()
+    rig.start()
+    assert not [r for r in rig.records() if r.action is Action.INSTANCE_EGRESS]
