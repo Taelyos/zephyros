@@ -468,10 +468,23 @@ def test_atk_74_a_prompt_with_a_nul_or_too_long_is_refused(filt: Filter) -> None
 def test_atk_74_the_instance_environment_holds_three_values_and_no_text_of_the_caller(
     filt: Filter,
 ) -> None:
+    """The engine's three values; at the default level (regulated, ADR 0024) the egress proxy
+    too, built from the hub address, the configured port and the token, nothing else."""
     bring_up(filt)
     spec = created(filt, "/containers/create")[-1].body
-    names = sorted(entry.split("=", 1)[0] for entry in spec["Env"])
-    assert names == ["ZEPHYROS_HUB_URL", "ZEPHYROS_MODEL", "ZEPHYROS_TOKEN"]
+    environment = dict(entry.split("=", 1) for entry in spec["Env"])
+    engine = {"ZEPHYROS_HUB_URL", "ZEPHYROS_MODEL", "ZEPHYROS_TOKEN"}
+    assert engine <= set(environment)
+    hub = environment["ZEPHYROS_HUB_URL"].removeprefix("http://").split(":")[0]
+    proxy = f"http://instance:{TOKEN}@{hub}:{POLICY.egress_port}"
+    assert {k: v for k, v in environment.items() if k not in engine} == {
+        "http_proxy": proxy,
+        "https_proxy": proxy,
+        "HTTP_PROXY": proxy,
+        "HTTPS_PROXY": proxy,
+        "no_proxy": hub,
+        "NO_PROXY": hub,
+    }
 
 
 def test_atk_74_the_token_is_a_token_and_nothing_else(filt: Filter) -> None:

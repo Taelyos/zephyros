@@ -26,7 +26,9 @@ PROTECTED_V6 = "fd00::5"
 
 @pytest.fixture(scope="module")
 def world(images: dict[str, str]) -> Iterator[Runtime]:
-    runtime = Runtime(images, fake_dns=True)
+    # The open level (ADR 0024): the public control must be able to leave. At the other levels
+    # every destination but the hub is dropped, whatever a name resolves to.
+    runtime = Runtime(images, fake_dns=True, egress="open")
     runtime.setup()
     try:
         yield runtime

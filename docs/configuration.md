@@ -7,12 +7,12 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.13.0. A file declares the version it was written for in `schema_version`; the hub accepts any 1.x file and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.14.0. A file declares the version it was written for in `schema_version`; the hub accepts any 1.x file and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
 ```toml
-schema_version = "1.13.0"
+schema_version = "1.14.0"
 
 [images]
 instance = "registry.example/zephyros-instance@sha256:…"   # by digest, always
@@ -25,11 +25,11 @@ On one machine, `scripts/deploy.sh up` writes the file (`deploy/state/zephyros.t
 
 | Section | What it holds |
 | --- | --- |
-| `[hub]` | The three listeners: the agent endpoint (the one hub destination open to instances), the operator channel and the main-agent endpoint. The last two bind to a host address and are never reachable from an instance |
+| `[hub]` | The listeners: the agent endpoint (the hub destination open to every instance), the egress proxy (open to a `regulated` instance only), the operator channel and the main-agent endpoint. The last two bind to a host address and are never reachable from an instance |
 | `[paths]` | The data directory, the Unix socket of the container filter, and the files that hold the operator and main-agent tokens |
 | `[runtime]` | The name of the core network and of the hub container; how long the hub waits for a network guard to report healthy, and how often it looks at its instances |
 | `[images]` | The instance image and the network guard image, by registry digest (`name@sha256:…`) or by local identifier (`sha256:…`) (required) |
-| `[network]` | The range the subnets of the instance networks are taken from, their prefix length, and the name resolvers the instances use (one to four public addresses; the default is `9.9.9.9`, Quad9). A resolver inside a protected network is refused at startup, because the network guard blocks it ([ADR 0018](decisions/0018-instance-name-resolution.md)) |
+| `[network]` | The range the subnets of the instance networks are taken from, their prefix length, and the name resolvers an `open` instance uses (one to four public addresses; the default is `9.9.9.9`, Quad9; a `regulated` or `sealed` instance sends no query: the egress proxy resolves for it). A resolver inside a protected network is refused at startup, because the network guard blocks it ([ADR 0018](decisions/0018-instance-name-resolution.md)). What an instance reaches besides the hub (`egress`, see below) and the hosts a `regulated` instance reaches (`allowed_hosts`) |
 | `[limits]` | CPUs, memory and process count of an agent container, memory of a guard, the longest duration of a turn, how long a turn may go without calling the hub before it is stopped, and how many refused actions of one instance in a minute make the hub answer without doing the work (`refusals_per_minute`, ATK-71) |
 | `[tokens]` | The lifetime of a project token and how long before its expiry a new turn gets a new one |
 | `[forge]` | Where pull requests are opened: `none`, `directory` (bare git repositories in a directory, for the development deployment and the tests), or `github` (the repositories of the person, through the API and git over https, with the file of its token in `token_file`; read at each call) |
@@ -62,11 +62,37 @@ gateway.upstream_model: 'claude-opus-5-5' is not one of gateway.models (deepseek
 
 The policy holds only as long as nobody else edits the table: keep it in a file that only you can change, outside the repository ([a run with real models](real-test.md)).
 
+## What an instance reaches
+
+`network.egress` sets the network access of every instance, Owner and Contractor alike ([ADR 0024](decisions/0024-three-levels-of-network-access.md)). No level reaches a protected network (the private ranges, loopback, link-local, the shared address space, cloud metadata), and a sandbox of verification has no network at any level.
+
+| Level | What an instance reaches | When |
+| --- | --- | --- |
+| `regulated` (default) | The hub, so the model through its gateway, and the hosts of `network.allowed_hosts` on port 443 through the egress proxy of the hub. Everything else is refused. The hub logs every destination asked for, allowed or refused (`instance.egress`) | Normal use |
+| `sealed` | The hub alone. What the work needs is in the instance image (Python with pytest, see [the tools of an instance](instance-tools.md)) | A benchmark, a sensitive project |
+| `open` | Every public destination, as before 1.14.0 | An explicit exception: the hub logs a warning (`instance.egress`) each time it starts an instance |
+
+The default list holds the package registries: `pypi.org`, `files.pythonhosted.org` and `registry.npmjs.org`. GitHub is not in it. To add a host, write the whole list:
+
+```toml
+[network]
+egress = "regulated"
+allowed_hosts = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "github.com"]
+```
+
+A host is a name, in lower case, with no port and no wildcard; each subdomain is named on its own line. An address is refused: the proxy allows a name, then refuses it when it resolves into a protected network. For no host at all, choose `sealed`. A regulated instance gets the proxy in `HTTPS_PROXY`, which `pip`, `npm`, `uv`, `curl` and most HTTP clients follow; a client that ignores it reaches nothing.
+
+The proxy opens a tunnel to an allowed host whatever the request inside: it does not make a registry read-only (ADR 0024, consequences).
+
+**Changing the level.** A guard loads its rules when it starts and carries its level as a label. When the hub starts, and each time it looks at an instance, it takes down a guard whose level is not the configured one (an instance made before 1.14.0 included) and logs it (`instance.egress`, `why: level_changed`). The turn under way stops; the volumes stay, and the next start of the instance brings it up at the new level.
+
+With `scripts/deploy.sh`, `ZEPHYROS_EGRESS` sets the level and `ZEPHYROS_ALLOWED_HOSTS` the list (comma-separated).
+
 ## Rules across keys
 
 The schema document lists them (`x-zephyros-rules`):
 
-- the three ports of `[hub]` differ;
+- the four ports of `[hub]` differ;
 - a project token outlives the longest turn, and its rotation starts before its expiry;
 - the subnet prefix of an instance network is longer than the prefix of the pool;
 - no name resolver is in a protected network;
@@ -88,6 +114,7 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `hub.main_agent_port` | `8082` | 1024 to 65535 |
 | `hub.operator_bind` | `"127.0.0.1"` | an IP address |
 | `hub.main_agent_bind` | `"127.0.0.1"` | an IP address |
+| `hub.egress_port` | `8083` | 1024 to 65535 |
 | `paths.data_dir` | `"/var/lib/zephyros"` | an absolute path |
 | `paths.filter_socket` | `"/run/zephyros/filter.sock"` | an absolute path |
 | `paths.operator_token_file` | `"/var/lib/zephyros/operator.token"` | an absolute path |
@@ -100,7 +127,9 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `images.guard` | required | an image, by digest or local identifier |
 | `network.instance_pool` | `"10.200.0.0/16"` | an IPv4 network |
 | `network.instance_prefix` | `28` | 24 to 30 |
-| `network.resolvers` | `["9.9.9.9"]` | one to four IPv4 addresses, none in a protected network |
+| `network.resolvers` | `["9.9.9.9"]` | one to four IPv4 addresses, none in a protected network; used by `open` |
+| `network.egress` | `"regulated"` | `regulated`, `sealed` or `open` |
+| `network.allowed_hosts` | `["pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]` | one to 64 host names, lower case, no address and no wildcard; used by `regulated` |
 | `limits.cpus` | `2.0` | 0.1 to 16.0 |
 | `limits.memory_mib` | `1536` | 128 to 65536 |
 | `limits.pids` | `256` | 32 to 4096 |
@@ -136,6 +165,6 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 
 ## Versions
 
-1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve.
+1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024).
 
 Each addition has a default, except one: since 1.8.0, an `openai-compatible` provider needs `gateway.models`, so a file older than 1.8.0 that uses one must add it. Any other 1.x file still reads.

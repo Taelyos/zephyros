@@ -53,6 +53,7 @@ def make_config(base: Path) -> Config:
                 "agent_port": free_port(),
                 "operator_port": free_port(),
                 "main_agent_port": free_port(),
+                "egress_port": free_port(),
             },
             "runtime": {"poll_seconds": 1, "guard_health_seconds": 10},
             "paths": {

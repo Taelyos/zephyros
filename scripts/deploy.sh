@@ -16,7 +16,12 @@
 #   ZEPHYROS_POOL           the range of the instance networks (default: 10.200.0.0/16)
 #   ZEPHYROS_RESOLVERS      the name resolvers the instances use, comma-separated
 #                           (default: 9.9.9.9, Quad9; a protected address is refused)
-#   ZEPHYROS_KIT            the verification kit of the delivery loop (for example "tests");
+#   ZEPHYROS_EGRESS         what an instance reaches besides the hub: regulated (the default:
+#                           the allowed hosts, through the egress proxy of the hub), sealed
+#                           (the hub alone) or open (every public destination); ADR 0024
+#   ZEPHYROS_ALLOWED_HOSTS  the hosts a regulated instance reaches, comma-separated (default:
+#                           the package registries, see docs/configuration.md)
+#   ZEPHYROS_KIT           the verification kit of the delivery loop (for example "tests");
 #                           builds images/kit-tests and writes the [verification] table
 #   ZEPHYROS_FORGE          "directory" opens pull requests in a directory of the host (the
 #                           development deployment); "github" opens them on GitHub and needs
@@ -103,7 +108,14 @@ hub_container = "$ZEPHYROS_HUB_NAME"
 [network]
 instance_pool = "${ZEPHYROS_POOL:-10.200.0.0/16}"
 resolvers = [$resolvers_toml]
+egress = "${ZEPHYROS_EGRESS:-regulated}"
 TOML
+  if [ -n "${ZEPHYROS_ALLOWED_HOSTS:-}" ]; then
+    hosts_toml="$(printf '%s' "$ZEPHYROS_ALLOWED_HOSTS" | tr ',' '\n' \
+      | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^/"/' -e 's/$/"/' \
+      | paste -sd, -)"
+    printf 'allowed_hosts = [%s]\n' "$hosts_toml" >> "$ZEPHYROS_CONFIG"
+  fi
   if [ -n "${ZEPHYROS_KIT:-}" ]; then
     docker build -q -t zephyros-kit-tests:local images/kit-tests >/dev/null
     cat >> "$ZEPHYROS_CONFIG" <<TOML

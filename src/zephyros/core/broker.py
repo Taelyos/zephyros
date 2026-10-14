@@ -76,6 +76,8 @@ class ContainerInfo:
     address: str | None
     started_at: str | None
     finished_at: str | None
+    egress: str | None = None
+    """For a guard, the level of its label (ADR 0024); None when it has none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +268,7 @@ def info_to_json(info: ContainerInfo) -> dict[str, Any]:
         "address": info.address,
         "started_at": info.started_at,
         "finished_at": info.finished_at,
+        "egress": info.egress,
     }
 
 
@@ -280,6 +283,7 @@ def info_from_json(data: Mapping[str, Any]) -> ContainerInfo:
         address=None if data.get("address") is None else str(data["address"]),
         started_at=None if data.get("started_at") is None else str(data["started_at"]),
         finished_at=None if data.get("finished_at") is None else str(data["finished_at"]),
+        egress=None if data.get("egress") is None else str(data["egress"]),
     )
 
 

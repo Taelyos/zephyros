@@ -1,5 +1,5 @@
 # 0009. Network access policy for instances and sandboxes
-- Status: Accepted
+- Status: Superseded by [0024](0024-three-levels-of-network-access.md)
 - Date: 2026-10-09
 
 ## Context

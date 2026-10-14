@@ -29,6 +29,7 @@ from zephyros.adapters.git.delivery import GitDeliveryArea
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.adapters.github.forge import GitHubForge
 from zephyros.adapters.http.agent import build_agent_app
+from zephyros.adapters.http.egress_proxy import start_egress_proxy
 from zephyros.adapters.http.main_agent import build_main_agent_app
 from zephyros.adapters.http.operator import build_operator_app
 from zephyros.adapters.http.server import HubServer, build_server, serve_all, stop_all
@@ -410,16 +411,22 @@ async def run(
         ),
     ]
     loop = asyncio.get_running_loop()
-    if stop is None:
-        for number in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(number, stop_all, servers)
-    else:
-        waiter = loop.create_task(_stop_when_set(stop, servers))
+    egress: asyncio.Server | None = None
+    waiter: asyncio.Task[None] | None = None
     try:
+        # Inside the try: a port already taken stops the hub with everything closed (ADR 0024).
+        egress = await start_egress_proxy(config, hub, runtime.audit, agent_bind)
+        if stop is None:
+            for number in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(number, stop_all, servers)
+        else:
+            waiter = loop.create_task(_stop_when_set(stop, servers))
         await serve_all(servers)
     finally:
-        if stop is not None:
+        if waiter is not None:
             waiter.cancel()
+        if egress is not None:
+            egress.close()
         for worker in workers:
             worker.stop()
         if broker is not None:

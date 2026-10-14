@@ -475,3 +475,51 @@ def test_the_configuration_page_gives_the_version_and_every_key_with_its_default
             assert values.startswith(f"{spec.minimum} to {spec.maximum}"), path
         if isinstance(spec, Choice):
             assert all(f"`{value}`" in values for value in spec.values), path
+
+
+# ----------------------------------------------------------------------------- egress (ADR 0024)
+def test_an_instance_is_regulated_by_default_and_reaches_the_package_registries_only() -> None:
+    config = parse_config(minimal())
+    assert config.network.egress == "regulated"
+    assert config.network.allowed_hosts == (
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+    )
+    assert "github.com" not in config.network.allowed_hosts
+    assert config.hub.egress_port == 8083
+
+
+@pytest.mark.parametrize("level", ["regulated", "sealed", "open"])
+def test_each_egress_level_is_read_as_written(level: str) -> None:
+    assert parse_config(with_value("network.egress", level)).network.egress == level
+
+
+def test_the_allowed_hosts_are_read_as_written() -> None:
+    document = with_value("network.allowed_hosts", ["pypi.org", "github.com"])
+    assert parse_config(document).network.allowed_hosts == ("pypi.org", "github.com")
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "93.184.216.34",  # an address is not a name: a host is allowed by its name
+        "*.example.org",  # no wildcard: each host is named
+        "PyPI.org",  # one spelling, so that the list and the log compare as written
+        "pypi.org.",
+        "https://pypi.org",
+        "pypi.org:443",
+        "localhost",
+        "-bad.example.org",
+    ],
+)
+def test_an_allowed_host_that_is_not_a_plain_host_name_is_refused(host: str) -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value("network.allowed_hosts", [host]))
+    assert [problem.key for problem in caught.value.problems] == ["network.allowed_hosts[0]"]
+
+
+def test_the_egress_port_differs_from_the_other_ports_of_the_hub() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value("hub.egress_port", 8080))
+    assert [problem.key for problem in caught.value.problems] == ["hub.egress_port"]
