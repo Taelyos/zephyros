@@ -89,6 +89,17 @@ def _shown(text: str) -> str:
     return bounded if bounded.isascii() and bounded.isprintable() else "?"
 
 
+def _host_of(request_line: str) -> str:
+    """The host a request that is not a CONNECT names (`GET http://host/...`), or ''."""
+    parts = request_line.split(" ")
+    if len(parts) != 3:
+        return ""
+    try:
+        return urlsplit(parts[1]).hostname or ""
+    except ValueError:
+        return ""
+
+
 class EgressProxy:
     def __init__(
         self,
@@ -144,10 +155,7 @@ class EgressProxy:
             return
         destination = parse_connect(lines[0])
         if destination is None:
-            target = lines[0].split(" ")[1] if lines[0].count(" ") == 2 else ""
-            self._log(
-                caller, Destination(_shown(urlsplit(target).hostname or ""), 0), Refused.NOT_CONNECT
-            )
+            self._log(caller, Destination(_host_of(lines[0]), 0), Refused.NOT_CONNECT)
             await self._answer(writer, 405)
             return
         refused = self._policy.decide(destination)
@@ -218,7 +226,7 @@ class EgressProxy:
         else:
             outcome, reason = (Outcome.OK if reached else Outcome.ERROR), Reason.NONE
         parameters: dict[str, object] = {
-            "host": destination.host,
+            "host": _shown(destination.host),
             "port": destination.port,
             "source": caller.source,
             "level": self._policy.level.value,

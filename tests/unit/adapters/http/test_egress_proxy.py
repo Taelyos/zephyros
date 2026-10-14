@@ -149,6 +149,8 @@ def test_an_allowed_registry_is_relayed_and_logged_under_the_instance() -> None:
         ("CONNECT 151.101.0.223:443 HTTP/1.1", "151.101.0.223", 443, "not_allowed"),
         ("CONNECT pypi.org:22 HTTP/1.1", "pypi.org", 22, "port"),
         ("GET http://example.org/steal?x=1 HTTP/1.1", "example.org", 0, "not_connect"),
+        ("GET http://[broken/ HTTP/1.1", "", 0, "not_connect"),
+        ("CONNECT \x01evil:443 HTTP/1.1", "?", 443, "not_allowed"),
     ],
 )
 def test_any_other_destination_is_refused_before_the_network_and_logged(
