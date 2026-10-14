@@ -318,7 +318,7 @@ def test_atk_76_a_listener_inside_an_instance_is_not_reached_from_the_hub_networ
     runtime: Runtime, one: Instance, neighbours: dict[str, Instance]
 ) -> None:
     """Not even the hub, which shares the network, opens a connection into an instance: there is
-    no inbound rule (option A of spike Z2-01)."""
+    no inbound rule (ADR 0016: nothing listens in an instance)."""
     code, out = runtime.sh(
         runtime.hub,
         f"python -c \"import socket; socket.create_connection(('{one.guard_ip}', 8642), 2)\"",

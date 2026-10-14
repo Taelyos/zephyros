@@ -1,6 +1,11 @@
 # 0013. Tokens are opaque, bound to their instance and checked against server-side records
-- Status: Accepted
+- Status: Accepted; in part replaced by [0016](0016-one-agent-container-per-turn.md)
 - Date: 2026-10-09
+- Replaced in part: "Rotation by restart" below. A token is bound to the address of the
+  instance's network guard and lives as long as the instance; it is revoked when the instance
+  stops, and the next turn starts with a new token when the current one nears its expiry
+  ([0016](0016-one-agent-container-per-turn.md)). There is no long-running container to replace.
+  The rest of this decision stands.
 
 ## Context
 Every instance and the main agent authenticate to the hub with a token. The threat model asks that identity be derived only from a server-side record and never from a request field (T-02), and the catalog attacks editing claims, `alg=none`, unsigned tokens, added headers and replay after the instance stops (ATK-12). A token read from a file or a tool output must be useless to another context (EXG-60, T-31, ATK-85). Tokens must also be revocable when an instance stops (EXG-42) and expire (EXG-57).
@@ -19,7 +24,7 @@ A token is 256 random bits with a visible kind prefix. The hub stores only a has
 - Positive: a copied token is useless from any other context, and revocation and expiry take effect on the next request.
 - Positive: a database leak does not yield usable tokens.
 - Negative: a lookup per request, and the token store becomes part of the trusted base.
-- Negative: binding needs the hub to see a distinct, untranslated source address for each instance on every supported runtime. Spike Z2-02 must show it.
+- Negative: binding needs the hub to see a distinct, untranslated source address for each instance on every supported runtime, which had to be measured on Linux and macOS before relying on it.
 - Negative: rotation costs a restart of the instance.
 
 ## Alternatives considered

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tests.unit.core.contract_fixtures import put, requirement, wire
@@ -29,6 +30,21 @@ def test_the_document_lists_every_code_with_its_exact_action() -> None:
     text = DOC.read_text(encoding="utf-8")
     for reason in Reason:
         assert f"| `{reason.value}` | {REMEDIES[reason]} |" in text
+
+
+def test_the_document_lists_every_code_of_the_model_gateway() -> None:
+    """`/v1` answers in the OpenAI format, with codes of its own: each one is documented."""
+    root = DOC.parent.parent / "src" / "zephyros"
+    source = "".join(
+        (root / name).read_text(encoding="utf-8")
+        for name in ("core/gateway.py", "adapters/http/agent.py")
+    )
+    codes = set(re.findall(r'GatewayError\(\s*\d+,\s*"([a-z_]+)"', source))
+    codes |= set(re.findall(r'"code": "([a-z_]+)"', source))
+    assert len(codes) >= 10
+    section = DOC.read_text(encoding="utf-8").split("## Codes of the model gateway")[1]
+    documented = set(re.findall(r"^\| `([a-z_]+)` \|", section, flags=re.MULTILINE))
+    assert documented == codes
 
 
 def test_a_refused_call_carries_its_documented_action() -> None:

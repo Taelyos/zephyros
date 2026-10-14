@@ -2,7 +2,7 @@
 
 The hub serves tools. A request is one JSON-RPC message in the body of a POST; the answer is
 one JSON object. There is no session, no server-initiated stream and no batch, so a GET is
-answered 405. Hermes Agent, whose behavior spike Z2-01 measured, works against exactly this.
+answered 405. The pinned Hermes Agent works against exactly this (`tests/runtime/test_hermes.py`).
 """
 
 from __future__ import annotations
@@ -40,7 +40,12 @@ def _tool_result(response: ToolResponse) -> dict[str, object]:
         return {"content": [{"type": "text", "text": text}], "isError": False}
     failure = response.failure
     assert failure is not None  # noqa: S101  # reason: a failed response carries its failure
-    body = {"error": failure.kind, "reason": failure.reason.value, "message": failure.message}
+    body = {
+        "error": failure.kind,
+        "reason": failure.reason.value,
+        "message": failure.message,
+        "action": failure.action,
+    }
     return {
         "content": [{"type": "text", "text": json.dumps(body, sort_keys=True)}],
         "isError": True,

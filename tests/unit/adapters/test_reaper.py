@@ -1,5 +1,5 @@
 """The reaper: a turn past the configured limit is stopped even when the hub is gone
-(build log, decision 22; EXG-21's neighbourhood: a turn must not run forever)."""
+(EXG-21's neighbourhood: a turn must not run forever)."""
 
 from __future__ import annotations
 

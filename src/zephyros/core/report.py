@@ -50,8 +50,8 @@ class ReportInput:
     acceptance_files: tuple[tuple[str, str], ...] = ()
     """The files of the Owner side in the tree verified, with the digest of their content."""
     unnamed_acceptance_files: tuple[str, ...] = ()
-    """Those that no criterion names. The kit runs no test from them, but a test it runs may use
-    them (a support module): the report says no file never runs."""
+    """Those that no criterion names. The kit runs no test from them; the report marks them and
+    names the tests that never ran, never a file."""
     never_run_tests: tuple[str, ...] = ()
     """The tests the kit found in the files it ran and did not run, since no criterion names
     them (`path::name`, as the kit names them)."""

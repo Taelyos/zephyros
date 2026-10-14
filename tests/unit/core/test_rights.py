@@ -22,7 +22,7 @@ OTHER = "p_zzzzzz99"
 OWNER = instance_principal(Side.OWNER, PROJECT)
 CONTRACTOR = instance_principal(Side.CONTRACTOR, PROJECT)
 
-# The allow-list of the design (section 4.2), written out here independently of the code.
+# The allow-list of rights (docs/tools.md), written out here independently of the code.
 EXPECTED = {
     "whoami": ("any", "any", "any", "any"),
     "project.create": ("any", "any", "none", "none"),

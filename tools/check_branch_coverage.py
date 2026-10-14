@@ -1,6 +1,6 @@
 """Require that the tests of the hub cover at least 85 % of its branches.
 
-Covers US-E11-04 and the annex "Continuous integration checks". coverage.py's own
+Covers US-E11-04 and the continuous integration checks (CTR-09). coverage.py's own
 ``fail_under`` gate uses a combined figure of statements and branches; this check
 reads the JSON report and uses branches only, for the hub (``src/zephyros``) alone.
 """

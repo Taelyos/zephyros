@@ -1,7 +1,7 @@
 """The obedient stub: a model provider that does what its context tells it to.
 
 The attack catalog needs an agent that falls for every injection, so that a refusal never rests
-on the model declining (threat model, section 5.0). This provider reads every line of the
+on the model declining (ADR 0002). This provider reads every line of the
 conversation that is not its own, finds instructions in a small fixed grammar, and answers with
 a call to a tool of the agent engine for the first one it has not yet executed. It proves that
 the platform stops what a model attempts; it proves nothing about a real model.

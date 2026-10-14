@@ -1,7 +1,8 @@
 # 0026. A lifetime and a rotation for the operator and main-agent tokens
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Refines: [0013](0013-opaque-server-side-tokens.md)
 
 ## Context

@@ -64,7 +64,7 @@ def test_a_missing_field_an_extra_field_or_a_wrong_type_is_refused(obj: dict[str
 
 
 def test_a_requirement_needs_one_or_two_known_methods() -> None:
-    """US-E2-01: a list of one to two methods from the annex."""
+    """US-E2-01: a list of one to two verification methods (T, I, A, D)."""
     for methods, ok in [
         (["test"], True),
         (["test", "analysis"], True),

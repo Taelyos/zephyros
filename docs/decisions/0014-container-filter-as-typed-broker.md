@@ -8,9 +8,9 @@ EXG-34 exists because a hijacked hub could create a privileged container or moun
 ## Decision
 The filter runs as a separate process in its own container and is the only holder of the runtime socket. It has **no network listener**: its container has the network `none`, and the hub reaches it through a Unix socket on a volume shared between the two containers. The filter is hardened as the equivalent of host root, because anything that can speak to it can start containers.
 
-The hub sends it small typed requests (for example "create the instance container of this project and side, with this address") and the filter builds the full container specification from templates it owns. In Z2 images come only from digests configured locally. Every Zephyros object carries labels set by the filter. Requests shaped like raw runtime API calls, requests with unknown or duplicate fields, and every operation outside annex "Permitted container operations" are refused and written to the filter's own journal. In Z2 that journal is a simple append-only file, not a hash chain.
+The hub sends it small typed requests (for example "create the instance container of this project and side, with this address") and the filter builds the full container specification from templates it owns. In Z2 images come only from digests configured locally. Every Zephyros object carries labels set by the filter. Requests shaped like raw runtime API calls, requests with unknown or duplicate fields, and every operation outside the permitted container operations are refused and written to the filter's own journal. In Z2 that journal is a simple append-only file, not a hash chain.
 
-The filter has a template for the network guard container (amendment A5, see ADR 0015).
+The filter has a template for the network guard container (see ADR 0015).
 
 ## Consequences
 - Positive: the hub never produces a runtime specification, so a hijacked hub can ask only for the kinds the templates allow.

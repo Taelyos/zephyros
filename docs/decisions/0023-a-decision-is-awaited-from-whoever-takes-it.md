@@ -1,6 +1,7 @@
 # 0023. A decision on the contract is awaited from whoever is to take it
 
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-14
 - Supersedes: the decision task of the Owner side as [0021](0021-the-ladder-waits-for-a-ready-contract.md) left it ("The Owner side's decision task is unchanged", and the consequences that follow from it)
 

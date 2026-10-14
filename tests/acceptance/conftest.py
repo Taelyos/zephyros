@@ -60,8 +60,8 @@ def world(tmp_path: Path) -> World:
 
 @pytest.fixture(params=["fresh", "after a restart of the hub"])
 def restarted(request: pytest.FixtureRequest, tmp_path: Path) -> World:
-    """A world, as it is and again after the hub restarts: the attacks of section 5.0 'repeat after
-    restart'."""
+    """A world, as it is and again after the hub restarts: the attacks of the threat model repeat
+    after a restart."""
     world = World(tmp_path)
     world.import_contract()
     if request.param != "fresh":

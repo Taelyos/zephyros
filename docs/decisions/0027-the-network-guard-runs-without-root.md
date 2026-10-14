@@ -1,7 +1,8 @@
 # 0027. The network guard runs without root; its one capability comes from nft
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Revises: [0015](0015-per-instance-networks-with-a-network-guard.md) (no-new-privileges for the guard)
 
 ## Context

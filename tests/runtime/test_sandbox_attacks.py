@@ -20,7 +20,7 @@ from tests.runtime.rig import LAN_ADDRESSES, Runtime, docker
 pytestmark = [pytest.mark.runtime, pytest.mark.acceptance]
 
 WRITABLE = {"/dev/mqueue", "/tmp", "/work"}
-"""The three writable locations of the annex "Container hardening profile", observed from inside."""
+"""The three writable locations of the hardened container profile, observed from inside."""
 
 
 def test_atk_86_the_sandbox_carries_the_hardening_profile(runtime: Runtime) -> None:

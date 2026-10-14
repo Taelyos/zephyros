@@ -1,7 +1,8 @@
 # 0025. The operator channel and the main-agent endpoint are off the instance networks by construction
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Refines: [0015](0015-per-instance-networks-with-a-network-guard.md)
 
 ## Context

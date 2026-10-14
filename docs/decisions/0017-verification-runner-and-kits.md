@@ -1,6 +1,7 @@
 # 0017. A verification runner runs one verification kit; the method does not change with the project
 
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-10
 
 ## Context

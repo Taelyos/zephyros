@@ -127,7 +127,7 @@ def test_atk_32_each_escape_attempt_fails(runtime: Runtime, turn: Instance, atte
 def test_atk_32_ptrace_reaches_only_the_processes_of_the_turn_itself(
     runtime: Runtime, turn: Instance
 ) -> None:
-    """The default syscall filter of the runtime, which the annex prescribes, lets a process
+    """The default syscall filter of the runtime, which the hardened profile keeps, lets a process
     trace another of the same user in the same container. It cannot see any other process: the
     turn has its own process namespace."""
     code, out = runtime.sh(turn.turn, "ls /proc | grep -E '^[0-9]+$' | wc -l")

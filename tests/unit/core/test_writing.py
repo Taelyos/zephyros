@@ -35,8 +35,8 @@ def test_the_soft_modal_shall_not_is_matched() -> None:
 
 
 GUIDE: dict[str, tuple[str, ...]] = {
-    # The requirements writing guide, section 3.3, verbatim — the whole table, so the list
-    # cannot drift in silence (the verifier of Z3 found three terms missing from a sample).
+    # The table of the requirements writing guide, verbatim and whole, so the list cannot drift
+    # in silence (a review once found three terms missing from a sample).
     "quality": (
         "bien",
         "rapide",

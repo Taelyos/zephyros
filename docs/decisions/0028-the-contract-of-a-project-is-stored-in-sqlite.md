@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-14
+- Decided by the project owner on 2026-10-14.
 
 ## Context
 

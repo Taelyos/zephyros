@@ -1,5 +1,5 @@
 """CTR-13: the public API follows semantic versioning, and the CHANGELOG announces the
-breaking changes. The surfaces of annex "Public API" each carry a version number."""
+breaking changes. The surfaces of the public API each carry a version number."""
 
 from __future__ import annotations
 
@@ -39,3 +39,9 @@ def test_the_version_is_the_pre_one_oh_milestone() -> None:
     # CTR-13: before 1.0, breaking changes are announced in the CHANGELOG; the first
     # milestone keeps the 0.x promise honest.
     assert __version__.startswith("0.")
+
+
+def test_the_events_schema_is_2_after_its_values_widened() -> None:
+    # D4: in 0.2.0 `delivery.decided` can say REFUSED or ERROR and an alert can carry
+    # `side: main-agent`, which breaks a receiver that checked a closed list: a major version.
+    assert EVENTS_SCHEMA_VERSION.split(".")[0] == "2"

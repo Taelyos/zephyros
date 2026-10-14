@@ -83,10 +83,10 @@ def test_each_instruction_becomes_a_call_to_the_right_tool() -> None:
     assert arguments == {"command": "env"}
     name, arguments = call(ask([user("CODE print(1)")]))
     assert (name, arguments) == ("execute_code", {"code": "print(1)"})
-    name, arguments = call(ask([user("FETCH http://192.168.1.1/admin")]))
+    name, arguments = call(ask([user("FETCH http://192.168.7.1/admin")]))
     assert name == "terminal"
     assert "curl" in str(arguments["command"])
-    assert "http://192.168.1.1/admin" in str(arguments["command"])
+    assert "http://192.168.7.1/admin" in str(arguments["command"])
     name, arguments = call(ask([user('TOOL read_file {"path": "/etc/passwd"}')]))
     assert (name, arguments) == ("read_file", {"path": "/etc/passwd"})
 

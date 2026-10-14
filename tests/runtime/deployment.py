@@ -107,7 +107,7 @@ class Deployment:
         raise AssertionError("the hub did not become healthy after the restart")
 
     def restart_hub(self) -> None:
-        """Restart the hub, the way the attacks of section 5.0 repeat after a Hub restart."""
+        """Restart the hub, the way the attacks of the threat model repeat after a hub restart."""
         docker("restart", self.hub)
         self._wait_hub_healthy()
 

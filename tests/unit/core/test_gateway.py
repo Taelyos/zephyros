@@ -32,7 +32,7 @@ from zephyros.core.ports.model_provider import (
 
 MODEL = "zephyros-default"
 
-# The shape of what Hermes Agent v0.21.6 sent in spike Z2-01.
+# The shape of what the pinned Hermes Agent (v0.21.6) sends.
 HERMES_REQUEST: dict[str, Any] = {
     "model": MODEL,
     "messages": [
