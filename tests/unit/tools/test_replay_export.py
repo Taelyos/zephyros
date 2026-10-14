@@ -696,6 +696,51 @@ SUMMARIES: list[tuple[export.LogRecord, str, str]] = [
     ),
     (
         record(
+            "delivery.check",
+            {"delivery": "d1", "paths": ["checks/add.txt", "checks/sub.txt"], "count": 2},
+            "refused",
+            reason="protected_path",
+        ),
+        "refusal",
+        "Refused (protected_path): delivery d1 changes 2 acceptance test files: "
+        "checks/add.txt, checks/sub.txt",
+    ),
+    (
+        record(
+            "delivery.check",
+            {"delivery": "d1", "paths": ["checks/add.txt"], "count": 21},
+            "refused",
+            reason="protected_path",
+        ),
+        "refusal",
+        "Refused (protected_path): delivery d1 changes 21 acceptance test files: "
+        "checks/add.txt, ...",
+    ),
+    (
+        record(
+            "delivery.check",
+            {
+                "delivery": "d2",
+                "flagged": 0,
+                "missing": ["checks/add.txt", "checks/sub.txt"],
+                "set_aside": ["checks/add.txt"],
+            },
+        ),
+        "delivery",
+        "Hub checks delivery d2: 2 acceptance test files the contract names are missing; "
+        "1 delivered file in their place is set aside",
+    ),
+    (
+        record(
+            "delivery.check",
+            {"delivery": "d2", "flagged": 1, "missing": ["checks/add.txt"], "set_aside": []},
+        ),
+        "flag",
+        "Hub flags delivery d2: it changes 1 protected path; "
+        "1 acceptance test file the contract names is missing",
+    ),
+    (
+        record(
             "egress.refused",
             {"host": "hooks.example.invalid", "purpose": "notification"},
             "refused",
@@ -1243,6 +1288,26 @@ def test_both_sides_can_be_exported(hub: Path, tmp_path: Path) -> None:
 
 
 # ----------------------------------------------------------------------------- ranges and kinds
+def test_a_version_an_exported_record_names_comes_even_from_outside_the_window(
+    tmp_path: Path,
+) -> None:
+    """The hub writes a version before the record that names it: the range may start after it.
+    A version no exported record names, outside the window, stays out."""
+    hub = HubFile(tmp_path / "hub.db", project())
+    hub.version(1, OBJECTS, "operator")
+    hub.clock.advance(1)
+    second = hub.version(2, {**OBJECTS, "EXG-02": {**OBJECTS["EXG-01"], "id": "EXG-02"}}, OWNER)
+    hub.log(10, "main-agent", Action.CONTRACT_APPROVE, {"change_id": "c_1", "version_id": second})
+    hub.log(1, "hub", Action.TURN_END, {"side": "owner", "result": "completed"})
+    hub.close()
+    document = replay(tmp_path / "hub.db")
+    versions = of_type(document, "contract.version")
+    assert [event["data"]["number"] for event in versions] == [2]
+    assert document["events"][0] == versions[0]
+    assert document["contract_at_start"]["version"] == 1
+    assert document["contract"]["version"] == 2
+
+
 def test_a_range_keeps_only_its_records_and_its_window(hub: Path) -> None:
     document = replay(hub, from_seq=5, to_seq=10)
     assert document["run"]["from_seq"] == 5
