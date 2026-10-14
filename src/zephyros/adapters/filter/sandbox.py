@@ -9,10 +9,25 @@ when exactly one of each is present and the signature matches — the nonce land
 log, which cannot be read back from the inside, so a line the delivered code writes cannot be
 made to match. A test without an outcome is reported as not run.
 
-Residual limit (EXG-37): the delivered code still runs in the same container as the kit; the
-signature closes the demonstrated forgeries (a forged line, a second line, a run left to time
-out), but code that reads the kit process's memory could in principle recover the nonce. Closing
-that needs the tests and the judged code in different processes (a Z4 candidate).
+Integrity of the outcomes (EXG-37, ATK-22, ADR 0017): the kit keeps every line of delivered code
+out of the process that records the outcomes — it refuses to import any delivered module and runs
+acceptance tests black-box — and makes that process non-dumpable. So the signature here is not
+guarding against code in the kit's own process (there is none); it tells the kit's single line
+apart from any line a black-box test's *subprocess* writes to the shared container log. Such a
+subprocess has neither the nonce (it never leaves the judge's memory) nor a way to read it.
+
+The log is the one channel the delivered code does reach: pytest echoes the output of a failing
+test after the kit's signed line, so a delivery can write as much as it likes there. The run line
+is what anchors the signature, and it is the first thing the kit prints; so the filter reads the
+log from its beginning, as a stream (up to `LOG_READ_LIMIT`), and believes nothing in a log that
+was cut or that does not begin with it — otherwise a flood could push the kit's lines out of
+the window and leave a pair of the delivery's own as the only one.
+
+The kit's manifest carries the SHA-256 of each file a test is asked from, measured here on the
+archive, so the kit can hold the files it runs to what was sent.
+
+Residual limit: the acceptance-test files themselves run in the judge, so the hub must hold them;
+a delivery that supplied a file at a named test path would run in the judge and could forge.
 """
 
 from __future__ import annotations
@@ -50,6 +65,10 @@ OUTCOME_MARK = "ZEPHYROS-OUTCOMES "
 RUN_MARK = "ZEPHYROS-RUN "
 OUTCOMES = ("passed", "failed", "error", "not_run")
 LOG_LIMIT = 20_000
+LOG_READ_LIMIT = 16 * 1024 * 1024
+"""The most of a sandbox's log the filter reads to find the kit's lines, from its beginning, as a
+stream: a log longer than this is not believed (ATK-22), and a flood does not reach the memory of
+the filter. `LOG_LIMIT` is only what is kept as evidence."""
 _PATH = re.compile(r"^(?!\.{1,2}$)(?!.*\.\.)(?!/)[A-Za-z0-9_.][A-Za-z0-9_./ +@=-]{0,250}$")
 _UID, _GID = (int(part) for part in INSTANCE_USER.split(":"))
 
@@ -63,6 +82,7 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
     except tarfile.TarError:
         raise BrokerError("bad_request", "the body is not a tar archive") from None
     manifest: SandboxManifest | None = None
+    digests: dict[str, str] = {}
     clean = io.BytesIO()
     with source, tarfile.open(fileobj=clean, mode="w:") as target:
         members = source.getmembers()
@@ -85,6 +105,7 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
                 manifest = parse_sandbox_manifest(data)
                 continue
             seen.add(name)
+            digests[name] = hashlib.sha256(data).hexdigest()
             info = tarfile.TarInfo(name)
             info.size = len(data)
             info.mode = 0o644
@@ -94,48 +115,65 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
         if manifest is None:
             raise BrokerError("bad_request", f"the archive has no {MANIFEST}")
         info = tarfile.TarInfo(MANIFEST)
-        body = json.dumps({"tests": list(manifest.tests)}).encode()
+        # The kit's own manifest: the tests asked for, and the digest of each file that holds
+        # one, measured here on what was received, so that the kit can hold the files it runs to
+        # what the hub sent (ADR 0017).
+        asked_files = {test.split("::", 1)[0] for test in manifest.tests}
+        pinned = {name: digests[name] for name in sorted(asked_files) if name in digests}
+        body = json.dumps({"tests": list(manifest.tests), "sha256": pinned}).encode()
         info.size, info.mode, info.uid, info.gid = len(body), 0o444, _UID, _GID
         target.addfile(info, io.BytesIO(body))
     return manifest, clean.getvalue()
 
 
-def parse_outcomes(log: str, tests: tuple[str, ...]) -> dict[str, str]:
-    """One outcome per test asked for, from the signed outcome line of the kit.
+def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The outcome of each test asked for and the tests the kit deselected, from its signed line.
 
     The kit prints a run line carrying a nonce (which only ever lands in the container's log —
-    write-only from the inside) and one outcome line signed with it. An honest kit prints the
-    pair once; anything else — a missing run line, a second line, a signature that does not
-    match — means the log was written by someone else too (the delivered code can reach it,
-    ATK-22), and nothing is believed: every test reads `error`, so the run verifies nothing.
-    A run that printed no outcome line at all (it died before its end) claims nothing: its
-    tests read `not_run`."""
+    write-only from the inside) and one outcome line signed with it. The signed payload is
+    `{"outcomes": {name: outcome}, "deselected": [name, ...]}`, so the HMAC covers both. An
+    honest kit prints the pair once, the run line first of the whole log; anything else — a
+    missing run line, a log that begins with something else (it lost its head), a second line, a
+    signature that does not match — means the log was written by someone else too (a black-box
+    test's subprocess can reach it, ATK-22), and nothing is believed: every test reads `error`
+    and nothing is reported deselected, so the run verifies nothing. A run that printed no
+    outcome line at all (it died before its end) claims nothing: its tests read `not_run`."""
     runs: list[str] = []
     lines: list[str] = []
+    first = ""
     for line in log.splitlines():
+        if not first and line.strip():
+            first = line
         if line.startswith(RUN_MARK):
             runs.append(line[len(RUN_MARK) :].strip())
         elif line.startswith(OUTCOME_MARK):
             lines.append(line[len(OUTCOME_MARK) :])
-    if not runs and not lines:
-        return dict.fromkeys(tests, "not_run")
-    if len(runs) == 1 and not lines:
-        return dict.fromkeys(tests, "not_run")
-    if len(runs) != 1 or len(lines) != 1:
-        return dict.fromkeys(tests, "error")
+    if not lines and len(runs) <= 1:
+        return dict.fromkeys(tests, "not_run"), ()
+    # The run line is the first thing an honest kit prints: a log that begins with anything else
+    # has lost its head, and the pair left at its end is no longer anchored to the kit's nonce.
+    if len(runs) != 1 or len(lines) != 1 or not first.startswith(RUN_MARK):
+        return dict.fromkeys(tests, "error"), ()
     payload, _, mac = lines[0].rpartition(" ")
     if not payload or not mac:
-        return dict.fromkeys(tests, "error")
+        return dict.fromkeys(tests, "error"), ()
     expected = hmac.new(runs[0].encode(), payload.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, mac):
-        return dict.fromkeys(tests, "error")
+        return dict.fromkeys(tests, "error"), ()
     try:
         found = json.loads(payload)
     except ValueError:
-        return dict.fromkeys(tests, "error")
-    if not isinstance(found, dict):
-        return dict.fromkeys(tests, "error")
-    return {test: str(found[test]) if found.get(test) in OUTCOMES else "not_run" for test in tests}
+        return dict.fromkeys(tests, "error"), ()
+    if not isinstance(found, dict) or not isinstance(found.get("outcomes"), dict):
+        return dict.fromkeys(tests, "error"), ()
+    reported = found["outcomes"]
+    outcomes = {
+        test: str(reported[test]) if reported.get(test) in OUTCOMES else "not_run" for test in tests
+    }
+    raw = found.get("deselected", [])
+    items = raw if isinstance(raw, list) else []
+    deselected = tuple(item for item in items if isinstance(item, str))
+    return outcomes, deselected
 
 
 def run_sandbox(
@@ -167,17 +205,25 @@ def run_sandbox(
         exit_code = api.wait(name, manifest.timeout_seconds)
         if exit_code is None:
             api.kill(name)
-        log = api.logs(name)
+        log, cut = api.logs_head(name, LOG_READ_LIMIT)
     except DockerError as error:
         journal.record("failed", "sandbox.run", "runtime_error", project_id=manifest.project_id)
         raise BrokerError("runtime_error", f"the sandbox could not run: {error}") from None
     finally:
         _destroy(api, name)
     duration = monotonic() - started
-    outcomes = parse_outcomes(log, manifest.tests)
+    outcomes: dict[str, str]
+    deselected: tuple[str, ...]
+    if cut:
+        # Code that floods the log can push the kit's lines out of any window and leave a pair
+        # of its own at the end; a log that was cut proves nothing, so the run verifies nothing.
+        outcomes, deselected = dict.fromkeys(manifest.tests, "error"), ()
+    else:
+        outcomes, deselected = parse_outcomes(log, manifest.tests)
     journal.record("done", "sandbox.run", "ok", project_id=manifest.project_id, run=run)
     return {
         "outcomes": outcomes,
+        "deselected": list(deselected),
         "log": log[-LOG_LIMIT:],
         "exit_code": exit_code,
         "timed_out": exit_code is None,

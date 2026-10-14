@@ -27,15 +27,28 @@ pytestmark = [pytest.mark.runtime, pytest.mark.acceptance, pytest.mark.slow]
 CONTRACTOR = Side.CONTRACTOR
 REPOSITORY = "example/zephyros"
 BRANCH = "report-wording"
+# The acceptance tests are black box (ADR 0017, ATK-22): the kit does not import the delivered
+# code, so a test reads `hub.VERSION` from a subprocess rather than importing it into the judge.
+_READS_VERSION = (
+    "    out = subprocess.run(\n"
+    '        [sys.executable, "-c", "from hub import VERSION; print(bool(VERSION))"],\n'
+    "        capture_output=True,\n"
+    "        text=True,\n"
+    "    )\n"
+    '    assert out.stdout.strip() == "True", out.stderr\n'
+)
 BASE = {
     "hub.py": b"VERSION = '0.0.0'\n",
-    "test_hub.py": b"from hub import VERSION\n\n\ndef test_version():\n    assert VERSION\n",
+    "test_hub.py": (
+        "import subprocess\nimport sys\n\n\ndef test_version():\n" + _READS_VERSION
+    ).encode(),
 }
 ACCEPTANCE = (
-    "from hub import VERSION\n\n\n"
-    "def test_simulation_mark():\n    assert VERSION\n\n\n"
-    "def test_no_egress():\n    assert VERSION\n\n\n"
-    "def test_masking():\n    assert VERSION\n"
+    "import subprocess\n"
+    "import sys\n\n\n"
+    "def test_simulation_mark():\n" + _READS_VERSION + "\n\n"
+    "def test_no_egress():\n" + _READS_VERSION + "\n\n"
+    "def test_masking():\n" + _READS_VERSION
 )
 REQUIREMENTS = (
     # The real rows of the contract, verbatim.

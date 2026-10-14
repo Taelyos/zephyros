@@ -3,9 +3,12 @@
 It packs the files to verify and the manifest into a tar and sends it to the filter, which runs
 the kit image in a sandbox of its own and destroys it afterwards (ADR 0017, ADR 0004).
 
-Each run carries hub-planted canary tests that must fail (ATK-22): a delivery that forges its
-results — a conftest marking every test passed, an early exit before the run, a monkeypatched
-framework — cannot make a canary fail, and the run is then untrusted rather than believed.
+Result integrity is the kit's job (ADR 0017): it keeps delivered code out of the judging process
+(an import barrier, black-box acceptance tests) so there is no in-process code left to forge the
+outcomes. The canary tests this runner still plants — two tests of the hub that must fail — are a
+cheap backstop, not the defence: they catch a run that believed a *blanket* forgery (everything
+marked passed) or a kit that did not run at all, by refusing to trust a run whose canary came back
+anything but failed. A run stopped at its time limit is not believed either: it verified nothing.
 """
 
 from __future__ import annotations
@@ -110,14 +113,18 @@ class SandboxRunner:
             else Outcome.NOT_RUN
             for test in asked.tests
         }
+        deselected = tuple(t for t in answer.get("deselected", []) if isinstance(t, str))
         log = str(answer.get("log", ""))
         timed_out = bool(answer.get("timed_out"))
         if timed_out:
             log += "\n[the run reached its time limit and was stopped]"
             # ATK-22: a run stopped at its limit proves nothing — nothing was verified, and a
-            # results line printed before the kill is not believed either.
+            # results line printed before the kill is not believed either, deselected included.
             outcomes = dict.fromkeys(asked.tests, Outcome.NOT_RUN)
+            deselected = ()
         else:
             _check_canaries(canaries, outcomes)
         mine = {test: outcomes[test] for test in request.tests}
-        return VerificationResult(mine, log, {}, float(answer.get("duration_seconds", 0.0)))
+        return VerificationResult(
+            mine, log, {}, float(answer.get("duration_seconds", 0.0)), deselected
+        )
