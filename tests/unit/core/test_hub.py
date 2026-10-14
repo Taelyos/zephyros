@@ -7,7 +7,10 @@ US-E2-03.
 from __future__ import annotations
 
 import json
+import re
+import threading
 from datetime import timedelta
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -17,7 +20,9 @@ from hypothesis import strategies as st
 from tests.unit.core.contract_fixtures import note, put, requirement, story, wire
 from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
 from zephyros.core.audit import Action, Outcome, Reason
-from zephyros.core.hub import TOOL_SPECS
+from zephyros.core.contract import PendingChange
+from zephyros.core.hub import NOTIFIED_EVENTS, TOOL_SPECS
+from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.rights import PERMISSIONS
 from zephyros.core.tokens import Endpoint
 
@@ -635,6 +640,84 @@ def test_a_proposed_change_waits_for_the_owner_and_a_decision_ends_it(env: Env) 
     assert list(env.continuity.waiting()) == []
 
 
+# ----------------------------------------------------------------------------- ADR 0023
+def decision_steps(env: Env, after: int) -> list[tuple[str, str]]:
+    """The step of the project's decision ladder due `after` seconds from now: who, and what."""
+    assert env.continuity is not None
+    steps = env.continuity.due(env.clock.now() + timedelta(seconds=after))
+    return [(s.expectation.side, s.kind) for s in steps if s.expectation.kind == "decision"]
+
+
+def test_a_later_proposal_does_not_start_the_decision_ladder_again(env: Env) -> None:
+    """The ladder counts from the first change that awaits a decision; a proposal is not one."""
+    propose(env, "main", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(600)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=299) == []
+    assert decision_steps(env, after=300) == [("owner", "wake")]
+
+
+def test_a_change_of_the_owner_side_awaits_the_main_agent_whatever_the_owner_side_does(
+    env: Env,
+) -> None:
+    """The Owner side cannot approve its own change: waking it is no use, and its calls are no
+    sign that the decision is coming. The main agent is alerted, then the human."""
+    first = propose(env, "owner_a", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(800)
+    assert env.call("owner_a", "contract.read", project_id=env.project_a).ok
+    propose(env, "owner_a", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=99) == []
+    assert decision_steps(env, after=100) == [("main-agent", "alert_main")]
+    assert env.continuity is not None
+    (alert,) = env.continuity.due(env.clock.now() + timedelta(seconds=100))
+    assert first in alert.expectation.detail
+    assert "the operator or the main agent decides" in alert.expectation.detail
+    env.continuity.taken(alert, env.clock.now() + timedelta(seconds=100))
+    assert decision_steps(env, after=100 + 3599) == []
+    assert decision_steps(env, after=100 + 3600) == [("main-agent", "alert_human")]
+
+
+def test_a_decision_that_leaves_another_change_moves_the_task_to_it(env: Env) -> None:
+    """ADR 0021 left the decision task ended by any decision, even with another change still to
+    decide. The task now moves to the oldest change left, carried by whoever decides that one,
+    and counts from the decision."""
+    owners = propose(env, "owner_a", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(60)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=840) == [("main-agent", "alert_main")]
+    env.clock.advance(600)
+    assert env.call("main", "contract.reject", project_id=env.project_a, change_id=owners).ok
+    assert decision_steps(env, after=899) == []
+    assert decision_steps(env, after=900) == [("owner", "wake")]
+
+
+def test_a_decision_moves_the_task_to_the_next_change_of_the_same_carrier(env: Env) -> None:
+    """The next change may have the same carrier: the task is still a new one, counted from the
+    decision, not from the change decided. (The operator decides here: a call of the Owner side
+    would count as its activity anyway.)"""
+    first = propose(env, "main", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(60)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    env.clock.advance(600)
+    assert env.call("operator", "contract.reject", project_id=env.project_a, change_id=first).ok
+    assert decision_steps(env, after=899) == []
+    assert decision_steps(env, after=900) == [("owner", "wake")]
+
+
+def test_a_version_that_leaves_no_change_to_approve_ends_the_decision(env: Env) -> None:
+    """A change proposed on an older version can no longer be approved: no one is woken for
+    it, whoever wrote the new version."""
+    propose(env, "main", env.project_a, note(7, "EXG-01"))
+    assert env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="one more requirement",
+        operations=[wire(put(requirement(4)))],
+    ).ok
+    assert decision_steps(env, after=86_400) == []
+
+
 def criterion_with_test(
     story_id: str = "US-E1-02", test: str = "checks/sub.txt::test_sub"
 ) -> dict[str, str]:
@@ -806,6 +889,46 @@ def test_the_log_says_why_the_contractors_task_waits_and_when_it_goes_on(env: En
     assert delivery_task_log(env, env.project_a)[2:] == [released]
 
 
+def test_an_approval_while_the_base_is_announced_is_not_lost(env: Env) -> None:
+    """The delivery loop's thread reads the contract, then creates the Contractor's task; an
+    approval on a listener's thread may land between the two. Both run under the continuity's
+    lock: the approval waits, then finds the task and releases it (T12)."""
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    read_pending = env.contracts.pending
+    approvals: list[threading.Thread] = []
+
+    def pending_then_an_approval(principal: Principal, project_id: str) -> list[PendingChange]:
+        found = read_pending(principal, project_id)
+        if not approvals:  # once: the approval of the change just read as pending
+            approval = threading.Thread(
+                target=lambda: env.call(
+                    "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+                )
+            )
+            approvals.append(approval)
+            approval.start()
+            approval.join(0.5)  # done by now, unless the lock holds it back
+        return found
+
+    env.contracts.pending = pending_then_an_approval  # type: ignore[method-assign]  # reason: the window between the read and the task
+    base_prepared(env, env.project_a)
+    approvals[0].join()
+    assert env.contracts.read(OPERATOR, env.project_a).number == 2  # the change was approved
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def test_a_hub_that_starts_again_acts_on_a_change_it_had_no_time_to_act_upon(env: Env) -> None:
+    """The hub wrote a version, then stopped before it released the task the version made
+    ready. At its next start the tasks it kept follow the contract as it is (T12)."""
+    base_prepared(env, env.project_a)
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    env.contracts.approve(OPERATOR, env.project_a, change_id)  # written; nothing acted upon
+    assert contractor_steps(env, after=86_400) == []
+    env.hub.check_tasks()
+    assert delivery_task_log(env, env.project_a)[-1]["step"] == "release"
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
 def test_each_project_waits_for_its_own_contract(env: Env) -> None:
     """Two projects, two ladders: the contract of one moves only its own Contractor."""
     seed_contract(env, env.project_b)
@@ -834,7 +957,8 @@ def test_the_events_of_the_delivery_loop_reach_the_main_agent(env: Env) -> None:
         "delivery.decided",
         {"project_id": env.project_a, "delivery_id": "d_0001", "decision": "PASS"},
     )
-    assert env.notifications == [
+    assert env.notifications == []  # queued: the delivery loop does not wait for the receiver
+    assert env.send_notifications() == [
         (
             "delivery.decided",
             {
@@ -848,6 +972,23 @@ def test_the_events_of_the_delivery_loop_reach_the_main_agent(env: Env) -> None:
     assert env.last(env.project_a).action.value == "notification.sent"
 
 
+def documented_events(prefix: str) -> list[str]:
+    """The events the table of docs/notifications.md documents, by name."""
+    text = (Path(__file__).parents[3] / "docs" / "notifications.md").read_text(encoding="utf-8")
+    return re.findall(rf"^\| `({re.escape(prefix)}[a-z_.]+)` \|", text, flags=re.MULTILINE)
+
+
+def test_every_documented_event_of_the_delivery_loop_reaches_the_main_agent(env: Env) -> None:
+    """T03 (I1): `delivery.reviewed` was documented and emitted, but never sent. The events
+    relayed are the documented ones, no more, no fewer."""
+    documented = documented_events("delivery.")
+    assert sorted(documented) == sorted(NOTIFIED_EVENTS)
+    for event in documented:
+        env.hub.notified(event, {"project_id": env.project_a, "delivery_id": "d1"})
+    env.hub.notified("staging.prepared", {"project_id": env.project_a})
+    assert [event for event, _payload in env.send_notifications()] == documented
+
+
 def test_a_refused_notification_is_logged_with_its_reason(env: Env) -> None:
     """EXG-48: the hub refused the host before sending; the log says so, with the code."""
     env.refuse_notifications.append("elsewhere.example")
@@ -855,6 +996,7 @@ def test_a_refused_notification_is_logged_with_its_reason(env: Env) -> None:
         "delivery.decided",
         {"project_id": env.project_a, "delivery_id": "d_0001", "decision": "PASS"},
     )
+    env.send_notifications()
     records = list(env.records())
     refused = [r for r in records if r.action is Action.EGRESS]
     assert refused
@@ -903,7 +1045,7 @@ def test_a_simulated_run_marks_its_events(env: Env) -> None:
         "delivery.decided",
         {"project_id": simulated.project_a, "delivery_id": "d_1", "decision": "PASS"},
     )
-    assert simulated.notifications[-1][1]["simulation"] is True
+    assert simulated.send_notifications()[-1][1]["simulation"] is True
 
 
 def test_the_owner_learns_the_shape_of_a_change_from_the_tool_itself() -> None:
@@ -997,4 +1139,46 @@ def test_acceptance_put_warns_when_the_story_of_the_criterion_covers_nothing(env
     assert response.ok, response.failure
     assert response.data is not None
     assert response.data["named_by"] == []
+    assert response.data["warning"] == _NOT_RUN
+
+
+def test_acceptance_put_counts_a_pending_change_that_names_the_file(env: Env) -> None:
+    """The third run: the Owner side proposed the criteria that name its tests, and put the
+    tests before the approval. A file named by a change awaiting a decision is not one the gate
+    never runs (audit of A2, C49 point 4)."""
+    attach_deliveries(env)
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    response = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == []
+    assert response.data["named_by_pending"] == {change_id: ["US-E1-02.2"]}
+    warning = str(response.data["warning"])
+    assert "does not run it" not in warning
+    assert f"once change {change_id} is approved" in warning
+    # approved, the change is the contract: the file is named, nothing to warn of
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    again = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert again.data is not None
+    assert (again.data["named_by"], again.data["named_by_pending"]) == (["US-E1-02.2"], {})
+    assert "warning" not in again.data
+
+
+def test_acceptance_put_ignores_a_change_that_can_no_longer_be_approved(env: Env) -> None:
+    """A change proposed on an older version cannot be approved: it names nothing that will
+    run."""
+    attach_deliveries(env)
+    propose(env, "owner_a", env.project_a, criterion_with_test())
+    assert env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="one more requirement",
+        operations=[wire(put(requirement(4)))],
+    ).ok
+    response = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert response.data is not None
+    assert response.data["named_by_pending"] == {}
     assert response.data["warning"] == _NOT_RUN

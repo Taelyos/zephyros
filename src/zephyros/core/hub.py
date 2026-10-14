@@ -30,21 +30,33 @@ from zephyros.core.audit import (
     format_line,
 )
 from zephyros.core.clock import Clock, SystemClock, format_time
-from zephyros.core.continuity import HOLD, RELEASE, Continuity, TaskState, delivery_waits_for
+from zephyros.core.continuity import (
+    DELIVERY,
+    HOLD,
+    RELEASE,
+    Continuity,
+    TaskState,
+    awaited_decision,
+    delivery_waits_for,
+)
 from zephyros.core.contract import (
     Change,
     ContractError,
     ContractService,
+    Objects,
     Operation,
+    apply_operations,
+    approvable,
     parse_change,
     validate_object,
 )
-from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict
+from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict, report_for
 from zephyros.core.errors import Refusal, remedy
 from zephyros.core.gate import Inspected, every_acceptance_test
 from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.projects import CREATE_INPUT, ProjectService
@@ -53,10 +65,11 @@ from zephyros.core.schema import Array, Choice, Field, Free, Integer, Problem, T
 from zephyros.core.sources import REFUSAL as SOURCE_REFUSAL
 from zephyros.core.sources import accepted as source_accepted
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
-from zephyros.core.webhooks import NotifyResult
 from zephyros.core.writing import forbidden_terms_in
 
 SYSTEM_PRINCIPAL = "hub"
+NOTIFIED_EVENTS: Final = ("delivery.decided", "delivery.loop", "delivery.reviewed")
+"""The events of the delivery loop the main agent is told of (docs/notifications.md)."""
 
 
 def _instance_side(principal: Principal) -> Side | None:
@@ -325,7 +338,8 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
         _spec(
             "delivery.status",
             Action.DELIVERY_STATUS,
-            "Describe a delivery: its state, the decision, the evidence report, the pull request.",
+            "Describe a delivery: its state, the decision, the evidence report, the pull request. "
+            "The Contractor reads the report without the output of the run.",
             _PROJECT,
             Field("delivery_id", Text(pattern=r"d[0-9]{1,6}"), "The delivery", required=True),
             scoped=True,
@@ -434,6 +448,18 @@ def _operation_data(operation: Operation) -> dict[str, object]:
     return {"op": "delete", "id": operation.id}
 
 
+def _criteria_naming(objects: Objects, path: str) -> list[str]:
+    """The criteria the gate runs that name a test of the file `path`, by identifier."""
+    run = set(every_acceptance_test(objects))
+    return sorted(
+        key
+        for key, item in objects.items()
+        if item.get("type") == "criterion"
+        and str(item.get("test") or "") in run
+        and str(item.get("test") or "").startswith(path + "::")
+    )
+
+
 def _flagged_terms(change: Change) -> dict[str, list[str]]:
     """EXG-29: the requirements and criteria of a change whose text holds a forbidden term.
     A flag, never a refusal: the Owner decides what to do with it."""
@@ -461,7 +487,7 @@ class Hub:
         instances: InstanceControl,
         deliveries: DeliveryService | None = None,
         continuity: Continuity | None = None,
-        notify: Callable[[str, Mapping[str, object]], NotifyResult] | None = None,
+        notifier: Notifier | None = None,
         clock: Clock | None = None,
         refusals_per_minute: int | None = None,
         simulation: bool = False,
@@ -473,7 +499,7 @@ class Hub:
         self._projects = projects
         self._instances = instances
         self._continuity = continuity
-        self._notify = notify or (lambda _event, _payload: NotifyResult())
+        self._notifier = notifier
         self._clock = clock or SystemClock()
         self._budget = RefusalBudget(refusals_per_minute) if refusals_per_minute else None
         self._simulation = simulation
@@ -696,18 +722,36 @@ class Hub:
         )
 
     def _contract_changed(self, project_id: str) -> None:
-        """A version or a pending change came or went: the Contractor's task is held while the
-        contract is not ready for it, and its ladder starts once it is (US-E7-01). The log says
-        each change, so that a held task is not mistaken for a ladder that stopped."""
+        """A version or a pending change came or went (US-E7-01). The decision the project
+        awaits follows the oldest change that could still be approved, carried by whoever is to
+        decide it (ADR 0023). The Contractor's task is held while the contract is not ready for
+        it, and its ladder starts once it is (ADR 0021); the log says each change, so that a held
+        task is not mistaken for a ladder that stopped. The contract is read under the
+        continuity's lock: a task created meanwhile by the delivery loop's thread is either seen
+        here, or created from the contract as it is now."""
         if self._continuity is None:
             return
-        side = Side.CONTRACTOR.value
-        why = self._delivery_waits_for(project_id)
-        if why is not None:
-            if self._continuity.hold(project_id, side, why):
-                self._record_delivery_task(project_id, HOLD, why=why)
-        elif self._continuity.release(project_id, side, self._clock.now()):
-            self._record_delivery_task(project_id, RELEASE)
+        with self._continuity.locked():
+            version = self._contracts.read(OPERATOR, project_id)
+            pending = self._contracts.pending(OPERATOR, project_id)
+            now = self._clock.now()
+            self._continuity.await_decision(
+                project_id, awaited_decision(project_id, version, pending, now)
+            )
+            why = delivery_waits_for(version, pending)
+            if why is not None:
+                if self._continuity.hold(project_id, DELIVERY, why):
+                    self._record_delivery_task(project_id, HOLD, why=why)
+            elif self._continuity.release(project_id, DELIVERY, now):
+                self._record_delivery_task(project_id, RELEASE)
+
+    def check_tasks(self) -> None:
+        """At the start of the hub, the tasks kept from before follow the contract as it is now:
+        a change the hub wrote but had no time to act upon is acted upon."""
+        if self._continuity is None:
+            return
+        for project in self._projects.visible_to(OPERATOR):
+            self._contract_changed(project.id)
 
     def _record_delivery_task(self, project_id: str, step: str, **parameters: object) -> None:
         self._audit.append(
@@ -719,79 +763,43 @@ class Hub:
                 parameters={
                     "side": Side.CONTRACTOR.value,
                     "step": step,
-                    "task": "delivery",
+                    "task": DELIVERY,
                     **parameters,
                 },
             )
         )
 
     def notified(self, event: str, payload: Mapping[str, object]) -> None:
-        """The events of the delivery loop reach the continuity and the main agent."""
+        """The events of the delivery loop reach the continuity and the main agent. The
+        notification is queued: the thread that raised the event never waits for the receiver."""
         if event == "staging.prepared" and self._continuity is not None:
             project_id = str(payload["project_id"])
-            why = self._delivery_waits_for(project_id)
-            self._continuity.expect(
-                TaskState(
-                    project_id,
-                    Side.CONTRACTOR.value,
-                    "delivery",
-                    "the base of "
-                    f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is ready "
-                    "and awaits a delivery",
-                    self._clock.now(),
-                ),
-                held=why,
-            )
-            if why is not None:
-                self._record_delivery_task(project_id, HOLD, why=why)
-        if event in ("delivery.decided", "delivery.loop"):
+            # under the lock, so that a decision on another thread cannot fall between the read
+            # of the contract and the task it decides
+            with self._continuity.locked():
+                why = self._delivery_waits_for(project_id)
+                self._continuity.expect(
+                    TaskState(
+                        project_id,
+                        Side.CONTRACTOR.value,
+                        DELIVERY,
+                        "the base of "
+                        f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is "
+                        "ready and awaits a delivery",
+                        self._clock.now(),
+                    ),
+                    held=why,
+                )
+                if why is not None:
+                    self._record_delivery_task(project_id, HOLD, why=why)
+        if event in NOTIFIED_EVENTS and self._notifier is not None:
             marked = {**dict(payload), "simulation": self._simulation}
-            result = self._notify(event, marked)
-            project = str(payload.get("project_id", "")) or "hub"
-            parameters = {"event": event, **marked}
-            if result.refused:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.EGRESS,
-                        outcome=Outcome.REFUSED,
-                        reason=Reason.EGRESS,
-                        parameters={
-                            "host": result.refused,
-                            "purpose": "notification",
-                        },
-                    )
-                )
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.ERROR,
-                        parameters={**parameters, "error": Reason.EGRESS.value},
-                    )
-                )
-            elif result.status is not None and not 200 <= result.status < 300:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.ERROR,
-                        parameters={**parameters, "error": f"status {result.status}"},
-                    )
-                )
-            else:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.OK,
-                        parameters=parameters,
-                    )
-                )
+            self._notifier.notify(
+                event,
+                marked,
+                stream=str(payload.get("project_id", "")) or HUB_STREAM,
+                record={"event": event, **marked},
+            )
 
     def _fail(
         self,
@@ -955,16 +963,19 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         path = str(arguments["path"])
         # The gate runs a file only through the criteria it runs, those of a story that covers a
-        # requirement or a constraint: say which of them name this file, if any.
+        # requirement or a constraint: say which of them name this file, in the version in force
+        # and in each change that could still be approved, if any.
         version = self._contracts.read(caller.principal, project_id)
-        run = set(every_acceptance_test(version.objects))
-        named_by = sorted(
-            key
-            for key, item in version.objects.items()
-            if item.get("type") == "criterion"
-            and str(item.get("test") or "") in run
-            and str(item.get("test") or "").startswith(path + "::")
-        )
+        named_by = _criteria_naming(version.objects, path)
+        named_by_pending: dict[str, list[str]] = {}
+        for change in approvable(version, self._contracts.pending(caller.principal, project_id)):
+            try:
+                after = apply_operations(version.objects, change.operations)
+            except ContractError:
+                continue  # it no longer applies: it cannot be approved either
+            named = _criteria_naming(after, path)
+            if named:
+                named_by_pending[change.id] = named
         digest = self._delivery_service().put_acceptance(
             project_id, path, str(arguments["content"])
         )
@@ -973,8 +984,14 @@ class Hub:
             "path": path,
             "sha256": digest,
             "named_by": named_by,
+            "named_by_pending": named_by_pending,
         }
-        if not named_by:
+        if not named_by and named_by_pending:
+            data["warning"] = (
+                "no criterion of the current contract names this file yet: the gate runs it "
+                f"once change {', or change '.join(named_by_pending)} is approved"
+            )
+        elif not named_by:
             data["warning"] = (
                 "no criterion of the current contract names this file in a story that covers a "
                 "requirement or a constraint: the gate does not run it"
@@ -990,7 +1007,7 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         record = self._delivery_service().declare(project_id, str(arguments["delivery_id"]))
         if self._continuity is not None:
-            self._continuity.answered(project_id, Side.CONTRACTOR.value)
+            self._continuity.answered(project_id, DELIVERY)
         data: dict[str, object] = {
             "project_id": project_id,
             "delivery_id": record.delivery_id,
@@ -1011,7 +1028,8 @@ class Hub:
             "changed_paths": list(record.changed_paths),
             "pull_request": record.pull_request,
             "detail": record.detail,
-            "report": record.report,
+            # the Contractor reads the outcome of each test, not the output of the run (T07)
+            "report": report_for(record, caller.principal),
             "contract_version": record.contract_version,
             "inspections": {key: dict(value) for key, value in record.inspections.items()},
             "review": dict(record.review) if record.review is not None else None,
@@ -1214,16 +1232,6 @@ class Hub:
             {"summary": arguments["summary"], "operations": arguments["operations"]}
         )
         pending = self._contracts.propose(caller.principal, project_id, change)
-        if self._continuity is not None:
-            self._continuity.expect(
-                TaskState(
-                    project_id,
-                    Side.OWNER.value,
-                    "decision",
-                    f"change {pending.id} of version {pending.base_version} awaits a decision",
-                    self._clock.now(),
-                )
-            )
         self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         return ToolResult(
@@ -1247,8 +1255,6 @@ class Hub:
     def _contract_approve(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
         version = self._contracts.approve(caller.principal, project_id, str(arguments["change_id"]))
-        if self._continuity is not None:
-            self._continuity.answered(project_id, Side.OWNER.value)
         self._contract_changed(project_id)
         return ToolResult(
             {"version_id": version.id, "number": version.number},
@@ -1264,8 +1270,6 @@ class Hub:
     def _contract_reject(self, caller: Caller, arguments: Mapping[str, object]) -> ToolResult:
         project_id = self._known_project(caller, arguments)
         resolved = self._contracts.reject(caller.principal, project_id, str(arguments["change_id"]))
-        if self._continuity is not None:
-            self._continuity.answered(project_id, Side.OWNER.value)
         self._contract_changed(project_id)
         return ToolResult(
             {"change_id": resolved.id, "status": resolved.status.value},
