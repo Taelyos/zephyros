@@ -737,6 +737,75 @@ def test_a_reserved_change_that_names_a_test_makes_the_contract_ready(env: Env) 
     assert contractor_steps(env, after=900) == ["wake"]
 
 
+ONE_MORE_REQUIREMENT = """\
+| ID | Requirement | Verification | Priority | Rationale |
+| --- | --- | --- | --- | --- |
+| EXG-03 | The system shall multiply. | T | P1 | Asked for |
+"""
+
+
+def test_an_import_releases_a_task_held_by_a_change_it_leaves_behind(env: Env) -> None:
+    """contract.import writes a version too: a change proposed on the version before it can no
+    longer be approved, so the Contractor's task goes on."""
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    base_prepared(env, env.project_a)
+    propose(env, "main", env.project_a, note(7, "EXG-02"))
+    assert contractor_steps(env, after=86_400) == []
+    env.clock.advance(3600)
+    imported = env.call(
+        "operator",
+        "contract.import",
+        project_id=env.project_a,
+        summary="one more requirement",
+        markdown=ONE_MORE_REQUIREMENT,
+    )
+    assert imported.ok, imported.failure
+    assert contractor_steps(env, after=899) == []
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def delivery_task_log(env: Env, project: str) -> list[dict[str, object]]:
+    """What the log says of the Contractor's task besides the steps of its ladder."""
+    records = [
+        json.loads(record.parameters)
+        for record in env.audit.read(project)
+        if record.action is Action.CONTINUITY and record.principal == "hub"
+    ]
+    return [record for record in records if record["step"] in ("hold", "release")]
+
+
+def test_the_log_says_why_the_contractors_task_waits_and_when_it_goes_on(env: Env) -> None:
+    """The operator tells a task held for want of a test from a ladder that stopped: each
+    change of the reason is recorded, and the release, and nothing when nothing changes."""
+    held = {"side": "contractor", "step": "hold", "task": "delivery"}
+    base_prepared(env, env.project_a)
+    assert delivery_task_log(env, env.project_a) == [{**held, "why": "no_acceptance_test"}]
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    other = propose(env, "main", env.project_a, note(7, "EXG-02"))
+    assert env.call("operator", "contract.reject", project_id=env.project_a, change_id=other).ok
+    assert delivery_task_log(env, env.project_a) == [
+        {**held, "why": "no_acceptance_test"},
+        {**held, "why": "pending_decision"},
+    ]
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    released = {"side": "contractor", "step": "release", "task": "delivery"}
+    assert delivery_task_log(env, env.project_a)[2:] == [released]
+    # a version that keeps the contract ready changes nothing of the task
+    assert env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="one more requirement",
+        operations=[wire(put(requirement(4)))],
+    ).ok
+    assert delivery_task_log(env, env.project_a)[2:] == [released]
+
+
 def test_each_project_waits_for_its_own_contract(env: Env) -> None:
     """Two projects, two ladders: the contract of one moves only its own Contractor."""
     seed_contract(env, env.project_b)

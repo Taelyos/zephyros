@@ -30,7 +30,7 @@ from zephyros.core.audit import (
     format_line,
 )
 from zephyros.core.clock import Clock, SystemClock, format_time
-from zephyros.core.continuity import Continuity, TaskState, ready_for_delivery
+from zephyros.core.continuity import HOLD, RELEASE, Continuity, TaskState, delivery_waits_for
 from zephyros.core.contract import (
     Change,
     ContractError,
@@ -688,27 +688,48 @@ class Hub:
         if side in (Side.OWNER.value, Side.CONTRACTOR.value):
             self._continuity.observe(caller.principal.project_id, side, self._clock.now())
 
-    def _delivery_held(self, project_id: str) -> bool:
-        """Whether the Contractor's task waits for its contract (ADR 0021)."""
-        return not ready_for_delivery(
+    def _delivery_waits_for(self, project_id: str) -> str | None:
+        """What the Contractor's task waits for in its contract, if anything (ADR 0021)."""
+        return delivery_waits_for(
             self._contracts.read(OPERATOR, project_id),
             self._contracts.pending(OPERATOR, project_id),
         )
 
     def _contract_changed(self, project_id: str) -> None:
         """A version or a pending change came or went: the Contractor's task is held while the
-        contract is not ready for it, and its ladder starts once it is (US-E7-01)."""
+        contract is not ready for it, and its ladder starts once it is (US-E7-01). The log says
+        each change, so that a held task is not mistaken for a ladder that stopped."""
         if self._continuity is None:
             return
-        if self._delivery_held(project_id):
-            self._continuity.hold(project_id, Side.CONTRACTOR.value)
-        else:
-            self._continuity.release(project_id, Side.CONTRACTOR.value, self._clock.now())
+        side = Side.CONTRACTOR.value
+        why = self._delivery_waits_for(project_id)
+        if why is not None:
+            if self._continuity.hold(project_id, side, why):
+                self._record_delivery_task(project_id, HOLD, why=why)
+        elif self._continuity.release(project_id, side, self._clock.now()):
+            self._record_delivery_task(project_id, RELEASE)
+
+    def _record_delivery_task(self, project_id: str, step: str, **parameters: object) -> None:
+        self._audit.append(
+            AuditEvent(
+                stream=project_id,
+                principal=SYSTEM_PRINCIPAL,
+                action=Action.CONTINUITY,
+                outcome=Outcome.OK,
+                parameters={
+                    "side": Side.CONTRACTOR.value,
+                    "step": step,
+                    "task": "delivery",
+                    **parameters,
+                },
+            )
+        )
 
     def notified(self, event: str, payload: Mapping[str, object]) -> None:
         """The events of the delivery loop reach the continuity and the main agent."""
         if event == "staging.prepared" and self._continuity is not None:
             project_id = str(payload["project_id"])
+            why = self._delivery_waits_for(project_id)
             self._continuity.expect(
                 TaskState(
                     project_id,
@@ -719,8 +740,10 @@ class Hub:
                     "and awaits a delivery",
                     self._clock.now(),
                 ),
-                held=self._delivery_held(project_id),
+                held=why,
             )
+            if why is not None:
+                self._record_delivery_task(project_id, HOLD, why=why)
         if event in ("delivery.decided", "delivery.loop"):
             marked = {**dict(payload), "simulation": self._simulation}
             result = self._notify(event, marked)

@@ -6,7 +6,8 @@ later the ladder woke the Contractor, which spent whole turns on a contract stil
 written. Here the hub is the real one, with its delivery loop (git staging area, directory
 forge) and its instance manager, which drives the filter in front of a fake container runtime.
 The test plays the worker's beat; what it checks is what the operator reads: the log
-(`continuity.step`, `turn.start`) and `instance.status`.
+(`continuity.step`, which also says when the task is held and why, and `turn.start`) and
+`instance.status`.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ pytestmark = pytest.mark.acceptance
 REPOSITORY = "example/calc"
 BASE = {"calc.py": b"def add(a, b):\n    return a + b\n", "README.md": b"# calc\n"}
 INACTIVITY = 900
+NO_TEST = "hold: no_acceptance_test"
+DECISION = "hold: pending_decision"
 
 
 @dataclass
@@ -119,13 +122,17 @@ class LadderWorld(World):
         lines = self.operator_tool("log.read", stream=project, limit=500)["records"]
         return [json.loads(line) for line in lines]
 
-    def ladder(self, project: str, side: str = "contractor") -> list[str]:
-        """The steps the ladder took for one side, from the log."""
-        return [
-            record["parameters"]["step"]
-            for record in self.log(project)
-            if record["action"] == "continuity.step" and record["parameters"]["side"] == side
-        ]
+    def story(self, project: str, side: str = "contractor") -> list[str]:
+        """What the log says of the task of one side: each step of its ladder, and each time
+        it was held (with why) or released."""
+        told = []
+        for record in self.log(project):
+            parameters = record["parameters"]
+            if record["action"] != "continuity.step" or parameters["side"] != side:
+                continue
+            step = parameters["step"]
+            told.append(f"{step}: {parameters['why']}" if step == "hold" else step)
+        return told
 
     def turns(self, project: str) -> list[str]:
         """The side of each turn started, from the log."""
@@ -228,18 +235,19 @@ def test_the_contractor_is_woken_only_once_its_contract_is_ready(world: LadderWo
     base_prepared(world, project)
     # The Owner side reads the base and writes for longer than the inactivity of a task.
     owner_works(world, project, rounds=4)
-    assert world.ladder(project) == []
+    # the log says why nothing happens: the task waits for a test, the ladder did not stop
+    assert world.story(project) == [NO_TEST]
     change_id = owner_writes_the_stories(world, project)
     owner_works(world, project, rounds=3)
     # proposed, not decided: the contract is still a draft
-    assert world.ladder(project) == []
+    assert world.story(project) == [NO_TEST, DECISION]
     assert world.status(project) == "absent"
     world.operator_tool("contract.approve", project_id=project, change_id=change_id)
     # The contract is ready. The ladder counts from the decision.
     world.beat(INACTIVITY - 1)
-    assert world.ladder(project) == []
+    assert world.story(project) == [NO_TEST, DECISION, "release"]
     world.beat(1)
-    assert world.ladder(project) == ["wake"]
+    assert world.story(project) == [NO_TEST, DECISION, "release", "wake"]
     assert world.turns(project) == ["contractor"]
     assert world.status(project) == "turn"
 
@@ -254,7 +262,8 @@ def test_a_change_proposed_during_a_turn_holds_the_ladder_until_it_is_decided(
         "contract.approve", project_id=project, change_id=owner_writes_the_stories(world, project)
     )
     world.beat(INACTIVITY)
-    assert world.ladder(project) == ["wake"]
+    woken = [NO_TEST, DECISION, "release", "wake"]
+    assert world.story(project) == woken
     # While the woken turn runs, the Owner side proposes a change; the turn is not stopped.
     note = {"type": "note", "id": "NB-001", "target": "EXG-01", "text": "Integers only."}
     change = world["owner_a"].tool(
@@ -268,12 +277,12 @@ def test_a_change_proposed_during_a_turn_holds_the_ladder_until_it_is_decided(
     world.docker.finish(turn_name(project, Side.CONTRACTOR))  # the turn ends with no delivery
     owner_works(world, project, rounds=4)
     # no restart, no alert while the contract is being changed
-    assert world.ladder(project) == ["wake"]
+    assert world.story(project) == [*woken, DECISION]
     assert world.status(project) == "idle"
     world.operator_tool("contract.approve", project_id=project, change_id=change.data["change_id"])
     world.beat(INACTIVITY)
     # the contract the Contractor is to build changed: the ladder starts again, from the wake
-    assert world.ladder(project) == ["wake", "wake"]
+    assert world.story(project) == [*woken, DECISION, "release", "wake"]
     assert world.turns(project) == ["contractor", "contractor"]
 
 
@@ -286,8 +295,8 @@ def test_each_project_wakes_its_contractor_for_its_own_contract(world: LadderWor
         "contract.approve", project_id=ready, change_id=owner_writes_the_stories(world, ready)
     )
     world.beat(INACTIVITY)
-    assert world.ladder(ready) == ["wake"]
-    assert world.ladder(draft) == []
+    assert world.story(ready) == [NO_TEST, DECISION, "release", "wake"]
+    assert world.story(draft) == [NO_TEST]
     assert world.status(draft) == "absent"
 
 
@@ -306,8 +315,8 @@ def test_after_a_restart_the_hub_wakes_no_contractor_on_what_it_forgot(
         "contract.approve", project_id=project, change_id=owner_writes_the_stories(world, project)
     )
     world.beat(INACTIVITY * 4)
-    assert world.ladder(project) == []
+    assert world.story(project) == [NO_TEST]  # said before the restart; nothing since
     assert world.status(project) == "absent"
     base_prepared(world, project)
     world.beat(INACTIVITY)
-    assert world.ladder(project) == ["wake"]
+    assert world.story(project) == [NO_TEST, "wake"]

@@ -4,17 +4,27 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from tests.unit.core.contract_fixtures import OWNER, PROJECT, change, make_service, note, put
+from tests.unit.core.contract_fixtures import (
+    OWNER,
+    PROJECT,
+    change,
+    make_service,
+    note,
+    put,
+    story,
+)
 from tests.unit.core.test_gate import contract
 from zephyros.core.continuity import (
     ALERT_HUMAN,
     ALERT_MAIN,
+    NO_ACCEPTANCE_TEST,
+    PENDING_DECISION,
     RESTART,
     WAKE,
     Continuity,
     TaskState,
     Timing,
-    ready_for_delivery,
+    delivery_waits_for,
 )
 from zephyros.core.principals import OPERATOR
 
@@ -99,11 +109,11 @@ def test_each_side_walks_its_own_ladder() -> None:
 def test_a_held_task_walks_no_ladder_until_it_is_released() -> None:
     """ADR 0021: the base is ready before the contract; the task waits for it, not the side."""
     continuity = Continuity(timing())
-    continuity.expect(state(), held=True)
+    continuity.expect(state(), held=NO_ACCEPTANCE_TEST)
     assert continuity.due(T0 + timedelta(days=1)) == []
     assert len(list(continuity.waiting())) == 1  # held, the task is still kept
     ready = T0 + timedelta(hours=5)
-    continuity.release("p_abcdef12", "contractor", ready)
+    assert continuity.release("p_abcdef12", "contractor", ready)
     # the ladder counts from the release, not from the moment the task began
     assert continuity.due(ready + timedelta(seconds=899)) == []
     (step,) = continuity.due(ready + timedelta(seconds=900))
@@ -115,15 +125,25 @@ def test_a_hold_stops_the_ladder_and_a_release_starts_it_again_from_the_wake() -
     continuity.expect(state())
     (wake,) = continuity.due(T0 + timedelta(seconds=900))
     continuity.taken(wake, T0 + timedelta(seconds=900))
-    continuity.hold("p_abcdef12", "contractor")
+    assert continuity.hold("p_abcdef12", "contractor", PENDING_DECISION)
     assert continuity.due(T0 + timedelta(days=1)) == []
     # the side's calls while held do not matter: the release sets the start
     continuity.observe("p_abcdef12", "contractor", T0 + timedelta(hours=2))
     released = T0 + timedelta(hours=3)
-    continuity.release("p_abcdef12", "contractor", released)
+    assert continuity.release("p_abcdef12", "contractor", released)
     assert continuity.due(released + timedelta(seconds=899)) == []
     (step,) = continuity.due(released + timedelta(seconds=900))
     assert step.kind == WAKE  # not the restart that came next before the hold
+
+
+def test_a_hold_and_a_release_say_whether_they_changed_the_task() -> None:
+    """What the hub logs: each change of why a task waits, and its release, nothing more."""
+    continuity = Continuity(timing())
+    continuity.expect(state(), held=NO_ACCEPTANCE_TEST)
+    assert not continuity.hold("p_abcdef12", "contractor", NO_ACCEPTANCE_TEST)
+    assert continuity.hold("p_abcdef12", "contractor", PENDING_DECISION)
+    assert continuity.release("p_abcdef12", "contractor", T0)
+    assert not continuity.release("p_abcdef12", "contractor", T0)
 
 
 def test_a_release_leaves_a_task_that_was_not_held_on_its_step() -> None:
@@ -131,34 +151,32 @@ def test_a_release_leaves_a_task_that_was_not_held_on_its_step() -> None:
     continuity.expect(state())
     (wake,) = continuity.due(T0 + timedelta(seconds=900))
     continuity.taken(wake, T0 + timedelta(seconds=900))
-    continuity.release("p_abcdef12", "contractor", T0 + timedelta(seconds=1000))
+    assert not continuity.release("p_abcdef12", "contractor", T0 + timedelta(seconds=1000))
     (step,) = continuity.due(T0 + timedelta(seconds=1800))
     assert step.kind == RESTART
 
 
 def test_a_held_task_is_answered_by_its_event_and_a_side_without_one_is_left_alone() -> None:
     continuity = Continuity(timing())
-    continuity.expect(state(), held=True)
-    continuity.hold("p_other999", "contractor")
-    continuity.release("p_other999", "contractor", T0)
-    continuity.release("p_abcdef12", "owner", T0)
+    continuity.expect(state(), held=NO_ACCEPTANCE_TEST)
+    assert not continuity.hold("p_other999", "contractor", PENDING_DECISION)
+    assert not continuity.release("p_other999", "contractor", T0)
+    assert not continuity.release("p_abcdef12", "owner", T0)
     assert [expectation.side for expectation in continuity.waiting()] == ["contractor"]
     assert continuity.due(T0 + timedelta(days=1)) == []
     assert continuity.answered("p_abcdef12", "contractor")
     assert list(continuity.waiting()) == []
 
 
-def test_the_contract_is_ready_for_delivery_once_it_names_a_test_and_nothing_can_change_it() -> (
-    None
-):
+def test_the_delivery_waits_for_a_test_the_gate_runs_and_for_every_decision() -> None:
     service, _, _ = make_service()
 
-    def ready() -> bool:
-        return ready_for_delivery(
+    def waits_for() -> str | None:
+        return delivery_waits_for(
             service.read(OPERATOR, PROJECT), service.pending(OPERATOR, PROJECT)
         )
 
-    assert not ready()  # no contract yet
+    assert waits_for() == NO_ACCEPTANCE_TEST  # no contract yet
     drafted = contract((1, "P1", ("test",), ()))
     drafted["US-E1-01.1"] = {
         "type": "criterion",
@@ -167,17 +185,25 @@ def test_the_contract_is_ready_for_delivery_once_it_names_a_test_and_nothing_can
         "text": "c",
     }
     service.apply_reserved(OPERATOR, PROJECT, change(*(put(item) for item in drafted.values())))
-    assert not ready()  # a story and its criterion, but no test named yet
+    assert waits_for() == NO_ACCEPTANCE_TEST  # a story and its criterion, but no test named yet
+    # a criterion names a test, but its story covers nothing: the gate never runs that test
+    loose = {"type": "criterion", "id": "US-E1-09.1", "story": "US-E1-09", "text": "c"}
+    proposed = service.propose(
+        OWNER, PROJECT, change(put(story(1, 9)), put({**loose, "test": "checks/b.py::test_b"}))
+    )
+    assert waits_for() == PENDING_DECISION  # a decision comes first: it may name the tests
+    service.approve(OPERATOR, PROJECT, proposed.id)
+    assert waits_for() == NO_ACCEPTANCE_TEST
     named = {**drafted["US-E1-01.1"], "test": "checks/a.py::test_a"}
     proposed = service.propose(OWNER, PROJECT, change(put(named)))
-    assert not ready()  # the test is proposed, not decided
+    assert waits_for() == PENDING_DECISION  # the test is proposed, not decided
     service.approve(OPERATOR, PROJECT, proposed.id)
-    assert ready()
+    assert waits_for() is None
     # two changes of this version await a decision: the contract may change again
     service.propose(OWNER, PROJECT, change(put(note(1, "EXG-01"))))
     newer = service.propose(OWNER, PROJECT, change(put(note(2, "EXG-01"))))
-    assert not ready()
+    assert waits_for() == PENDING_DECISION
     service.approve(OPERATOR, PROJECT, newer.id)
     # the other one was proposed on an older version: it can no longer be approved
     assert len(service.pending(OPERATOR, PROJECT)) == 1
-    assert ready()
+    assert waits_for() is None

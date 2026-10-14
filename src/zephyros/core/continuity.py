@@ -10,10 +10,11 @@ that states the task and what the hub keeps), restart it (the same, on a fresh i
 the main agent, then alert the human. Each step is due `continuity.inactivity_seconds` after the
 last activity or the previous step; the step after the restarts waits `continuity.unblock_seconds`.
 
-A task the side cannot carry yet is held: it walks no ladder until it is released, and then
-starts from the first step (ADR 0021). The Contractor's delivery is held while the contract is
-not ready for it (`ready_for_delivery`): the base is prepared first, for the Owner side to read
-it, and the Owner side writes the acceptance tests before the Contractor builds against them.
+A task the side cannot carry yet is held, for a reason the hub records: it walks no ladder
+until it is released, and then starts from the first step (ADR 0021). The Contractor's delivery
+is held while the contract is not ready for it (`delivery_waits_for`): the base is prepared
+first, for the Owner side to read it, and the Owner side writes the acceptance tests before the
+Contractor builds against them.
 
 The service is pure: it reads a clock and returns the steps that are due. Executing them — the
 instance commands, the alerts — belongs to the hub.
@@ -32,6 +33,15 @@ WAKE = "wake"
 RESTART = "restart"
 ALERT_MAIN = "alert_main"
 ALERT_HUMAN = "alert_human"
+HOLD = "hold"
+"""Not a step of the ladder: how the log records that a task is held, and why."""
+RELEASE = "release"
+"""Not a step of the ladder: how the log records that a held task starts its ladder."""
+
+NO_ACCEPTANCE_TEST = "no_acceptance_test"
+"""Why a delivery waits: the version in force names no acceptance test that the gate runs."""
+PENDING_DECISION = "pending_decision"
+"""Why a delivery waits: a change that could still be approved awaits a decision."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,15 +69,18 @@ class TaskState:
     since: datetime
 
 
-def ready_for_delivery(version: ContractVersion, pending: Iterable[PendingChange]) -> bool:
-    """Whether the contract is ready for the Contractor: the version in force names at least
-    one acceptance test (the criterion of a story that covers a requirement or a constraint),
-    and no change that could still be approved awaits a decision. Until then the Owner side is
-    still writing what the Contractor is to build, and a turn on it would be spent on a draft.
-    A change proposed on an older version can no longer be approved: it changes nothing."""
+def delivery_waits_for(version: ContractVersion, pending: Iterable[PendingChange]) -> str | None:
+    """What keeps the contract from being ready for the Contractor, or None once it is: the
+    version in force names at least one acceptance test (the criterion of a story that covers a
+    requirement or a constraint), and no change that could still be approved awaits a decision.
+    Until then the Owner side is still writing what the Contractor is to build, and a turn on it
+    would be spent on a draft. A change proposed on an older version can no longer be approved:
+    it changes nothing. A decision comes first, as it may name the tests."""
     if any(change.base_version == version.number for change in pending):
-        return False
-    return bool(every_acceptance_test(version.objects))
+        return PENDING_DECISION
+    if not every_acceptance_test(version.objects):
+        return NO_ACCEPTANCE_TEST
+    return None
 
 
 @dataclass(slots=True)
@@ -76,8 +89,9 @@ class Expectation:
     step: int = 0
     """How many steps of the ladder were taken."""
     last: datetime = field(default=None)  # type: ignore[assignment]  # reason: set on creation
-    held: bool = False
-    """The side cannot carry the task yet: no step is due until it is released."""
+    held: str | None = None
+    """Why the side cannot carry the task yet, if it cannot: no step is due until it is
+    released."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,26 +108,32 @@ class Continuity:
         self._timing = timing
         self._waiting: dict[tuple[str, str], Expectation] = {}
 
-    def expect(self, state: TaskState, *, held: bool = False) -> None:
-        """A task the hub now expects a side to carry; a held one waits for `release`."""
+    def expect(self, state: TaskState, *, held: str | None = None) -> None:
+        """A task the hub now expects a side to carry; one `held` for a reason waits for
+        `release`."""
         key = (state.project_id, state.side)
         self._waiting[key] = Expectation(state, last=state.since, held=held)
 
-    def hold(self, project_id: str, side: str) -> None:
-        """The side cannot carry its task for now: no step is due until `release`."""
+    def hold(self, project_id: str, side: str, why: str) -> bool:
+        """The side cannot carry its task for now, because of `why`: no step is due until
+        `release`. True when this changes what the hub keeps: the task was carried, or held for
+        another reason."""
         expectation = self._waiting.get((project_id, side))
-        if expectation is not None:
-            expectation.held = True
+        if expectation is None or expectation.held == why:
+            return False
+        expectation.held = why
+        return True
 
-    def release(self, project_id: str, side: str, at: datetime) -> None:
+    def release(self, project_id: str, side: str, at: datetime) -> bool:
         """The side can carry its task from `at`. A held task starts its ladder again, from the
-        first step: what the side is to do changed while it was held. A task that was not held
-        keeps its place on the ladder."""
+        first step, and True says so. A task that was not held keeps its place on the ladder."""
         expectation = self._waiting.get((project_id, side))
-        if expectation is not None and expectation.held:
-            expectation.held = False
-            expectation.step = 0
-            expectation.last = at
+        if expectation is None or expectation.held is None:
+            return False
+        expectation.held = None
+        expectation.step = 0
+        expectation.last = at
+        return True
 
     def answered(self, project_id: str, side: str) -> bool:
         """The event the side was expected to produce arrived."""
@@ -139,7 +159,7 @@ class Continuity:
         ladder = self.ladder()
         for key in sorted(self._waiting):
             expectation = self._waiting[key]
-            if expectation.held:
+            if expectation.held is not None:
                 continue  # nothing to wake the side for yet
             if expectation.step >= len(ladder):
                 continue  # the ladder is walked out; the expectation stays until answered

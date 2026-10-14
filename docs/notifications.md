@@ -31,6 +31,10 @@ still be approved awaits a decision. Preparing the base first, so that the Owner
 it, wakes no one. A change proposed while the Contractor works stops its ladder (a turn already
 running goes on). Once the contract is ready again, the ladder starts over from the wake.
 
+The log says why a task waits, so that a held task is not mistaken for a ladder that stopped. A
+`continuity.step` record with the step `hold` gives the reason in `why`: `no_acceptance_test`,
+or `pending_decision`. A record with the step `release` marks the start of the ladder.
+
 The ladder lives in the hub's memory. After a restart of the hub, a task begins again with the
 next preparation of a base or the next proposed change.
 
