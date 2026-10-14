@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "zephyros"
-version = "0.1.0"
+version = "0.2.0"
 description = "Project engineering for autonomous AI agents, built on Hermes Agent."
 readme = "README.md"
 requires-python = ">=3.12"
