@@ -203,6 +203,21 @@ def test_a_continuity_started_again_on_its_store_takes_each_ladder_back() -> Non
     assert after.release("p_zzzzzz99", DELIVERY, T0 + timedelta(days=1))
 
 
+def test_a_hold_and_a_release_are_kept_for_the_next_start() -> None:
+    store = InMemoryContinuityStore()
+    Continuity(timing(), store).expect(state())
+    assert Continuity(timing(), store).hold("p_abcdef12", DELIVERY, PENDING_DECISION)
+    held = Continuity(timing(), store)
+    assert held.due(T0 + timedelta(days=1)) == []
+    assert not held.hold("p_abcdef12", DELIVERY, PENDING_DECISION)  # the same reason, kept
+    released = T0 + timedelta(hours=2)
+    assert held.release("p_abcdef12", DELIVERY, released)
+    again = Continuity(timing(), store)
+    assert again.due(released + timedelta(seconds=899)) == []
+    (step,) = again.due(released + timedelta(seconds=900))
+    assert step.kind == WAKE
+
+
 def test_a_step_found_due_for_a_task_since_replaced_is_not_taken() -> None:
     """The watchdog asks what is due, then carries it out; meanwhile the base may be prepared
     again. The new task starts from the wake, whatever the step taken for the old one."""

@@ -4,6 +4,7 @@ each one recorded once, whatever came of it (EXG-43, EXG-48; T03)."""
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Mapping
 
@@ -158,3 +159,23 @@ def test_the_worker_waits_only_while_nothing_is_queued(queued: bool) -> None:
     notifier.wait(0.2 if not queued else 10)
     elapsed = time.monotonic() - started
     assert elapsed < 1 if queued else elapsed >= 0.2
+
+
+def test_a_notification_wakes_the_worker_that_waits() -> None:
+    """The worker sleeps in `wait` between notifications; one queued meanwhile goes out at once,
+    not at the end of the wait."""
+    notifier, _audit = make(Receiver())
+    waited: list[float] = []
+
+    def worker() -> None:
+        started = time.monotonic()
+        notifier.wait(10)
+        waited.append(time.monotonic() - started)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    time.sleep(0.3)  # the worker is in its wait by now
+    notify(notifier)
+    thread.join(15)
+    assert waited
+    assert waited[0] < 5

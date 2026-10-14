@@ -691,6 +691,19 @@ def test_a_decision_that_leaves_another_change_moves_the_task_to_it(env: Env) ->
     assert decision_steps(env, after=900) == [("owner", "wake")]
 
 
+def test_a_decision_moves_the_task_to_the_next_change_of_the_same_carrier(env: Env) -> None:
+    """The next change may have the same carrier: the task is still a new one, counted from the
+    decision, not from the change decided. (The operator decides here: a call of the Owner side
+    would count as its activity anyway.)"""
+    first = propose(env, "main", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(60)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    env.clock.advance(600)
+    assert env.call("operator", "contract.reject", project_id=env.project_a, change_id=first).ok
+    assert decision_steps(env, after=899) == []
+    assert decision_steps(env, after=900) == [("owner", "wake")]
+
+
 def test_a_version_that_leaves_no_change_to_approve_ends_the_decision(env: Env) -> None:
     """A change proposed on an older version can no longer be approved: no one is woken for
     it, whoever wrote the new version."""

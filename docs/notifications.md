@@ -24,8 +24,9 @@ the instances go on.
 The hub keeps up to two tasks for each project, each carried by one side (`side` in the
 alerts). The Contractor's task is a delivery, from the moment the base of its staging area is
 ready until a delivery is declared. The other is a decision, while a change of the contract that
-could still be approved awaits one. Any call from the side that carries a task counts as
-activity. A task without activity for `continuity.inactivity_seconds` walks the ladder: the hub
+could still be approved awaits one. Any call of the instance that carries a task counts as
+activity; the calls of the main agent do not, so its alerts come when they are due. A task
+without activity for `continuity.inactivity_seconds` walks the ladder: the hub
 wakes the instance with a turn that states the task, then restarts it, then sends
 `continuity.alert_main`, then `continuity.alert_human`.
 
