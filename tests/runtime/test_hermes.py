@@ -16,6 +16,7 @@ import shlex
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -410,7 +411,7 @@ def test_the_deployment_writes_its_configuration_where_it_was_told(
 
 
 # ----------------------------------------------------------------------------- ADR 0024
-def _egress(zephyros: Deployment, project: str) -> list[dict[str, object]]:
+def _egress(zephyros: Deployment, project: str) -> list[dict[str, Any]]:
     return [r for r in zephyros.records(project) if r["action"] == "instance.egress"]
 
 
