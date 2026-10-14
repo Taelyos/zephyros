@@ -535,7 +535,6 @@ def flags_of(report: str) -> str:
     return report.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
 
 
-@pytest.mark.xfail(strict=True, reason="A2a: the report reasons by file until the fix")
 def test_the_report_names_the_tests_that_never_ran_and_no_file_the_tests_use(
     kit_world: World,
 ) -> None:

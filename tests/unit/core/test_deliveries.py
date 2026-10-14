@@ -28,6 +28,7 @@ from zephyros.core.deliveries import (
     DeliveryState,
     StaleRecordError,
     Verdict,
+    deselected_tests,
     flagged_paths,
     report_for,
 )
@@ -618,15 +619,47 @@ def test_the_report_names_the_version_of_each_acceptance_test_that_ran() -> None
     assert f"`checks/add.txt` (`{digest}`)" in report
 
 
-def test_an_acceptance_file_no_criterion_names_is_flagged_in_the_report() -> None:
-    """C49: the Owner of the third real run put a test no criterion named; it never ran."""
-    made, project, _audit, _store = service()
+def test_the_report_names_the_tests_the_kit_never_ran_and_marks_no_file() -> None:
+    """A2a: the third real run's Owner found a test of a named file that never ran, and kept a
+    support module its tests used. The report names the test, and of the files only which one
+    no criterion names."""
+    made, project, audit, _store = service(runner=DeselectingRunner())
     ready(made, project)
-    made.put_acceptance(project, "checks/extra.txt", "test_extra: pass\n")
+    made.put_acceptance(project, "checks/add.txt", "test_add: pass\ntest_add_twice: pass\n")
+    made.put_acceptance(project, "checks/support.txt", "helper: used\n")
+    record = made.status(project, delivered(made, project))
+    assert record.outcomes == {"checks/add.txt::test_add": "passed"}
+    assert record.report is not None
+    lines = record.report.splitlines()
+    assert "- `checks/add.txt::test_add_twice`" in lines
+    delivery_line = next(line for line in lines if line.startswith("- Files of the Owner side"))
+    assert "`checks/support.txt` (`" in delivery_line
+    assert delivery_line.endswith(", named by no criterion)")  # support.txt only
+    assert delivery_line.count("named by no criterion") == 1
+    runs = [r for r in audit.read(project, 0, 1000) if r.action is Action.VERIFICATION_RUN]
+    assert json.loads(runs[-1].parameters)["never_run"] == 1
+
+
+def test_a_delivery_whose_kit_ran_every_test_of_its_files_has_no_flag() -> None:
+    """The computation, not only the rendering: nothing unnamed, nothing deselected, no flag."""
+    made, project, _audit, _store = service(runner=DeselectingRunner())
+    ready(made, project)
+    made.put_acceptance(project, "checks/add.txt", "test_add: pass\n")
     report = made.status(project, delivered(made, project)).report
     assert report is not None
-    assert "Acceptance test files that no criterion names (they never run):" in report
-    assert "- `checks/extra.txt`" in report
+    assert "## Flags\n\nNone." in report
+    assert "named by no criterion" not in report
+
+
+def test_only_tests_of_the_files_the_kit_ran_and_never_one_asked_count_as_never_run() -> None:
+    """What a kit names as deselected is taken only where it can be true."""
+    result = KitResult(
+        {"a.py::test_a": VerificationOutcome.PASSED},
+        deselected=("a.py::test_b", "a.py::test_a", "elsewhere.py::test_c", "a.py::test_b"),
+    )
+    assert deselected_tests(result, ("a.py::test_a",)) == ("a.py::test_b",)
+    plain = VerificationResult({"a.py::test_a": VerificationOutcome.PASSED})
+    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a runner of the interface 0.1.0
 
 
 def _title_of(forge: InMemoryForge, number: int) -> str:

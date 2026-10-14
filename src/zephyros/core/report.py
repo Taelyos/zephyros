@@ -17,6 +17,8 @@ from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 
 LOG_EXCERPT = 4000
+LISTED_TESTS = 50
+"""The most tests that never ran the report names one by one; it counts the others."""
 INSPECTIONS_HEADING = "## Inspections recorded after the gate"
 
 
@@ -46,9 +48,13 @@ class ReportInput:
     flagged_paths: tuple[str, ...] = ()
     """The client's own files the delivery changes (ADR 0020): flagged, never refused."""
     acceptance_files: tuple[tuple[str, str], ...] = ()
-    """The acceptance tests of the Owner side the run used, with the digest of their content."""
+    """The files of the Owner side in the tree verified, with the digest of their content."""
     unnamed_acceptance_files: tuple[str, ...] = ()
-    """The acceptance test files of the Owner side that no criterion names: they never run."""
+    """Those that no criterion names. The kit runs no test from them, but a test it runs may use
+    them (a support module): the report says no file never runs."""
+    never_run_tests: tuple[str, ...] = ()
+    """The tests the kit found in the files it ran and did not run, since no criterion names
+    them (`path::name`, as the kit names them)."""
     missing_acceptance_files: tuple[str, ...] = ()
     """The files a criterion names that neither the Owner side nor the base holds (ATK-16)."""
     set_aside_paths: tuple[str, ...] = ()
@@ -102,10 +108,12 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
         f"- Branch: {_code(delivery.branch)}",
         f"- Base: {_code(delivery.base[:12])}, head: {_code(delivery.head[:12])}",
         f"- Contract: version {report.contract_version} ({_code(report.contract_hash[:12])})",
-        f"- Acceptance tests of the Owner side ({len(report.acceptance_files)}): "
+        f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(
-                f"{_code(path)} ({_code(digest)})" for path, digest in report.acceptance_files
+                f"{_code(path)} ({_code(digest)}"
+                + (", named by no criterion)" if path in report.unnamed_acceptance_files else ")")
+                for path, digest in report.acceptance_files
             )
             or "none"
         ),
@@ -152,8 +160,13 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             [_code(path) for path in report.flagged_paths],
         ),
         (
-            "Acceptance test files that no criterion names (they never run):",
-            [_code(path) for path in report.unnamed_acceptance_files],
+            "Tests that no criterion names, in the files the kit ran: they never ran.",
+            [_code(test) for test in report.never_run_tests[:LISTED_TESTS]]
+            + (
+                [f"and {len(report.never_run_tests) - LISTED_TESTS} more"]
+                if len(report.never_run_tests) > LISTED_TESTS
+                else []
+            ),
         ),
         (
             "Acceptance test files that a criterion names and neither the Owner side nor the "

@@ -47,6 +47,7 @@ from zephyros.core.ports.verification import (
 from zephyros.core.ports.verification import (
     VerificationError,
     VerificationRequest,
+    VerificationResult,
     VerificationRunner,
 )
 from zephyros.core.principals import OPERATOR, Principal, PrincipalKind
@@ -192,6 +193,19 @@ def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple
         path
         for path in changed
         if any(path == p or (p.endswith("/") and path.startswith(p)) for p in protected)
+    )
+
+
+def deselected_tests(result: VerificationResult, asked: tuple[str, ...]) -> tuple[str, ...]:
+    """The tests the kit found in the files it ran and did not run, since no criterion names
+    them: `VerificationResult.deselected` of the verification interface 0.2.0, as `path::name`.
+    Only tests of the asked files count, never a test asked for; a runner of the interface 0.1.0
+    names none."""
+    # Read by name until the interface 0.2.0 is in the port; then `result.deselected`.
+    found = getattr(result, "deselected", ())
+    files = {test.partition("::")[0] for test in asked}
+    return tuple(
+        sorted({str(test) for test in found if str(test).partition("::")[0] in files} - set(asked))
     )
 
 
@@ -706,16 +720,19 @@ class DeliveryService:
         ran = tuple(
             (path, hashlib.sha256(acceptance[path]).hexdigest()[:12]) for path in sorted(acceptance)
         )
-        # An acceptance test of the Owner side that no criterion names never runs: say so.
+        # A file of the Owner side that no criterion names holds no test the kit runs, but a
+        # test it runs may use it: the report says so, and never that the file does not run.
         unnamed = tuple(sorted(path for path in acceptance if path not in named_files))
         outcomes: dict[str, Any] = {}
         log = ""
+        never_run: tuple[str, ...] = ()
         if tests:
             result = self._runner.run(
                 VerificationRequest(project_id, self._kit, files, tests, self._timeout)
             )
             outcomes = dict(result.outcomes)
             log = result.log
+            never_run = deselected_tests(result, tests)
         self._record_event(
             project_id,
             Action.VERIFICATION_RUN,
@@ -724,6 +741,7 @@ class DeliveryService:
             kit=self._kit,
             tests=len(tests),
             passed=sum(1 for o in outcomes.values() if o.value == "passed"),
+            never_run=len(never_run),
         )
         gate = compute_gate(objects, outcomes)
         self._record_event(
@@ -751,6 +769,7 @@ class DeliveryService:
             flagged_paths=flagged,
             acceptance_files=ran,
             unnamed_acceptance_files=unnamed,
+            never_run_tests=never_run,
             missing_acceptance_files=missing,
             set_aside_paths=set_aside,
         )

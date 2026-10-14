@@ -11,6 +11,7 @@ from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 from zephyros.core.report import (
     INSPECTIONS_HEADING,
+    LISTED_TESTS,
     Cost,
     ReportInput,
     inspection_addendum,
@@ -98,19 +99,33 @@ def test_the_flagged_paths_are_listed_and_none_says_so() -> None:
     assert "- `CONTRACT.md`" in flagged
 
 
-def test_the_report_names_each_acceptance_test_file_it_ran_with_its_digest() -> None:
-    """The Owner of the second and third real runs asked twice: which version of its tests ran?"""
-    rendered = render(make(acceptance_files=(("test_a.py", "0123456789ab"),)))
-    assert "- Acceptance tests of the Owner side (1): `test_a.py` (`0123456789ab`)" in rendered
-    assert "- Acceptance tests of the Owner side (0): none" in render(make())
+def test_the_report_names_each_file_of_the_owner_side_with_its_digest() -> None:
+    """The Owner of the second and third real runs asked twice: which version of its tests ran?
+    A file no criterion names says so, and is never said not to run: a test may use it."""
+    rendered = render(
+        make(
+            acceptance_files=(("test_a.py", "0123456789ab"), ("support.py", "000000000001")),
+            unnamed_acceptance_files=("support.py",),
+        )
+    )
+    assert (
+        "- Files of the Owner side in the tree verified (2): `test_a.py` (`0123456789ab`), "
+        "`support.py` (`000000000001`, named by no criterion)"
+    ) in rendered.splitlines()
+    assert "## Flags\n\nNone." in rendered
+    assert "- Files of the Owner side in the tree verified (0): none" in render(make())
 
 
-def test_an_acceptance_file_that_no_criterion_names_is_flagged() -> None:
-    """C49: the Owner of the third real run noticed a test that never ran; the report says so."""
-    rendered = render(make(unnamed_acceptance_files=("tests/extra.py",)))
-    assert "Acceptance test files that no criterion names (they never run):" in rendered
-    assert "- `tests/extra.py`" in rendered
-    assert "## Flags\n\nNone." in render(make())  # nothing unnamed, nothing flagged
+def test_the_tests_that_never_ran_are_listed_and_counted_beyond_fifty() -> None:
+    """A2a: the kit ran only the tests a criterion names; the others in its files never ran."""
+    few = render(make(never_run_tests=("tests/t.py::test_extra",))).splitlines()
+    assert "Tests that no criterion names, in the files the kit ran: they never ran." in few
+    assert "- `tests/t.py::test_extra`" in few
+    many = tuple(f"tests/t.py::test_{n:03d}" for n in range(LISTED_TESTS + 3))
+    listed = render(make(never_run_tests=many)).splitlines()
+    assert f"- `{many[LISTED_TESTS - 1]}`" in listed
+    assert f"- `{many[LISTED_TESTS]}`" not in listed
+    assert "- and 3 more" in listed
 
 
 def test_a_named_file_nobody_holds_is_flagged_and_says_when_the_delivery_brought_it() -> None:
@@ -134,7 +149,7 @@ def test_every_kind_of_flag_reads_together() -> None:
     rendered = render(
         make(
             flagged_paths=("CONTRACT.md",),
-            unnamed_acceptance_files=("tests/extra.py",),
+            never_run_tests=("tests/t.py::test_extra",),
             missing_acceptance_files=("tests/gone.py",),
         )
     )
@@ -144,9 +159,9 @@ def test_every_kind_of_flag_reads_together() -> None:
         "\n"
         "- `CONTRACT.md`\n"
         "\n"
-        "Acceptance test files that no criterion names (they never run):\n"
+        "Tests that no criterion names, in the files the kit ran: they never ran.\n"
         "\n"
-        "- `tests/extra.py`\n"
+        "- `tests/t.py::test_extra`\n"
         "\n"
         "Acceptance test files that a criterion names and neither the Owner side nor the base "
         "holds (their tests cannot pass):\n"
