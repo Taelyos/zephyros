@@ -12,8 +12,9 @@ Nothing yet.
 
 ## [0.2.0] - 2026-10-14
 
-Fixes from two independent audits of 0.1.0, network access in three levels, and a
-verification kit that delivered code cannot forge. Release notes:
+Fixes from two independent audits of 0.1.0, network access in three levels, a
+verification kit that delivered code cannot forge, and the hardening of the operator channel, the
+main-agent endpoint, their tokens and the network guard. Release notes:
 [docs/release-notes/0.2.0.md](docs/release-notes/0.2.0.md).
 
 | Surface | 0.1.0 | 0.2.0 |

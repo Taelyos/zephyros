@@ -136,14 +136,14 @@ suite, on real containers. As collected by pytest, parametrized cases each count
 
 | Suite | Tests | What it covers |
 | --- | --- | --- |
-| `tests/unit/` | 2,366 | The hub, its adapters, the configuration, the kit, the replay tools; no container |
-| `tests/acceptance/` | 533 | Whole stories and attacks of the threat model through a real hub, with fakes for containers and the forge |
-| `tests/runtime/` | 141 | Real containers: the turn's hardening, the network guard and levels, the sandbox and the kit, real Hermes turns with a scripted model |
+| `tests/unit/` | 2,443 | The hub, its adapters, the configuration, the kit, the replay tools; no container |
+| `tests/acceptance/` | 534 | Whole stories and attacks of the threat model through a real hub, with fakes for containers and the forge |
+| `tests/runtime/` | 147 | Real containers: the turn's hardening, the network guard and levels, the listeners closed to an instance network without a guard, the sandbox and the kit, real Hermes turns with a scripted model |
 
-Without a container runtime, `scripts/check.sh` reports 2,898 passed and 142 skipped: every
+Without a container runtime, `scripts/check.sh` reports 2,976 passed and 148 skipped: every
 skipped test needs a container runtime (the runtime suite, with the conformance cases it runs
-against the real sandbox). It fails below 85 % branch coverage of the hub; on the CI run of this
-release, 1,716 of the hub's 1,842 branches are covered (93 %), and 96.7 % of the code in all,
+against the real sandbox). It fails below 85 % branch coverage of the hub; on the full check of
+this release, 1,784 of the hub's 1,910 branches are covered (93 %), and 96.8 % of the code in all,
 which counts the conformance suites and the dummy implementations shipped in the package.
 
 ## Limits

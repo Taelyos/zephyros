@@ -66,8 +66,8 @@ def test_the_addresses_of_this_namespace_include_the_loopback() -> None:
     assert ipaddress.IPv4Address("127.0.0.1") in interface_addresses()
 
 
-@pytest.mark.skipif(sys.platform.startswith("linux"), reason="not applicable: not Linux")
-def test_core_is_refused_outside_linux() -> None:
+def test_core_is_refused_outside_linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
     with pytest.raises(ListenError, match="Linux container"):
         interface_addresses()
 
