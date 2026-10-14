@@ -48,7 +48,8 @@
     "title": null,
     "text": "The service shall use the Python standard library only.",
     "priority": "P0",
-    "verification": "inspection"
+    "verification": "inspection",
+    "test": null
    },
    {
     "id": "EXG-01",
@@ -56,7 +57,8 @@
     "title": null,
     "text": "The service shall answer GET /status with the state of each check.",
     "priority": "P0",
-    "verification": "test"
+    "verification": "test",
+    "test": null
    },
    {
     "id": "EXG-02",
@@ -64,7 +66,8 @@
     "title": null,
     "text": "The service shall answer GET /status within 200 ms.",
     "priority": "P1",
-    "verification": "test"
+    "verification": "test",
+    "test": null
    },
    {
     "id": "LNK:US-E1-01>CTR-01",
@@ -72,7 +75,8 @@
     "title": null,
     "text": null,
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": null
    },
    {
     "id": "LNK:US-E1-01>EXG-01",
@@ -80,7 +84,8 @@
     "title": null,
     "text": null,
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": null
    },
    {
     "id": "LNK:US-E1-02>EXG-02",
@@ -88,7 +93,8 @@
     "title": null,
     "text": null,
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": null
    },
    {
     "id": "US-E1-01",
@@ -96,7 +102,8 @@
     "title": "See the state of each check",
     "text": "As an operator, I want the state of each check, so that I know what is down.",
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": null
    },
    {
     "id": "US-E1-01.1",
@@ -104,7 +111,8 @@
     "title": null,
     "text": "GET /status lists every configured check with its state.",
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": "test_status.py::test_lists_every_check"
    },
    {
     "id": "US-E1-02",
@@ -112,7 +120,8 @@
     "title": "A status page that answers fast",
     "text": "As an operator, I want the status at once, so that a dashboard can poll it.",
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": null
    },
    {
     "id": "US-E1-02.1",
@@ -120,7 +129,8 @@
     "title": null,
     "text": "GET /status answers within 200 ms with ten checks configured.",
     "priority": null,
-    "verification": null
+    "verification": null,
+    "test": "test_status.py::test_answers_within_200_ms"
    }
   ]
  },
@@ -182,7 +192,8 @@
       "title": null,
       "text": "The service shall use the Python standard library only.",
       "priority": "P0",
-      "verification": "inspection"
+      "verification": "inspection",
+      "test": null
      },
      {
       "id": "EXG-01",
@@ -190,7 +201,8 @@
       "title": null,
       "text": "The service shall answer GET /status with the state of each check.",
       "priority": "P0",
-      "verification": "test"
+      "verification": "test",
+      "test": null
      },
      {
       "id": "EXG-02",
@@ -198,7 +210,8 @@
       "title": null,
       "text": "The service shall answer GET /status within 200 ms.",
       "priority": "P1",
-      "verification": "test"
+      "verification": "test",
+      "test": null
      },
      {
       "id": "LNK:US-E1-01>CTR-01",
@@ -206,7 +219,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "LNK:US-E1-01>EXG-01",
@@ -214,7 +228,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "LNK:US-E1-02>EXG-02",
@@ -222,7 +237,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "US-E1-01",
@@ -230,7 +246,8 @@
       "title": "See the state of each check",
       "text": "As an operator, I want the state of each check, so that I know what is down.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "US-E1-01.1",
@@ -238,7 +255,8 @@
       "title": null,
       "text": "GET /status lists every configured check with its state.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": "test_status.py::test_lists_every_check"
      },
      {
       "id": "US-E1-02",
@@ -246,7 +264,8 @@
       "title": "A status page that answers fast",
       "text": "As an operator, I want the status at once, so that a dashboard can poll it.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      }
     ]
    }
@@ -558,7 +577,8 @@
       "title": null,
       "text": "The service shall use the Python standard library only.",
       "priority": "P0",
-      "verification": "inspection"
+      "verification": "inspection",
+      "test": null
      },
      {
       "id": "EXG-01",
@@ -566,7 +586,8 @@
       "title": null,
       "text": "The service shall answer GET /status with the state of each check.",
       "priority": "P0",
-      "verification": "test"
+      "verification": "test",
+      "test": null
      },
      {
       "id": "EXG-02",
@@ -574,7 +595,8 @@
       "title": null,
       "text": "The service shall answer GET /status within 200 ms.",
       "priority": "P1",
-      "verification": "test"
+      "verification": "test",
+      "test": null
      },
      {
       "id": "LNK:US-E1-01>CTR-01",
@@ -582,7 +604,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "LNK:US-E1-01>EXG-01",
@@ -590,7 +613,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "LNK:US-E1-02>EXG-02",
@@ -598,7 +622,8 @@
       "title": null,
       "text": null,
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "US-E1-01",
@@ -606,7 +631,8 @@
       "title": "See the state of each check",
       "text": "As an operator, I want the state of each check, so that I know what is down.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "US-E1-01.1",
@@ -614,7 +640,8 @@
       "title": null,
       "text": "GET /status lists every configured check with its state.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": "test_status.py::test_lists_every_check"
      },
      {
       "id": "US-E1-02",
@@ -622,7 +649,8 @@
       "title": "A status page that answers fast",
       "text": "As an operator, I want the status at once, so that a dashboard can poll it.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": null
      },
      {
       "id": "US-E1-02.1",
@@ -630,7 +658,8 @@
       "title": null,
       "text": "GET /status answers within 200 ms with ten checks configured.",
       "priority": null,
-      "verification": null
+      "verification": null,
+      "test": "test_status.py::test_answers_within_200_ms"
      }
     ]
    }

@@ -86,6 +86,9 @@ MASKED_KIND = "token-shaped secrets"
 PATTERN_KIND = "--redact patterns"
 RENAMED_KIND = "renamed names"
 """What `run.redactions` names: the kind of what was replaced, never what was replaced."""
+FREE_MAPS = frozenset({"outcomes", "flagged"})
+"""The dictionaries whose keys are data — test identifiers, contract objects — rather than the
+names of fields. Their keys are texts like any other; the names of fields are never changed."""
 
 DROPPED_PARAMETERS = frozenset({"source", "token_id"})
 """What a replay never carries: the caller's address, and the identifiers of the tokens."""
@@ -311,14 +314,16 @@ class Redactor:
                 self.replaced.add(kind)
         return masked
 
-    def value(self, value: Any) -> Any:
-        """Every text inside `value`, the keys of its dictionaries included."""
+    def value(self, value: Any, *, free_keys: bool = False) -> Any:
+        """Every text inside `value`, and the keys of a dictionary of `FREE_MAPS`: `--rename
+        delivery=x` must not turn the field `delivery_id` into `x_id`."""
         if isinstance(value, str):
             return self.text(value)
         if isinstance(value, Mapping):
             result: dict[str, Any] = {}
             for key, item in value.items():
-                result[distinct(self.text(str(key)), result)] = self.value(item)
+                name = distinct(self.text(str(key)), result) if free_keys else str(key)
+                result[name] = self.value(item, free_keys=str(key) in FREE_MAPS)
             return result
         if isinstance(value, (list, tuple)):
             return [self.value(item) for item in value]
@@ -448,11 +453,14 @@ class Hub:
 
 def read_transcript(path: Path) -> list[tuple[str, str, str, float]]:
     """The messages of an instance's conversation: (session, role, content, time)."""
-    db = connect_read_only(path)
     try:
-        rows = db.execute(_MESSAGES).fetchall()
-    finally:
-        db.close()
+        db = connect_read_only(path)
+        try:
+            rows = db.execute(_MESSAGES).fetchall()
+        finally:
+            db.close()
+    except sqlite3.Error as error:
+        raise ReplayError(f"--transcript {path}: cannot read it: {error}") from None
     return [
         (
             str(row["session_id"]),
@@ -503,7 +511,11 @@ def verify_chain(stream: str, records: Sequence[LogRecord]) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------- contract objects
 def contract_object(key: str, item: Mapping[str, Any]) -> dict[str, Any]:
-    """One contract object in the shape the format names; a field an object lacks is null."""
+    """One contract object in the shape the format names; a field an object lacks is null.
+
+    `verification` is the object's own when it has one (a criterion: an attack identifier or a
+    method letter), else its methods; `test` is the acceptance test a criterion names.
+    """
     methods = item.get("methods")
     if item.get("verification") is not None:
         verification: object = item["verification"]
@@ -518,6 +530,7 @@ def contract_object(key: str, item: Mapping[str, Any]) -> dict[str, Any]:
         "text": item.get("text"),
         "priority": item.get("priority"),
         "verification": verification,
+        "test": item.get("test"),
     }
 
 
@@ -1273,7 +1286,15 @@ def write_player(path: Path, payload: str) -> None:
     if not PLAYER_TEMPLATE.is_file():
         raise ReplayError(f"the player template is missing: {PLAYER_TEMPLATE}")
     template = PLAYER_TEMPLATE.read_text(encoding="utf-8")
-    path.write_text(player_document(template, payload), encoding="utf-8")
+    write_text(path, player_document(template, payload))
+
+
+def write_text(path: Path, text: str) -> None:
+    """Write a file of the exporter; a failure names the file."""
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as error:
+        raise ReplayError(f"cannot write {path}: {error.strerror or error}") from None
 
 
 # ----------------------------------------------------------------------------- the command line
@@ -1383,7 +1404,7 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.output is None:
             print(text)
         else:
-            arguments.output.write_text(text + "\n", encoding="utf-8")
+            write_text(arguments.output, text + "\n")
     except ReplayError as error:
         print(f"replay export: {error}", file=sys.stderr)
         return 2

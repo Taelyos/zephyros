@@ -86,10 +86,14 @@ others). Costs in the replay are computed from these rates; they are indicative.
 
 `contract_at_start` is the contract in force before the first event; `contract` is the one in
 force at the end of the exported range. Each is `version` (number), `version_id`, and `objects`,
-a list of `{id, type, title, text, priority, verification}` for the requirements (`EXG-…`),
-constraints (`CTR-…`), stories (`US-…`) and criteria. Fields a given object lacks are `null`. A
-run that starts before any contract has `version` and `version_id` `null` and no objects. Each
-version written in between is a `contract.version` event.
+a list of `{id, type, title, text, priority, verification, test}`, one for every object of the
+version: the requirements (`EXG-…`), constraints (`CTR-…`), stories (`US-…`) and criteria, and
+also the links (`LNK:<story>><requirement>`, whose two ends are in the identifier) and the notes
+(`NB-…`). `verification` is the object's own when it has one (for a criterion, an attack
+identifier or a method letter), otherwise its methods joined by commas (`test`,
+`inspection,test`); `test` is the acceptance test a criterion names (`path::name`). Fields a given
+object lacks are `null`. A run that starts before any contract has `version` and `version_id`
+`null` and no objects. Each version written in between is a `contract.version` event.
 
 ## Events
 
@@ -197,8 +201,10 @@ uv run --locked python -m tools.replay.export --db hub.db --project p_0123456789
 
 The exporter drops the network address of each caller (`source`), the token identifiers and the
 prompts themselves (only their length and digest are logged by the hub). Every text of the
-replay — summaries, data, transcripts, contract objects, the keys of a dictionary as well as its
-values — then goes through the same replacements:
+replay — summaries, data, transcripts, contract objects, and the keys of a dictionary that maps
+data (the outcomes of the tests, the flagged objects of a change) — then goes through the same
+replacements; the names of the fields never do (`--rename delivery=item` changes the summaries,
+not the field `delivery_id`):
 
 - a string shaped like a token (provider keys, forge tokens, hub tokens, cloud keys, private-key
   headers) becomes `[masked]`, as the hub masks its own log (EXG-49): transcripts, observations,

@@ -894,9 +894,25 @@ def test_the_contract_versions_become_events(hub: Path) -> None:
         "text": "The service shall answer on GET /status.",
         "priority": "P0",
         "verification": "test",
+        "test": None,
     }
     assert objects["US-E1-01.1"]["verification"] == "T"
     assert objects["US-E1-01.1"]["priority"] is None
+
+
+def test_a_criterion_keeps_the_test_that_verifies_it() -> None:
+    criterion = {
+        "type": "criterion",
+        "id": "US-E1-01.2",
+        "story": "US-E1-01",
+        "text": "The state shall list every check.",
+        "test": "test_status.py::test_lists_every_check",
+    }
+    shaped = export.contract_object("US-E1-01.2", criterion)
+    assert (shaped["verification"], shaped["test"]) == (
+        None,
+        "test_status.py::test_lists_every_check",
+    )
 
 
 def test_the_contract_is_the_one_in_force_at_the_end(hub: Path) -> None:
@@ -1059,6 +1075,16 @@ def test_the_keys_of_a_dictionary_are_redacted_and_renamed() -> None:
         }
     }
     assert redactor.replaced == {"private IPv4 addresses", "renamed names"}
+
+
+def test_a_rename_never_changes_the_name_of_a_field(hub: Path) -> None:
+    """`delivery` is in `delivery_id`, and `_` ends a name: the field must stay a field."""
+    document = replay(hub, renames=(("delivery", "item"),))
+    assert only(document, "delivery.declare")["data"]["delivery_id"] == "d1"
+    assert {item["delivery_id"] for item in document["totals"]["decisions"]} == {"d1"}
+    assert only(document, "delivery.declare")["summary"] == "Contractor declares item d1"
+    redactor = export.Redactor.of((), (("alpha-svc", "service-1"),))
+    assert redactor.value({"alpha-svc_id": "alpha-svc"}) == {"alpha-svc_id": "service-1"}
 
 
 # ----------------------------------------------------------------------------- renaming
@@ -1339,8 +1365,31 @@ def test_an_unknown_project_is_reported(hub: Path, capsys: pytest.CaptureFixture
 def test_a_database_that_cannot_be_read_is_reported(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert export.main(["--db", str(tmp_path / "absent.db"), "--project", PROJECT]) == 2
-    assert "cannot read" in capsys.readouterr().err
+    absent = tmp_path / "absent.db"
+    assert export.main(["--db", str(absent), "--project", PROJECT]) == 2
+    assert f"cannot read {absent}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("option", ["--output", "--html"])
+def test_a_file_that_cannot_be_written_is_named(
+    hub: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], option: str
+) -> None:
+    target = tmp_path / "no such directory" / "run.out"
+    assert export.main(["--db", str(hub), "--project", PROJECT, option, str(target)]) == 2
+    err = capsys.readouterr().err
+    assert f"cannot write {target}" in err
+    assert "cannot read" not in err
+
+
+def test_a_transcript_that_cannot_be_read_is_named(
+    hub: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    absent = tmp_path / "absent-state.db"
+    arguments = ["--db", str(hub), "--project", PROJECT, "--transcript", f"owner={absent}"]
+    assert export.main(arguments) == 2
+    err = capsys.readouterr().err
+    assert f"--transcript {absent}" in err
+    assert f"cannot read {hub}" not in err
 
 
 def test_an_unusable_redaction_pattern_is_reported(
