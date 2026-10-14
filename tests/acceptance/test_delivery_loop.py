@@ -560,3 +560,36 @@ def test_the_report_names_the_tests_that_never_ran_and_no_file_the_tests_use(
     assert "- `checks/sub.txt::test_sub_unknown`" in flags.splitlines()
     assert "checks/support.txt" not in flags  # it is used, not a test that never ran
     assert "never run" not in found["report"]  # no file is said never to run
+
+
+# ----------------------------------------------------------------------------- ATK-84, EXG-49
+BRANCH_CANARY = "ghp_abcdefghijklmnopqrstuvwxyz012345"  # pragma: allowlist secret (ATK-84)
+
+
+@pytest.mark.xfail(strict=True, reason="ATK-84: the branch name is not checked until the fix")
+def test_atk_84_a_branch_named_after_a_secret_is_refused_and_reaches_no_forge(
+    world: World, forge_root: Path
+) -> None:
+    """A canary planted in the name of the delivered branch reached the title of the pull request
+    and the branch pushed to the forge, neither of which was masked. Such a delivery is refused
+    when it is pushed: the name never enters the staging area, and the refusal says why with the
+    name masked."""
+    prepared(world)
+    branch = f"add-sub-{BRANCH_CANARY}"
+    response = push(world, make_bundle(ADD_SUB, base_for(world), branch), branch)
+    assert response.status_code == 400, response.text
+    assert BRANCH_CANARY not in response.text
+    assert "add-sub-[masked]" in response.text
+    world.run_jobs()
+    assert not (forge_root / "example" / "calc.pulls.json").exists()
+    refused = [
+        r
+        for r in world.records(world.project_a)
+        if r.action is Action.DELIVERY_PUSH and r.outcome is Outcome.REFUSED
+    ]
+    assert len(refused) == 1
+    assert all(BRANCH_CANARY not in r.parameters for r in world.records(world.project_a))
+    # The same work under a plain name goes through.
+    assert (
+        push(world, make_bundle(ADD_SUB, base_for(world), "add-sub"), "add-sub").status_code == 200
+    )
