@@ -47,6 +47,7 @@ from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import TokenService
 
@@ -80,7 +81,9 @@ class LadderWorld(World):
         self.database = Database(self.db_path)
         timing = replace(TIMING, turn_seconds=10**6, silence_seconds=10**6)
 
-        def manager(tokens: TokenService, audit: AuditLog, clock: Clock) -> InstanceControl:
+        def manager(
+            tokens: TokenService, audit: AuditLog, clock: Clock, notifier: Notifier
+        ) -> InstanceControl:
             self.manager = InstanceManager(
                 broker,
                 SqliteInstanceStore(self.database),
@@ -90,6 +93,7 @@ class LadderWorld(World):
                 timing,
                 sleep=self.clock.advance,
                 continuity=continuity,
+                notifier=notifier,
             )
             return self.manager
 

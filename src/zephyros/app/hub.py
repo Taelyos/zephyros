@@ -56,6 +56,7 @@ from zephyros.core.gateway import CredentialSource, GatewayService
 from zephyros.core.hub import Hub
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager, Timing
+from zephyros.core.notifications import Notifier, Send
 from zephyros.core.ports.forge import Forge
 from zephyros.core.ports.model_provider import ModelProvider
 from zephyros.core.ports.verification import INTERFACE_VERSION as VERIFICATION_VERSION
@@ -99,7 +100,7 @@ def prepare_tokens(config: Config, tokens: TokenService, hub_probe: Hub) -> None
         ensure_token_file(path, None if working else issuer().secret, working)
 
 
-InstanceFactory = Callable[[TokenService, AuditLog, Clock], InstanceControl]
+InstanceFactory = Callable[[TokenService, AuditLog, Clock, Notifier], InstanceControl]
 """Builds the instance control from services the hub creates, which it needs."""
 
 
@@ -110,6 +111,7 @@ class HubRuntime:
     gateway: GatewayService
     audit: AuditLog
     instances: InstanceControl
+    notifier: Notifier
     deliveries: DeliveryService | None = None
 
 
@@ -172,12 +174,11 @@ def build_egress(config: Config) -> EgressPolicy:
     return EgressPolicy([*[host_of(url) for url in urls if url], GITHUB_HOST])
 
 
-def build_notifier(
-    config: Config, *, post: Post | None = None
-) -> Callable[[str, Mapping[str, object]], NotifyResult] | None:
+def build_notifier(config: Config, *, post: Post | None = None) -> Send | None:
     """The signed notifications of the hub (EXG-43) under the egress policy (EXG-48): one signed
     delivery per event, none when the configuration leaves them off. A redirect away from the
-    configured hosts is refused, never followed."""
+    configured hosts is refused, never followed. It sends on the thread that calls it: the hub
+    calls it from the notifier's worker only."""
     if not config.notifications.url:
         return None
     policy = build_egress(config)
@@ -225,7 +226,7 @@ def build_hub(
     credentials: CredentialSource | None = None,
     delivery: DeliverySetup | None = None,
     continuity: Continuity | None = None,
-    notify: Callable[[str, Mapping[str, object]], NotifyResult] | None = None,
+    notify: Send | None = None,
     rejections_alert: int | None = None,
     refusals_per_minute: int | None = None,
     simulation: bool = False,
@@ -240,11 +241,12 @@ def build_hub(
     tokens = TokenService(SqliteTokenStore(database), clock)
     contracts = ContractService(SqliteContractStore(database), clock)
     projects = ProjectService(SqliteProjectStore(database), clock)
+    notifier = Notifier(audit, notify)
     if instances is not None:
         control = instances
     else:
         assert instance_factory is not None  # noqa: S101  # reason: checked at the top
-        control = instance_factory(tokens, audit, clock)
+        control = instance_factory(tokens, audit, clock, notifier)
     deliveries = None
     hub_box: list[Hub] = []
 
@@ -280,7 +282,7 @@ def build_hub(
         instances=control,
         deliveries=deliveries,
         continuity=continuity,
-        notify=notify,
+        notifier=notifier,
         clock=clock,
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
@@ -292,7 +294,7 @@ def build_hub(
         model=model,
         credentials=credentials,
     )
-    return HubRuntime(hub, tokens, gateway, audit, control, deliveries)
+    return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries)
 
 
 async def run(
@@ -321,7 +323,9 @@ async def run(
         broker = FilterClient.over_socket(config.paths.filter_socket)
         filter_client = broker
 
-        def factory(tokens: TokenService, audit: AuditLog, clock: Clock) -> InstanceControl:
+        def factory(
+            tokens: TokenService, audit: AuditLog, clock: Clock, notifier: Notifier
+        ) -> InstanceControl:
             return InstanceManager(
                 filter_client,
                 SqliteInstanceStore(database),
@@ -330,7 +334,7 @@ async def run(
                 clock,
                 Timing.from_config(config),
                 continuity=continuity,
-                notify=notify,
+                notifier=notifier,
             )
 
     forge, forge_credentials = build_forge(config)
@@ -375,6 +379,9 @@ async def run(
         workers.append(InstanceWorker(runtime.instances, config.runtime.poll_seconds))
     if runtime.deliveries is not None:
         workers.append(InstanceWorker(runtime.deliveries, config.runtime.poll_seconds))
+    # The notifications go out on a thread of their own, never on a listener's loop nor on a
+    # worker above; stopped last, so that it records what the others raised on their way out.
+    workers.append(InstanceWorker(runtime.notifier, config.runtime.poll_seconds))
     for worker in workers:
         worker.start()
     servers = [

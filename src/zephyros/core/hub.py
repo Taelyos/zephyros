@@ -45,6 +45,7 @@ from zephyros.core.gate import Inspected, every_acceptance_test
 from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.projects import CREATE_INPUT, ProjectService
@@ -53,10 +54,11 @@ from zephyros.core.schema import Array, Choice, Field, Free, Integer, Problem, T
 from zephyros.core.sources import REFUSAL as SOURCE_REFUSAL
 from zephyros.core.sources import accepted as source_accepted
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
-from zephyros.core.webhooks import NotifyResult
 from zephyros.core.writing import forbidden_terms_in
 
 SYSTEM_PRINCIPAL = "hub"
+NOTIFIED_EVENTS: Final = ("delivery.decided", "delivery.loop", "delivery.reviewed")
+"""The events of the delivery loop the main agent is told of (docs/notifications.md)."""
 
 
 def _instance_side(principal: Principal) -> Side | None:
@@ -461,7 +463,7 @@ class Hub:
         instances: InstanceControl,
         deliveries: DeliveryService | None = None,
         continuity: Continuity | None = None,
-        notify: Callable[[str, Mapping[str, object]], NotifyResult] | None = None,
+        notifier: Notifier | None = None,
         clock: Clock | None = None,
         refusals_per_minute: int | None = None,
         simulation: bool = False,
@@ -473,7 +475,7 @@ class Hub:
         self._projects = projects
         self._instances = instances
         self._continuity = continuity
-        self._notify = notify or (lambda _event, _payload: NotifyResult())
+        self._notifier = notifier
         self._clock = clock or SystemClock()
         self._budget = RefusalBudget(refusals_per_minute) if refusals_per_minute else None
         self._simulation = simulation
@@ -726,7 +728,8 @@ class Hub:
         )
 
     def notified(self, event: str, payload: Mapping[str, object]) -> None:
-        """The events of the delivery loop reach the continuity and the main agent."""
+        """The events of the delivery loop reach the continuity and the main agent. The
+        notification is queued: the thread that raised the event never waits for the receiver."""
         if event == "staging.prepared" and self._continuity is not None:
             project_id = str(payload["project_id"])
             why = self._delivery_waits_for(project_id)
@@ -744,54 +747,14 @@ class Hub:
             )
             if why is not None:
                 self._record_delivery_task(project_id, HOLD, why=why)
-        if event in ("delivery.decided", "delivery.loop"):
+        if event in NOTIFIED_EVENTS and self._notifier is not None:
             marked = {**dict(payload), "simulation": self._simulation}
-            result = self._notify(event, marked)
-            project = str(payload.get("project_id", "")) or "hub"
-            parameters = {"event": event, **marked}
-            if result.refused:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.EGRESS,
-                        outcome=Outcome.REFUSED,
-                        reason=Reason.EGRESS,
-                        parameters={
-                            "host": result.refused,
-                            "purpose": "notification",
-                        },
-                    )
-                )
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.ERROR,
-                        parameters={**parameters, "error": Reason.EGRESS.value},
-                    )
-                )
-            elif result.status is not None and not 200 <= result.status < 300:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.ERROR,
-                        parameters={**parameters, "error": f"status {result.status}"},
-                    )
-                )
-            else:
-                self._audit.append(
-                    AuditEvent(
-                        stream=project,
-                        principal=SYSTEM_PRINCIPAL,
-                        action=Action.NOTIFICATION,
-                        outcome=Outcome.OK,
-                        parameters=parameters,
-                    )
-                )
+            self._notifier.notify(
+                event,
+                marked,
+                stream=str(payload.get("project_id", "")) or HUB_STREAM,
+                record={"event": event, **marked},
+            )
 
     def _fail(
         self,

@@ -7,7 +7,9 @@ US-E2-03.
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -17,7 +19,7 @@ from hypothesis import strategies as st
 from tests.unit.core.contract_fixtures import note, put, requirement, story, wire
 from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
 from zephyros.core.audit import Action, Outcome, Reason
-from zephyros.core.hub import TOOL_SPECS
+from zephyros.core.hub import NOTIFIED_EVENTS, TOOL_SPECS
 from zephyros.core.rights import PERMISSIONS
 from zephyros.core.tokens import Endpoint
 
@@ -834,7 +836,8 @@ def test_the_events_of_the_delivery_loop_reach_the_main_agent(env: Env) -> None:
         "delivery.decided",
         {"project_id": env.project_a, "delivery_id": "d_0001", "decision": "PASS"},
     )
-    assert env.notifications == [
+    assert env.notifications == []  # queued: the delivery loop does not wait for the receiver
+    assert env.send_notifications() == [
         (
             "delivery.decided",
             {
@@ -848,6 +851,23 @@ def test_the_events_of_the_delivery_loop_reach_the_main_agent(env: Env) -> None:
     assert env.last(env.project_a).action.value == "notification.sent"
 
 
+def documented_events(prefix: str) -> list[str]:
+    """The events the table of docs/notifications.md documents, by name."""
+    text = (Path(__file__).parents[3] / "docs" / "notifications.md").read_text(encoding="utf-8")
+    return re.findall(rf"^\| `({re.escape(prefix)}[a-z_.]+)` \|", text, flags=re.MULTILINE)
+
+
+def test_every_documented_event_of_the_delivery_loop_reaches_the_main_agent(env: Env) -> None:
+    """T03 (I1): `delivery.reviewed` was documented and emitted, but never sent. The events
+    relayed are the documented ones, no more, no fewer."""
+    documented = documented_events("delivery.")
+    assert sorted(documented) == sorted(NOTIFIED_EVENTS)
+    for event in documented:
+        env.hub.notified(event, {"project_id": env.project_a, "delivery_id": "d1"})
+    env.hub.notified("staging.prepared", {"project_id": env.project_a})
+    assert [event for event, _payload in env.send_notifications()] == documented
+
+
 def test_a_refused_notification_is_logged_with_its_reason(env: Env) -> None:
     """EXG-48: the hub refused the host before sending; the log says so, with the code."""
     env.refuse_notifications.append("elsewhere.example")
@@ -855,6 +875,7 @@ def test_a_refused_notification_is_logged_with_its_reason(env: Env) -> None:
         "delivery.decided",
         {"project_id": env.project_a, "delivery_id": "d_0001", "decision": "PASS"},
     )
+    env.send_notifications()
     records = list(env.records())
     refused = [r for r in records if r.action is Action.EGRESS]
     assert refused
@@ -903,7 +924,7 @@ def test_a_simulated_run_marks_its_events(env: Env) -> None:
         "delivery.decided",
         {"project_id": simulated.project_a, "delivery_id": "d_1", "decision": "PASS"},
     )
-    assert simulated.notifications[-1][1]["simulation"] is True
+    assert simulated.send_notifications()[-1][1]["simulation"] is True
 
 
 def test_the_owner_learns_the_shape_of_a_change_from_the_tool_itself() -> None:

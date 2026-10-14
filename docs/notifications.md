@@ -4,11 +4,16 @@ The hub tells the main agent about the transitions it must not miss. It does so 
 signed webhooks of EXG-43: one HTTP delivery per event, signed, fresh and single-use. When
 `[notifications]` is empty, nothing is sent — the events are still recorded in the log.
 
+The hub never waits for the receiver. An event is queued where it happens, and a thread of the
+hub that does nothing else sends the queue in order. A receiver that takes its time delays only
+the notifications behind it: the listeners, the verification of deliveries and the watchdog of
+the instances go on.
+
 ## Events
 
 | Event | When | Fields |
 | --- | --- | --- |
-| `delivery.decided` | A delivery received its gate decision (PASS, CONCERNS, FAIL or ERROR), or a new one after an inspection (ADR 0020) | `project_id`, `delivery_id`, `branch`, `decision` |
+| `delivery.decided` | A delivery received its gate decision (PASS, CONCERNS or FAIL), or a new one after an inspection (ADR 0020); or it was refused before any test ran (REFUSED), or its verification could not run to an end (ERROR) | `project_id`, `delivery_id`, `branch`, `decision` |
 | `delivery.loop` | A streak of refused deliveries reached `continuity.rejections` without a pass in between (EXG-23) | `project_id`, `branch`, `rejections` |
 | `delivery.reviewed` | The Owner side recorded its verdict on a delivery (`accept`, `accept_with_reservations` or `reject`; ADR 0020): a `reject` is the main agent's to act on | `project_id`, `delivery_id`, `branch`, `decision`, `verdict`, `reasons` |
 | `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01) | `project_id`, `side`, `step`, `task`, `detail` |
@@ -55,9 +60,21 @@ delivery and never leaves the hub (EXG-49 masks it in logs and reports).
 - `X-Zephyros-Timestamp` — the moment of the signature, in seconds since the epoch.
 - `X-Zephyros-Signature` — `HMAC-SHA256(secret, "<delivery>.<timestamp>.<body>")`, hex.
 
-The body is JSON: `{"event": "...", ...fields}`. A receiver verifies the signature, refuses
-a timestamp older than five minutes and refuses a delivery identifier it has already seen;
-[docs/webhooks.md](webhooks.md) shows the reference verifier (`zephyros.core.webhooks`).
+The body is JSON: `{"event": "...", "schema_version": "...", ...fields}`. `schema_version` is
+the version of the event payloads, on every notification. The events of the delivery loop also
+carry `simulation`: `true` when the hub runs with the simulated model provider (EXG-46). A
+receiver verifies the signature, refuses a timestamp older than five minutes and refuses a
+delivery identifier it has already seen; [docs/webhooks.md](webhooks.md) shows the reference
+verifier (`zephyros.core.webhooks`).
 
-Every notification is recorded in the log as `notification.sent` (outcome `ok` or `error`),
-so what the main agent was told, and when, is auditable like any other action.
+Every notification is recorded in the log once, as `notification.sent`, so what the main agent
+was told, and when, is auditable like any other action. The outcome is `ok`, or `error` with
+the reason in `error`:
+
+| `error` | What happened |
+| --- | --- |
+| `status <code>` | The receiver answered with a status outside 2xx; a redirect is never followed |
+| `egress` | The hub refused the host before sending (EXG-48); an `egress.refused` record names it |
+| the kind of failure, such as `ConnectError` | The receiver could not be reached; the message is not kept, as it may hold the url |
+| `queue_full` | A thousand notifications were already waiting; this one was not queued |
+| `hub_stopped` | The hub stopped before it was sent |

@@ -28,7 +28,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -47,10 +47,10 @@ from zephyros.core.instances import (
     NoFreeSubnetError,
     allocate_subnet,
 )
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import instance_principal
 from zephyros.core.tokens import TokenService
-from zephyros.core.webhooks import NotifyResult
 
 SYSTEM_PRINCIPAL = "hub"
 LOST_ROUNDS = 3
@@ -129,7 +129,7 @@ class InstanceManager:
         sleep: Callable[[float], None] = time.sleep,
         new_instance_id: Callable[[], str] | None = None,
         continuity: Continuity | None = None,
-        notify: Callable[[str, Mapping[str, object]], NotifyResult] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self._broker = broker
         self._store = store
@@ -140,7 +140,7 @@ class InstanceManager:
         self._sleep = sleep
         self._new_instance_id = new_instance_id or (lambda: "i_" + secrets.token_hex(6))
         self._continuity = continuity
-        self._notify = notify or (lambda _event, _payload: NotifyResult())
+        self._notifier = notifier
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._live: dict[Key, _Live] = {}
@@ -481,43 +481,13 @@ class InstanceManager:
                     # the instance is busy: an active instance is not without activity
                     self._continuity.observe(project_id, side.value, self._clock.now())
                     continue
-            else:
-                result = self._notify("continuity." + step.kind, state)
-                self._record_notification(project_id, result, record_state)
+            elif self._notifier is not None:
+                # queued: the watchdog never waits for the receiver
+                self._notifier.notify(
+                    "continuity." + step.kind, state, stream=project_id, record=record_state
+                )
             self._continuity.taken(step, self._clock.now())
             self._record(project_id, Action.CONTINUITY, Outcome.OK, **record_state)
-
-    def _record_notification(
-        self, project_id: str, result: NotifyResult, record_state: Mapping[str, object]
-    ) -> None:
-        """What the log says of one alert: sent, answered by an error status, or refused before
-        it left (EXG-48)."""
-        if result.refused:
-            self._record(
-                project_id,
-                Action.EGRESS,
-                Outcome.REFUSED,
-                reason=Reason.EGRESS,
-                host=result.refused,
-                purpose="notification",
-            )
-            self._record(
-                project_id,
-                Action.NOTIFICATION,
-                Outcome.ERROR,
-                error=Reason.EGRESS.value,
-                **record_state,
-            )
-        elif result.status is not None and not 200 <= result.status < 300:
-            self._record(
-                project_id,
-                Action.NOTIFICATION,
-                Outcome.ERROR,
-                error=f"status {result.status}",
-                **record_state,
-            )
-        else:
-            self._record(project_id, Action.NOTIFICATION, Outcome.OK, **record_state)
 
     def _watch(self, live: _Live) -> None:
         project_id, side = live.key
