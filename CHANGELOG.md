@@ -25,8 +25,10 @@ version. Each schema carries its own version number.
 - The verification interface is 0.2.0: `VerificationResult.deselected` lists the tests the kit
   found in the asked files but did not run because no acceptance criterion named them. The kit
   signs it with the outcomes (`ZEPHYROS-OUTCOMES {"deselected": [...], "outcomes": {...}} <hmac>`).
-- The filter reads the whole log of a sandbox (up to 16 MiB) and believes nothing in a log that
-  was cut or that does not begin with the run line of the kit.
+- The filter reads the log of a sandbox from its beginning, as a stream, up to 16 MiB, and believes
+  nothing in a log that was cut or that does not begin with the run line of the kit. The kit holds
+  the asked test files to the SHA-256 the filter measured on the archive, and imports the bytes it
+  read when the run began. The container of a sandbox has a log configuration with no rotation.
 
 ### Fixed
 - The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`
