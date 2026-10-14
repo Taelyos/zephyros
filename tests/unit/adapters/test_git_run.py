@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from zephyros.adapters.git.run import GitError
+from zephyros.adapters.git.run import TIMEOUT_SECONDS, GitError
 from zephyros.adapters.git.run import git as safe_git
 
 
@@ -96,6 +96,24 @@ def test_a_hook_of_a_repository_never_runs_through_the_runner(tmp_path: Path) ->
     assert not marker.exists()
     # and the hook file itself has not been changed or executed since
     assert hook.read_text().startswith("#!/bin/sh")
+
+
+def test_a_git_that_hangs_is_stopped_and_named_without_a_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    given: list[object] = []
+
+    def hanging(command: list[str], **options: object) -> subprocess.CompletedProcess[bytes]:
+        given.append(options.get("timeout"))
+        raise subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", hanging)
+    with pytest.raises(GitError, match=r"^git fetch took too long$") as caught:
+        safe_git("fetch", str(tmp_path / "remote"), cwd=tmp_path)
+    assert str(tmp_path) not in str(caught.value)
+    with pytest.raises(GitError):
+        safe_git("push", cwd=tmp_path, timeout=5)
+    assert given == [TIMEOUT_SECONDS, 5]
 
 
 def test_a_failure_names_no_path_of_the_host(tmp_path: Path) -> None:
