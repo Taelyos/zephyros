@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -50,6 +50,32 @@ from zephyros.core.principals import MAIN_AGENT, OPERATOR, instance_principal
 from zephyros.core.projects import ProjectService
 
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
+
+
+@dataclass(frozen=True)
+class KitResult(VerificationResult):
+    """The answer of a kit of the verification interface 0.2.0: besides the outcomes, the tests
+    it found in the asked files and did not run, since no criterion names them (`path::name`)."""
+
+    deselected: tuple[str, ...] = ()
+
+
+class DeselectingRunner(AssertionRunner):
+    """The assertions runner, answering like a kit of the interface 0.2.0: every other test line
+    of an asked file is a test it saw and did not run."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        result = super().run(request)
+        asked = set(request.tests)
+        seen = [
+            f"{path}::{line.partition(':')[0].strip()}"
+            for path in sorted({test.partition("::")[0] for test in asked})
+            for line in request.files.get(path, b"").decode(errors="replace").splitlines()
+            if ":" in line
+        ]
+        return KitResult(
+            result.outcomes, result.log, deselected=tuple(t for t in seen if t not in asked)
+        )
 
 
 class Exploding(AssertionRunner):

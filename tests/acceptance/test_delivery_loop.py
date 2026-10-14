@@ -21,6 +21,7 @@ import pytest
 from tests.acceptance.world import World
 from tests.support.git_fixtures import make_bundle, make_forge_repository
 from tests.unit.core.contract_fixtures import put, wire
+from tests.unit.core.test_deliveries import DeselectingRunner
 from tests.unit.core.test_gate import contract
 from zephyros.adapters.dummy.verification import AssertionRunner
 from zephyros.adapters.git.forge import DirectoryForge
@@ -522,3 +523,41 @@ def test_the_main_agent_hears_of_a_refused_delivery_and_of_one_in_error(
         "branch": "watched",
         "decision": decision,
     }
+
+
+# ----------------------------------------------------------------------------- A2a (C49)
+@pytest.fixture
+def kit_world(tmp_path: Path, forge_root: Path) -> World:
+    return make_world(tmp_path, forge_root, DeselectingRunner())
+
+
+def flags_of(report: str) -> str:
+    return report.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
+
+
+@pytest.mark.xfail(strict=True, reason="A2a: the report reasons by file until the fix")
+def test_the_report_names_the_tests_that_never_ran_and_no_file_the_tests_use(
+    kit_world: World,
+) -> None:
+    """The shape of the third real run. The Owner side put a support module that its tests
+    use, and a named file that also held a test no criterion named: the kit ran only the named
+    one. The report called the support module never run, and said nothing of the test."""
+    world = kit_world
+    prepared(world, put_sub=False)
+    for path, content in (
+        ("checks/support.txt", "helper: what the tests of the Owner side use\n"),
+        (NEW_ACCEPTANCE, "test_sub: pass\ntest_sub_unknown: pass\n"),
+    ):
+        world.operator_tool(
+            "acceptance.put", project_id=world.project_a, path=path, content=content
+        )
+    delivery = deliver(world, ADD_SUB)
+    found = status(world, delivery)
+    assert (found["decision"], found["outcomes"]) == (
+        "PASS",
+        {"checks/add.txt::test_add": "passed", "checks/sub.txt::test_sub": "passed"},
+    )
+    flags = flags_of(found["report"])
+    assert "- `checks/sub.txt::test_sub_unknown`" in flags.splitlines()
+    assert "checks/support.txt" not in flags  # it is used, not a test that never ran
+    assert "never run" not in found["report"]  # no file is said never to run
