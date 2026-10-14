@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -235,8 +237,8 @@ def test_an_openai_compatible_provider_needs_its_url_credential_file_and_models(
 
 
 def test_the_gateway_refuses_a_model_the_configuration_does_not_name() -> None:
-    """The owner's model policy: only the models gateway.models names may serve, and any other
-    one refuses the start (the first real test runs on one model alone)."""
+    """The model policy is gateway.models: a configuration that names one model alone (the real
+    runs named deepseek-v4.1-flash alone) refuses to start with any other."""
     document = with_value("gateway.provider", "openai-compatible")
     document["gateway"].update(
         {
@@ -248,8 +250,31 @@ def test_the_gateway_refuses_a_model_the_configuration_does_not_name() -> None:
     )
     with pytest.raises(ConfigError) as caught:
         parse_config(document)
-    assert [p.key for p in caught.value.problems] == ["gateway.upstream_model"]
-    assert "not one of gateway.models" in caught.value.problems[0].message
+    assert [str(problem) for problem in caught.value.problems] == [
+        "gateway.upstream_model: 'claude-opus-5-5' is not one of gateway.models "
+        "(deepseek-v4.1-flash): the gateway serves only the models its configuration names"
+    ]
+
+
+def test_without_an_upstream_model_the_refusal_names_the_model_key() -> None:
+    """gateway.upstream_model is unset, so gateway.model is what goes to the provider: the
+    refusal names that key, the one to fix, and not a key the file does not hold."""
+    document = with_value("gateway.provider", "openai-compatible")
+    document["gateway"].update(
+        {
+            "upstream_url": "https://provider.example.test/v1",
+            "credential_file": "/t/key",
+            "model": "served-model",
+            "models": ["deepseek-v4.1-flash", "other-model"],
+        }
+    )
+    with pytest.raises(ConfigError) as caught:
+        parse_config(document)
+    assert [str(problem) for problem in caught.value.problems] == [
+        "gateway.model: 'served-model' goes to the provider as it is (gateway.upstream_model "
+        "is unset) and is not one of gateway.models (deepseek-v4.1-flash, other-model): the "
+        "gateway serves only the models its configuration names"
+    ]
 
 
 def test_a_gateway_serving_a_named_model_starts() -> None:
@@ -346,21 +371,23 @@ def test_field_declaration_is_typed() -> None:
     assert field.default == 1
 
 
-def test_the_gateway_refuses_any_model_outside_the_owner_policy() -> None:
-    """Owner's model policy: DeepSeek V4.1 Flash, through OpenCode, for every role. Naming any
-    other model in gateway.models refuses the start, even if it is the one served."""
+def test_the_gateway_serves_any_model_its_configuration_names() -> None:
+    """No list of models lives in the code: a person who names another model in
+    gateway.models, and serves it, starts without changing the code."""
     document = with_value("gateway.provider", "openai-compatible")
     document["gateway"].update(
         {
-            "upstream_url": "https://opencode.ai/zen/go/v1",
+            "upstream_url": "https://provider.example.test/v1",
             "credential_file": "/t/key",
             "upstream_model": "claude-opus-5-5",
-            "models": ["claude-opus-5-5"],
+            "models": ["claude-opus-5-5", "deepseek-v4.1-flash"],
         }
     )
-    with pytest.raises(ConfigError) as caught:
-        parse_config(document)
-    assert "gateway.upstream_model" in [p.key for p in caught.value.problems]
+    config = parse_config(document)
+    assert config.gateway.upstream_model == "claude-opus-5-5"
+    assert config.gateway.models == ("claude-opus-5-5", "deepseek-v4.1-flash")
+    document["gateway"].update({"upstream_model": "llama-4-scout", "models": ["llama-4-scout"]})
+    assert parse_config(document).gateway.upstream_model == "llama-4-scout"
 
 
 def test_a_github_forge_without_a_token_file_is_refused() -> None:
@@ -404,3 +431,47 @@ def test_the_clients_contract_file_is_protected_by_default_and_the_list_is_read(
         assert [problem.key for problem in caught.value.problems] == [
             "verification.protected_paths[0]"
         ]
+
+
+CONFIGURATION_PAGE = Path(__file__).parents[3] / "docs" / "configuration.md"
+
+
+def _key_table(text: str) -> dict[str, list[str]]:
+    """The rows of the table "Every key and its default", by key: [key, default, values]."""
+    section = text.split("## Every key and its default\n", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in section.splitlines() if line.startswith("| `")]
+    cells = [[cell.strip() for cell in row.strip("|").split("|")] for row in rows]
+    return {row[0].strip("`"): row for row in cells}
+
+
+def test_the_configuration_page_gives_the_version_and_every_key_with_its_default() -> None:
+    """docs/configuration.md once said 1.7.0 for a 1.12.0 schema and left keys out: the page
+    names the version the code speaks, and its table gives every key with its default."""
+    text = CONFIGURATION_PAGE.read_text(encoding="utf-8")
+    assert f"version {CONFIG_SCHEMA_VERSION}." in text
+    assert f'schema_version = "{CONFIG_SCHEMA_VERSION}"' in text
+    rows = _key_table(text)
+    leaves: dict[str, Field] = {}
+
+    def walk(table: Table, prefix: str) -> None:
+        for field in table.fields:
+            if isinstance(field.spec, Table):
+                walk(field.spec, f"{prefix}{field.name}.")
+            else:
+                leaves[f"{prefix}{field.name}"] = field
+
+    walk(SCHEMA.root, "")
+    assert sorted(rows) == sorted(leaves)
+    for path, field in leaves.items():
+        _, default, values = rows[path]
+        if field.required:
+            assert default == "required", path
+        elif field.default is None:
+            assert default == "unset", path
+        else:
+            assert default == f"`{json.dumps(field.default)}`", path
+        spec = field.spec
+        if isinstance(spec, Integer | Number):
+            assert values.startswith(f"{spec.minimum} to {spec.maximum}"), path
+        if isinstance(spec, Choice):
+            assert all(f"`{value}`" in values for value in spec.values), path

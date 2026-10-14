@@ -26,12 +26,8 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.12.0"
+CONFIG_SCHEMA_VERSION = "1.13.0"
 
-AUTHORISED_MODELS = frozenset({"deepseek-v4.1-flash"})
-"""The only models the owner has authorised for the gateway (owner's model policy, the first real
-test). Any other name in `gateway.models` refuses the start: adding a model is a change of policy,
-made in the code and reviewed, never in a configuration file."""
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
 SCHEMA_VERSION_KEY = "schema_version"
@@ -238,7 +234,7 @@ def _continuity() -> Table:
             Field(
                 "rejections",
                 Integer(1, 50),
-                "Rejected deliveries on one branch before the main agent is alerted (EXG-23)",
+                "FAIL decisions in a row on one project before the main agent is alerted (EXG-23)",
                 default=3,
             ),
         )
@@ -365,8 +361,9 @@ def _gateway() -> Table:
                     max_items=8,
                 ),
                 "The models the gateway may serve at the provider, when it is openai-compatible: "
-                "the configured model must be one of them, and the hub refuses to start for any "
-                "other (the owner's model policy)",
+                "the model it sends (gateway.upstream_model, or gateway.model when that is "
+                "unset) must be one of them, and the hub refuses to start for any other. This "
+                "list is the model policy of the hub: naming one model authorises that one alone",
             ),
             Field(
                 "session_header",
@@ -615,18 +612,24 @@ def _rule_gateway(data: Mapping[str, object]) -> list[Problem]:
             Problem(
                 "gateway.models",
                 "names the models the gateway may serve at the provider: it is required when "
-                "gateway.provider is openai-compatible, and the configured model must be one "
-                "of them",
+                "gateway.provider is openai-compatible, and the model the gateway sends to the "
+                "provider must be one of them",
             )
         )
         return problems
-    upstream = str(gateway.get("upstream_model", gateway.get("model", "")))
-    if upstream not in models or any(model not in AUTHORISED_MODELS for model in models):
+    # The key to name is the one that sets what goes to the provider: gateway.upstream_model
+    # when the file holds it, gateway.model otherwise.
+    if "upstream_model" in gateway:
+        key, upstream, how = "gateway.upstream_model", str(gateway["upstream_model"]), ""
+    else:
+        key, upstream = "gateway.model", str(gateway.get("model", ""))
+        how = " goes to the provider as it is (gateway.upstream_model is unset) and"
+    if upstream not in models:
         problems.append(
             Problem(
-                "gateway.upstream_model",
-                f"{upstream!r} is not one of gateway.models: this gateway serves the models "
-                "the configuration names, and nothing else",
+                key,
+                f"{upstream!r}{how} is not one of gateway.models ({', '.join(models)}): the "
+                "gateway serves only the models its configuration names",
             )
         )
     return problems
@@ -681,7 +684,9 @@ SCHEMA = Schema(
         ),
         Rule(
             "gateway.upstream_url and gateway.credential_file are set when gateway.provider "
-            "is openai-compatible, and the model it serves is one of gateway.models",
+            "is openai-compatible, and the model it sends to the provider "
+            "(gateway.upstream_model, or gateway.model when that is unset) is one of "
+            "gateway.models",
             _rule_gateway,
         ),
         Rule("verification.kit_image is set when verification.runner is sandbox", _rule_sandbox),
