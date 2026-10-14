@@ -15,11 +15,38 @@ version. Each schema carries its own version number.
   and reads `error`.
 
 ### Changed
+- The configuration schema, version 1.13.0: the models the gateway may serve come from the
+  configuration alone (`gateway.models`); the code no longer holds a list of authorised models
+  (`AUTHORISED_MODELS`, which allowed DeepSeek V4.1 Flash alone, is gone). A configuration that
+  names one model authorises that one alone, as the real runs did. When the model sent to the
+  provider is not in the list, the refusal names the key that sets it, `gateway.upstream_model`,
+  or `gateway.model` when the file has no `gateway.upstream_model`, and lists the models it
+  allows. A file accepted by 1.12.0 is accepted by 1.13.0.
 - The verification interface is 0.2.0: `VerificationResult.deselected` lists the tests the kit
   found in the asked files but did not run because no acceptance criterion named them. The kit
   signs it with the outcomes (`ZEPHYROS-OUTCOMES {"deselected": [...], "outcomes": {...}} <hmac>`).
 - The filter reads the whole log of a sandbox (up to 16 MiB) and believes nothing in a log that
   was cut or that does not begin with the run line of the kit.
+
+### Fixed
+- The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`
+  (`risk-`, `disk-`, `task-`), so a provider key counts only where a token starts, or after an
+  escape that test output prints (`\n`, `\t`, `%3D`, an ANSI colour code): `risk-management-module`
+  and `src/disk-usage-monitoring.py` stay as written in the log, the evidence report, the comments
+  and the retitled title of a pull request. Every other shape is masked wherever it stands. The
+  log masks the keys of the parameters as it masks their values.
+- The anchor of the log (EXG-19, ATK-69, [ADR 0019](docs/decisions/0019-anchor-outside-the-store.md))
+  no longer turns itself off. An anchor that is gone, that cannot be read, or that does not name a
+  stream with records fails `log.verify` with a problem that says so (`first_bad_seq` is then
+  null), where it used to read as "no anchor". The anchor is never started again from the store,
+  and it no longer follows a store whose records were replaced: it moves only from the head it
+  names. It starts with the log, and the hub records its start, and any fault it finds when it
+  opens the log, as `log.anchor` in its own stream. A deployment whose anchor is lost now sees its
+  verification fail: the anchor goes with the database in a backup.
+- The continuity ladder wakes the Contractor only once its contract is ready: the version in
+  force names an acceptance test, and no change that could still be approved awaits a decision
+  (US-E7-01, ADR 0021). The log records when the task is held, and why, and when it is
+  released (#7).
 
 ## [0.1.0] - 2026-10-13
 

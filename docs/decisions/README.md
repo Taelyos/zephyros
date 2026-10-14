@@ -24,3 +24,4 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0018 | [An instance resolves names through configured resolvers, never through the host's resolver chain](0018-instance-name-resolution.md) | Proposed |
 | 0019 | [An anchor for the log head, outside the store](0019-anchor-outside-the-store.md) | Proposed |
 | 0020 | [The Owner side sees what it judges, and its verdict is recorded](0020-the-owner-sees-and-records.md) | Accepted |
+| 0021 | [The continuity ladder waits until the contract is ready for the Contractor](0021-the-ladder-waits-for-a-ready-contract.md) | Proposed |

@@ -1,9 +1,10 @@
 """US-E7-01 on the real organs: the hub resumes a task that stays without activity.
 
 The stack is the real one (hub, filter, guard, instances); only the model is the scripted
-stub. A staging area is prepared and no Contractor turn ever happens: the hub, on its own,
-wakes the instance with a turn that states the task, then restarts it — the two steps the
-real ladder takes within the time the test waits for.
+stub. The contract names its acceptance test, so it is ready for the Contractor (ADR 0021); a
+staging area is prepared and no Contractor turn ever happens: the hub, on its own, wakes the
+instance with a turn that states the task, restarts it, then alerts the main agent and the
+human.
 """
 
 from __future__ import annotations

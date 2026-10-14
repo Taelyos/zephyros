@@ -30,7 +30,7 @@ from zephyros.core.audit import (
     format_line,
 )
 from zephyros.core.clock import Clock, SystemClock, format_time
-from zephyros.core.continuity import Continuity, TaskState
+from zephyros.core.continuity import HOLD, RELEASE, Continuity, TaskState, delivery_waits_for
 from zephyros.core.contract import (
     Change,
     ContractError,
@@ -46,7 +46,7 @@ from zephyros.core.importer import import_markdown
 from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
 from zephyros.core.ports.agent_engine import Side
-from zephyros.core.principals import Principal
+from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.projects import CREATE_INPUT, ProjectService
 from zephyros.core.rights import decide
 from zephyros.core.schema import Array, Choice, Field, Free, Integer, Problem, Table, Text
@@ -688,20 +688,62 @@ class Hub:
         if side in (Side.OWNER.value, Side.CONTRACTOR.value):
             self._continuity.observe(caller.principal.project_id, side, self._clock.now())
 
+    def _delivery_waits_for(self, project_id: str) -> str | None:
+        """What the Contractor's task waits for in its contract, if anything (ADR 0021)."""
+        return delivery_waits_for(
+            self._contracts.read(OPERATOR, project_id),
+            self._contracts.pending(OPERATOR, project_id),
+        )
+
+    def _contract_changed(self, project_id: str) -> None:
+        """A version or a pending change came or went: the Contractor's task is held while the
+        contract is not ready for it, and its ladder starts once it is (US-E7-01). The log says
+        each change, so that a held task is not mistaken for a ladder that stopped."""
+        if self._continuity is None:
+            return
+        side = Side.CONTRACTOR.value
+        why = self._delivery_waits_for(project_id)
+        if why is not None:
+            if self._continuity.hold(project_id, side, why):
+                self._record_delivery_task(project_id, HOLD, why=why)
+        elif self._continuity.release(project_id, side, self._clock.now()):
+            self._record_delivery_task(project_id, RELEASE)
+
+    def _record_delivery_task(self, project_id: str, step: str, **parameters: object) -> None:
+        self._audit.append(
+            AuditEvent(
+                stream=project_id,
+                principal=SYSTEM_PRINCIPAL,
+                action=Action.CONTINUITY,
+                outcome=Outcome.OK,
+                parameters={
+                    "side": Side.CONTRACTOR.value,
+                    "step": step,
+                    "task": "delivery",
+                    **parameters,
+                },
+            )
+        )
+
     def notified(self, event: str, payload: Mapping[str, object]) -> None:
         """The events of the delivery loop reach the continuity and the main agent."""
         if event == "staging.prepared" and self._continuity is not None:
+            project_id = str(payload["project_id"])
+            why = self._delivery_waits_for(project_id)
             self._continuity.expect(
                 TaskState(
-                    str(payload["project_id"]),
+                    project_id,
                     Side.CONTRACTOR.value,
                     "delivery",
                     "the base of "
                     f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is ready "
                     "and awaits a delivery",
                     self._clock.now(),
-                )
+                ),
+                held=why,
             )
+            if why is not None:
+                self._record_delivery_task(project_id, HOLD, why=why)
         if event in ("delivery.decided", "delivery.loop"):
             marked = {**dict(payload), "simulation": self._simulation}
             result = self._notify(event, marked)
@@ -793,6 +835,7 @@ class Hub:
         operations = tuple(Operation("put", item, str(item["id"])) for item in imported)
         change = Change(str(arguments["summary"]), operations)
         version = self._contracts.apply_reserved(caller.principal, project_id, change)
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         counts: dict[str, int] = {}
         for item in imported:
@@ -1181,6 +1224,7 @@ class Hub:
                     self._clock.now(),
                 )
             )
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         return ToolResult(
             {
@@ -1205,6 +1249,7 @@ class Hub:
         version = self._contracts.approve(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
             self._continuity.answered(project_id, Side.OWNER.value)
+        self._contract_changed(project_id)
         return ToolResult(
             {"version_id": version.id, "number": version.number},
             {
@@ -1221,6 +1266,7 @@ class Hub:
         resolved = self._contracts.reject(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
             self._continuity.answered(project_id, Side.OWNER.value)
+        self._contract_changed(project_id)
         return ToolResult(
             {"change_id": resolved.id, "status": resolved.status.value},
             {
@@ -1239,6 +1285,7 @@ class Hub:
             {"summary": arguments["summary"], "operations": arguments["operations"]}
         )
         version = self._contracts.apply_reserved(caller.principal, project_id, change)
+        self._contract_changed(project_id)
         flagged = _flagged_terms(change)
         return ToolResult(
             {"version_id": version.id, "number": version.number, "flagged": flagged},
