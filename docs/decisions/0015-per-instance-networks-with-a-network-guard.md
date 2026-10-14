@@ -3,7 +3,7 @@
 - Date: 2026-10-09
 
 ## Context
-EXG-03 and EXG-41 need egress control that an instance cannot change, on Linux and on macOS. Spike Z2-02 showed that a small container per instance, holding the rules in a namespace that the instance shares but cannot modify, enforces them on both platforms.
+EXG-03 and EXG-41 need egress control that an instance cannot change, on Linux and on macOS. A measurement on both platforms showed that a small container per instance, holding the rules in a namespace that the instance shares but cannot modify, enforces them on both platforms.
 
 ## Decision
 Each instance has its own network, with the hub attached to it. A network guard container per instance loads the rules. It keeps only the NET_ADMIN capability, with no-new-privileges, a read-only root and limits, and it is not an execution context. The hub starts an instance once its guard is healthy and stops it when the guard dies (fail-closed). The hub and the container filter run in containers. The filter limits every operation, reads included, to Zephyros-labelled objects, and only the hub reaches it, through a Unix socket.

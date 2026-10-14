@@ -1,4 +1,4 @@
-"""The reaper, on the real runtime: a turn does not outlive the hub (build log, decision 22).
+"""The reaper, on the real runtime: a turn does not outlive the hub.
 
 A whole Zephyros runs with a short turn limit. A turn is started, the hub is stopped (the
 case the reaper exists for), and the filter must stop and remove the turn on its own. The

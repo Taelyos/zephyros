@@ -1,4 +1,4 @@
-"""The core imports only the standard library and itself (design, section 3.2)."""
+"""The core imports only the standard library and itself (`zephyros.core`)."""
 
 from __future__ import annotations
 

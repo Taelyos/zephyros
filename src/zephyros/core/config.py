@@ -68,7 +68,7 @@ PROTECTED_V4: tuple[str, ...] = (
     "172.16.0.0/12",
     "192.168.0.0/16",
 )
-"""The IPv4 networks of annex "Protected networks" of the statement of work, as the guard
+"""The protected IPv4 networks (EXG-03): private, loopback, link-local and the like, as the guard
 loads them (images/guard/guard.sh). The guard drops every connection to them, so a name
 resolver inside one of them can never work from an instance; the schema refuses it."""
 

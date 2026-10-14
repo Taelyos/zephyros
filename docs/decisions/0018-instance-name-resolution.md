@@ -5,7 +5,7 @@
 
 ## Context
 
-The network guard of an instance blocks every connection to a protected network (annex "Protected networks" of the statement of work), except the agent endpoint of the hub. The instance still needs to resolve public names: it works on code, installs packages and reads documentation.
+The network guard of an instance blocks every connection to a protected network (EXG-03: private, loopback, link-local and similar ranges), except the agent endpoint of the hub. The instance still needs to resolve public names: it works on code, installs packages and reads documentation.
 
 On a host whose own name resolvers are inside a protected network — a homelab with local DNS (CoreDNS, Pi-hole, AdGuard, a router at 192.168.x.x), which is the target machine class of EXG-31 — the resolution chain of the container runtime forwards the instance's queries from the instance's network namespace toward those resolvers. The guard drops those packets, and no public name resolves from the instance.
 
@@ -36,5 +36,5 @@ Consequences for the suites on such a host: the ATK-44 positive control ("a publ
 
 - **Suppress or short-circuit AAAA queries.** No effect: the block hits IPv4 lookups too. The failure is not in the address family.
 - **Raise the timeout of the probe.** No effect: name resolution is not bounded by the socket timeout, and the lookup fails whether the fetch waits 2 s or 30 s.
-- **A guard exception for the host's resolvers.** Works (the fetch passes; the wildcard name resolves; a cold name costs about 4 s), and it keeps the user's own DNS. But annex "Protected networks" states today that a resolver reached at a protected address is not a permitted destination, so this needs an amendment and a guard rule change. Recorded as a candidate for the Owner.
+- **A guard exception for the host's resolvers.** Works (the fetch passes; the wildcard name resolves; a cold name costs about 4 s), and it keeps the user's own DNS. But the rule on protected networks (EXG-03) states today that a resolver reached at a protected address is not a permitted destination, so this needs an amendment and a guard rule change. Recorded as a candidate for the Owner.
 - **A recursive resolver inside the instance, on its own loopback.** The annex already permits "a name resolver that is served on the loopback interface of the execution context itself", and no third party is involved. Kept for a later milestone: every turn would carry another process, and it depends on outbound port 53, which some networks filter.

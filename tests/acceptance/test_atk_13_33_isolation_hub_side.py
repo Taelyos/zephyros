@@ -2,7 +2,7 @@
 another project.
 
 ATK-13 is half a network attack: the connection to the operator channel and the main-agent
-endpoint is blocked by the guard (tests marked `runtime`, Z2-08). Here is the half the hub
+endpoint is blocked by the guard (the tests of `tests/runtime/`). Here is the half the hub
 answers for: the agent endpoint serves nothing but the MCP and model routes, and the other two
 listeners accept nothing from an instance's token.
 """

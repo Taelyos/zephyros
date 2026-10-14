@@ -1,10 +1,9 @@
 """The writing rules of a contract: the terms that make a requirement unverifiable (EXG-29).
 
-The list is the one of the requirements writing guide, section 3.3 — the annex "Forbidden
-terms" of the contract points there. Six families: qualities without a measure, optimisations
-without a threshold, escape hatches, open lists, the "and/or" combination, and soft modals.
-The hub flags — never refuses — each requirement or acceptance criterion that contains one;
-the Owner decides what to do with the flag.
+The list is the one of the requirements writing guide that the contract follows. Six families:
+qualities without a measure, optimisations without a threshold, escape hatches, open lists,
+the "and/or" combination, and soft modals. The hub flags — never refuses — each requirement or
+acceptance criterion that contains one; the Owner decides what to do with the flag.
 """
 
 from __future__ import annotations

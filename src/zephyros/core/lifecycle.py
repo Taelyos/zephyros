@@ -12,8 +12,8 @@ is the watchdog. Nothing here waits for a container on the thread of a caller, a
 here starts a thread: the adapter that runs the worker decides how often to call `step` and
 `tick`. This keeps the manager deterministic under test.
 
-The watchdog is the answer to finding F12 of spike Z2-01: Hermes does not stop when the hub
-stops answering. It ends a turn that ran past its limit or has not called the hub for too
+The watchdog exists because Hermes does not stop when the hub stops answering (measured on the
+pinned version). It ends a turn that ran past its limit or has not called the hub for too
 long, stops an instance whose guard stopped (fail-closed), and, when it cannot reach the
 container filter for several rounds, cuts an instance off from the hub by revoking its token.
 A restart of the hub starts with `reconcile`, which stops every turn it finds: the token of a

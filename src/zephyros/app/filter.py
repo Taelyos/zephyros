@@ -93,7 +93,7 @@ async def run(
     executor = Executor(runtime, Policy.from_config(config), journal)
     server = build_filter_server(executor, journal)
     loop = asyncio.get_running_loop()
-    # A turn must not outlive the hub past its limit (build log, decision 22): the reaper
+    # A turn must not outlive the hub past its limit: the reaper
     # runs here, in the process that outlives the hub.
     reaper_stop = asyncio.Event()
     reaper_task = loop.create_task(

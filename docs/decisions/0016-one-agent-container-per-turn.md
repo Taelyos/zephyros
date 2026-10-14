@@ -5,7 +5,7 @@
 - Supersedes: the sentence "Signed webhooks wake instances; activity flows back through signed outbound webhooks" of [0003](0003-owner-and-contractor-instances-with-hub.md)
 
 ## Context
-The hub has to give work to an instance, and the permitted container operations have no `exec` and no `attach`. ADR 0003 foresaw signed webhooks that wake an instance. Spike Z2-01 measured what Hermes Agent offers. Run as `hermes -z "<prompt>"`, it opens no listener at all; a new container with `--continue` resumes the conversation kept on the home volume. Run as a gateway with its webhook platform, it opens a port and two Unix sockets and starts a cron scheduler and a task dispatcher inside the instance.
+The hub has to give work to an instance, and the permitted container operations have no `exec` and no `attach`. ADR 0003 foresaw signed webhooks that wake an instance. A measurement of the pinned Hermes Agent showed what it offers. Run as `hermes -z "<prompt>"`, it opens no listener at all; a new container with `--continue` resumes the conversation kept on the home volume. Run as a gateway with its webhook platform, it opens a port and two Unix sockets and starts a cron scheduler and a task dispatcher inside the instance.
 
 ## Decision
 - An **instance** is its network guard (which has the fixed address of the instance) and its two volumes, the Hermes home and the work volume. A project has one Owner instance and one Contractor instance.

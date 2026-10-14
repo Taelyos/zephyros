@@ -4,7 +4,8 @@ A model provider answers a chat conversation, possibly with calls to tools that 
 caller offered. The hub's model gateway translates the wire format of an instance into
 these types and back. The provider never sees a project token.
 
-Version 0.x. No streaming yet: whether Hermes needs it is a question for spike Z2-01.
+Version 0.x. No streaming: a provider answers whole, and the gateway streams a whole answer to
+a client that asks for a stream.
 """
 
 from __future__ import annotations

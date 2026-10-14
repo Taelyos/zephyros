@@ -1,7 +1,7 @@
 # 0003. One owner instance and one contractor instance per project, plus a hub without any LLM
-- Status: Accepted; partly superseded by [0016](0016-one-agent-container-per-turn.md)
+- Status: Accepted; in part replaced by [0016](0016-one-agent-container-per-turn.md), which is Proposed and which the code follows
 - Date: 2026-10-09
-- Superseded in part: instances are not woken by signed webhooks and send no webhooks. Each
+- Replaced in part: instances are not woken by signed webhooks and send no webhooks. Each
   instance is a network guard and two volumes, and the hub starts one agent container per turn
   ([0016](0016-one-agent-container-per-turn.md)). Signed webhooks go from the hub to the main
   agent only ([notifications](../notifications.md)). The rest of this decision stands.
