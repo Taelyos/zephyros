@@ -1111,3 +1111,37 @@ def test_a_decision_that_cannot_be_told_still_raises_the_alert_of_a_loop() -> No
         made.step()
     assert made.status(project, pushed.delivery_id).decision == "FAIL"
     assert loops == [{"project_id": project, "branch": "w", "rejections": 1}]
+
+
+# ----------------------------------------------------------------------------- review of #9
+@pytest.mark.xfail(strict=True, reason="the addenda pile up until the fix")
+def test_a_record_without_a_gate_report_keeps_one_addendum_however_often_it_is_inspected() -> None:
+    """A record built by hand, as the replay tools do, holds its report and no report of the
+    gate: the first inspection takes that report as the report of the gate, and the next ones
+    write the addendum whole after it, never one more."""
+    made, project, _audit, store = service()
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    decided = made.status(project, delivery)
+    store.put_record(replace(decided, gate_report=None))
+    for verdict in (Inspected.CONFORMS, Inspected.DOES_NOT_CONFORM, Inspected.CONFORMS):
+        made.record_inspection("operator", project, delivery, "CTR-01", verdict, "looked")
+    record = made.status(project, delivery)
+    assert record.report is not None
+    assert record.report.count("## Inspections recorded after the gate") == 1
+    assert record.gate_report == decided.report
+
+
+def test_a_record_kept_before_the_contractors_report_gives_the_contractor_none() -> None:
+    """A record of a hub before the Contractor's report: the Contractor reads no report, the
+    Owner side reads the whole one."""
+    made, project, _audit, store = service()
+    ready(made, project)
+    delivery = delivered(made, project)
+    decided = made.status(project, delivery)
+    store.put_record(replace(decided, contractor_gate_report=None))
+    kept = made.status(project, delivery)
+    assert report_for(kept, instance_principal(Side.CONTRACTOR, project)) is None
+    assert report_for(kept, instance_principal(Side.OWNER, project)) == decided.report
+    assert decided.report is not None
