@@ -535,11 +535,19 @@ class Hub:
         self, secret: str | None, *, peer_address: str | None, endpoint: Endpoint
     ) -> Caller | None:
         """Identify the caller. A refusal is logged once and returns None."""
+        found = self.identify(secret, peer_address=peer_address, endpoint=endpoint)
+        return found if isinstance(found, Caller) else None
+
+    def identify(
+        self, secret: str | None, *, peer_address: str | None, endpoint: Endpoint
+    ) -> Caller | Rejected:
+        """Identify the caller, or say why not: a transport may then tell the holder of an
+        expired operator or main-agent token what to do (ADR 0026). A refusal is logged once."""
         result = self._tokens.authenticate(secret, peer_address=peer_address, endpoint=endpoint)
         if isinstance(result, Authenticated):
             return Caller(result.principal, result.record.token_id, peer_address or "", endpoint)
         self._log_authentication_refusal(result, peer_address, endpoint)
-        return None
+        return result
 
     def _log_authentication_refusal(
         self, rejected: Rejected, peer_address: str | None, endpoint: Endpoint

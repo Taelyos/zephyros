@@ -18,6 +18,18 @@ version. Each schema carries its own version number.
   Write `egress = "open"` in `[network]` for the former behavior. A guard whose level differs from
   the configuration is stopped when the hub starts or finds it, so the next turn of that instance
   starts with the configured level.
+- The operator channel and the main-agent endpoint never listen on an instance network (ATK-13,
+  [ADR 0025](docs/decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). The
+  configuration schema refuses a wildcard address and an address of the instance pool for
+  `hub.operator_bind` and `hub.main_agent_bind`; a hub in a container writes `"core"`, as
+  `scripts/deploy.sh` now does. The core network of a deployment is now named
+  `zephyros-core-<project>`: after the update, the former `<project>_core` network is left
+  behind and can be removed.
+- The operator and main-agent tokens expire
+  ([ADR 0026](docs/decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md)),
+  90 days after they are issued by default (`tokens.channel_lifetime_days`). A token issued
+  before the update gets that lifetime from the first start of the hub after it; by then, the
+  main agent needs a new token (`scripts/deploy.sh rotate-token main-agent`).
 
 ### Changed
 - The configuration schema, version 1.13.0: the models the gateway may serve come from the
@@ -39,6 +51,24 @@ version. Each schema carries its own version number.
   `network.allowed_hosts` (the package registries) through the egress proxy of the hub, which
   logs every destination as `instance.egress`; `sealed` reaches the hub alone; `open` is the
   former behavior, with a warning in the log. The instance image carries pytest.
+- The configuration schema, version 1.15.0: the value `"core"` for `hub.operator_bind` and
+  `hub.main_agent_bind`, with which the hub listens on its address outside the instance pool and
+  on its own loopback, and refuses to start without exactly one such address. Both listeners
+  also refuse, and log (`wrong_source`), a peer whose address is in the instance pool (ADR 0025).
+  `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026).
+- `scripts/deploy.sh rotate-token operator|main-agent` (`zephyros hub rotate-token`): the running
+  hub writes a new token to the file (mode 0600), revokes the old one, and logs both
+  (`token.issue`, `token.revoke`, `why: rotation`); a token given a lifetime at start is logged
+  as `token.lifetime`. An expired operator or main-agent token is answered
+  `{"error": "token_expired", "message": ...}`, which names the command (ADR 0026).
+- The network guard runs as user 10002, not root
+  ([ADR 0027](docs/decisions/0027-the-network-guard-runs-without-root.md), revising ADR 0015):
+  NET_ADMIN reaches its nft alone, through a file capability, and no-new-privileges is off for
+  the guard and for no other container. `scripts/deploy.sh up` rebuilds the guard image; a guard
+  started before the update keeps running as root until its instance stops, and
+  `scripts/deploy.sh down` followed by `up` replaces them all.
+- [ADR 0028](docs/decisions/0028-the-contract-of-a-project-is-stored-in-sqlite.md) records that
+  the contract of a project is stored in SQLite as immutable versions, and what is not history.
 
 ### Fixed
 - The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`

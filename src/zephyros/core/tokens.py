@@ -7,10 +7,14 @@ project, a forwarded address) is used. Time comes from the hub's clock.
 
 A project token is bound to the address of the instance it was issued to, and the hub
 compares it with the TCP peer address of the connection. It refuses on any doubt.
+
+The operator and main-agent tokens are bound to no address; they expire after the lifetime of
+the configuration, and are rotated on request (ADR 0026).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import ipaddress
@@ -96,6 +100,12 @@ class TokenStore(Protocol):
 
     def for_instance(self, instance_id: str) -> list[TokenRecord]: ...
 
+    def of_kind(self, kind: TokenKind) -> list[TokenRecord]: ...
+
+    def set_expiry(self, token_id: str, at: datetime) -> bool:
+        """Give a token that has no expiry one. False when it is unknown or already has one."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class IssuedToken:
@@ -121,6 +131,8 @@ class Rejected:
     """The kind prefix the caller presented, or 'malformed'. Safe to log."""
     principal: Principal | None = None
     """Whose token it is, when the hub found the record: the log names that principal."""
+    expires_at: datetime | None = None
+    """When the token expired, for a refusal of an expired token."""
 
 
 AuthResult = Authenticated | Rejected
@@ -252,7 +264,9 @@ class TokenService:
             return Rejected(Reason.REVOKED, record.token_id, presented, record.principal)
         now = self._clock.now()
         if record.expires_at is not None and now >= record.expires_at:
-            return Rejected(Reason.EXPIRED, record.token_id, presented, record.principal)
+            return Rejected(
+                Reason.EXPIRED, record.token_id, presented, record.principal, record.expires_at
+            )
         if _ENDPOINT_OF_KIND[record.kind] is not endpoint:
             return Rejected(Reason.WRONG_ENDPOINT, record.token_id, presented, record.principal)
         if record.kind is TokenKind.PROJECT and not _same_address(
@@ -287,6 +301,28 @@ class TokenService:
         if record.expires_at is None:
             return False
         return self._clock.now() >= record.expires_at - timedelta(seconds=rotate_before_seconds)
+
+    def _live(self, record: TokenRecord) -> bool:
+        return record.revoked_at is None and (
+            record.expires_at is None or self._clock.now() < record.expires_at
+        )
+
+    def live_of_kind(self, kind: TokenKind) -> list[TokenRecord]:
+        """The tokens of a kind that are neither revoked nor expired, oldest first."""
+        live = [record for record in self._store.of_kind(kind) if self._live(record)]
+        return sorted(live, key=lambda record: record.issued_at)
+
+    def give_lifetime(self, kind: TokenKind, lifetime_seconds: int) -> list[TokenRecord]:
+        """Give each live token of `kind` that never expires the lifetime, counted from now: a
+        token issued before its kind expired keeps working that long, no longer (ADR 0026)."""
+        if lifetime_seconds <= 0:
+            raise ValueError("a token has a positive lifetime")
+        expires = self._clock.now() + timedelta(seconds=lifetime_seconds)
+        return [
+            dataclasses.replace(record, expires_at=expires)
+            for record in self.live_of_kind(kind)
+            if record.expires_at is None and self._store.set_expiry(record.token_id, expires)
+        ]
 
     def live_project_tokens(self, instance_id: str) -> list[TokenRecord]:
         """The tokens of the instance that are neither revoked nor expired, newest first."""

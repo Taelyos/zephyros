@@ -35,15 +35,15 @@
         "operator_bind": {
           "type": "string",
           "maxLength": 4096,
-          "x-zephyros-kind": "ip-address",
-          "description": "Address the operator channel listens on; never an instance network",
+          "x-zephyros-kind": "listen-address",
+          "description": "Address the operator channel listens on: an address that is neither a wildcard nor one of the instance pool, or \"core\", the address of the hub outside the instance networks (the one its port is published on) and its own loopback (ADR 0025)",
           "default": "127.0.0.1"
         },
         "main_agent_bind": {
           "type": "string",
           "maxLength": 4096,
-          "x-zephyros-kind": "ip-address",
-          "description": "Address the main-agent endpoint listens on; never an instance network",
+          "x-zephyros-kind": "listen-address",
+          "description": "Address the main-agent endpoint listens on; the same forms as hub.operator_bind",
           "default": "127.0.0.1"
         },
         "egress_port": {
@@ -91,6 +91,14 @@
           "pattern": "^/",
           "description": "File that holds the main-agent token",
           "default": "/var/lib/zephyros/main-agent.token"
+        },
+        "control_socket": {
+          "type": "string",
+          "maxLength": 100,
+          "x-zephyros-kind": "absolute-path",
+          "pattern": "^/",
+          "description": "Unix socket, open to the user of the hub only, on which `zephyros hub rotate-token` asks the running hub for a new operator or main-agent token (ADR 0026)",
+          "default": "/var/lib/zephyros/control.sock"
         }
       },
       "additionalProperties": false,
@@ -291,6 +299,13 @@
           "maximum": 86400,
           "description": "A turn that starts when less than this remains of the lifetime gets a new token",
           "default": 900
+        },
+        "channel_lifetime_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "description": "Lifetime of the operator token and of the main-agent token; a token issued before this key existed gets it from the next start of the hub (ADR 0026)",
+          "default": 90
         }
       },
       "additionalProperties": false,
@@ -516,11 +531,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.14.0",
+  "x-zephyros-schema-version": "1.15.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
     "network.instance_prefix is longer than the prefix of network.instance_pool",
+    "hub.operator_bind and hub.main_agent_bind are not addresses of network.instance_pool",
     "network.resolvers holds no address of a protected network (the guard blocks them)",
     "forge.token_file is set when forge.provider is github",
     "gateway.upstream_url and gateway.credential_file are set when gateway.provider is openai-compatible, and the model it sends to the provider (gateway.upstream_model, or gateway.model when that is unset) is one of gateway.models",

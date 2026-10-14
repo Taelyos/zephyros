@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from zephyros.core.schema import (
+    CORE_ADDRESS,
     Array,
     Choice,
     Field,
@@ -26,7 +27,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.14.0"
+CONFIG_SCHEMA_VERSION = "1.15.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -103,14 +104,17 @@ def _hub() -> Table:
             ),
             Field(
                 "operator_bind",
-                Text("ip-address"),
-                "Address the operator channel listens on; never an instance network",
+                Text("listen-address"),
+                "Address the operator channel listens on: an address that is neither a wildcard "
+                'nor one of the instance pool, or "core", the address of the hub outside the '
+                "instance networks (the one its port is published on) and its own loopback "
+                "(ADR 0025)",
                 default="127.0.0.1",
             ),
             Field(
                 "main_agent_bind",
-                Text("ip-address"),
-                "Address the main-agent endpoint listens on; never an instance network",
+                Text("listen-address"),
+                "Address the main-agent endpoint listens on; the same forms as hub.operator_bind",
                 default="127.0.0.1",
             ),
             Field(
@@ -152,6 +156,14 @@ def _paths() -> Table:
                 Text("absolute-path"),
                 "File that holds the main-agent token",
                 default="/var/lib/zephyros/main-agent.token",
+            ),
+            Field(
+                "control_socket",
+                Text("absolute-path", max_length=100),
+                "Unix socket, open to the user of the hub only, on which `zephyros hub "
+                "rotate-token` asks the running hub for a new operator or main-agent token "
+                "(ADR 0026)",
+                default="/var/lib/zephyros/control.sock",
             ),
         )
     )
@@ -361,6 +373,13 @@ def _tokens() -> Table:
                 "A turn that starts when less than this remains of the lifetime gets a new token",
                 default=900,
             ),
+            Field(
+                "channel_lifetime_days",
+                Integer(1, 3650),
+                "Lifetime of the operator token and of the main-agent token; a token issued "
+                "before this key existed gets it from the next start of the hub (ADR 0026)",
+                default=90,
+            ),
         )
     )
 
@@ -556,6 +575,24 @@ def _rule_pool(data: Mapping[str, object]) -> list[Problem]:
     return problems
 
 
+def _rule_binds(data: Mapping[str, object]) -> list[Problem]:
+    """An address of the instance pool is an address of an instance network: the operator
+    channel and the main-agent endpoint never listen there (ATK-13, ADR 0025)."""
+    hub = _section(data, "hub")
+    pool = ipaddress.ip_network(cast("str", _section(data, "network")["instance_pool"]))
+    problems: list[Problem] = []
+    for key in ("operator_bind", "main_agent_bind"):
+        value = cast("str", hub[key])
+        if value == CORE_ADDRESS:
+            continue
+        address = ipaddress.ip_address(value)
+        if address.version == pool.version and address in pool:
+            problems.append(
+                Problem(f"hub.{key}", "is an address of network.instance_pool, an instance network")
+            )
+    return problems
+
+
 def _rule_resolvers(data: Mapping[str, object]) -> list[Problem]:
     """A resolver of a protected network can never work: the guard drops every connection
     to it before it leaves the instance. Refusing it at startup beats a silent failure at
@@ -719,6 +756,10 @@ SCHEMA = Schema(
             "network.instance_prefix is longer than the prefix of network.instance_pool", _rule_pool
         ),
         Rule(
+            "hub.operator_bind and hub.main_agent_bind are not addresses of network.instance_pool",
+            _rule_binds,
+        ),
+        Rule(
             "network.resolvers holds no address of a protected network (the guard blocks them)",
             _rule_resolvers,
         ),
@@ -763,6 +804,7 @@ class PathsConfig:
     filter_socket: str
     operator_token_file: str
     main_agent_token_file: str
+    control_socket: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -803,6 +845,7 @@ class LimitsConfig:
 class TokensConfig:
     lifetime_seconds: int
     rotate_before_seconds: int
+    channel_lifetime_days: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -915,6 +958,7 @@ def parse_config(data: object) -> Config:
             filter_socket=cast("str", paths["filter_socket"]),
             operator_token_file=cast("str", paths["operator_token_file"]),
             main_agent_token_file=cast("str", paths["main_agent_token_file"]),
+            control_socket=cast("str", paths["control_socket"]),
         ),
         runtime=RuntimeConfig(
             core_network=cast("str", runtime["core_network"]),
@@ -944,6 +988,7 @@ def parse_config(data: object) -> Config:
         tokens=TokensConfig(
             lifetime_seconds=_int(tokens, "lifetime_seconds"),
             rotate_before_seconds=_int(tokens, "rotate_before_seconds"),
+            channel_lifetime_days=_int(tokens, "channel_lifetime_days"),
         ),
         gateway=GatewayConfig(
             simulation=_flag(gateway, "simulation"),

@@ -6,6 +6,9 @@
 #   scripts/deploy.sh down [--volumes]   stop the hub and the filter; instances stay, and so do
 #                           the hub's data and the filter's journal unless --volumes is given
 #   scripts/deploy.sh call TOOL [JSON]   call a tool on the operator channel
+#   scripts/deploy.sh rotate-token operator|main-agent   a new token in its file, the old one
+#                           revoked (ADR 0026); the operator's is read by `call` at each call,
+#                           the main agent's is given to the main agent again
 #
 # Environment (all optional):
 #   ZEPHYROS_STATE          where the configuration is written (default: deploy/state)
@@ -99,8 +102,8 @@ guard = "$(image_id zephyros-guard:local)"
 instance = "$(image_id zephyros-instance:local)"
 
 [hub]
-operator_bind = "0.0.0.0"
-main_agent_bind = "0.0.0.0"
+operator_bind = "core"
+main_agent_bind = "core"
 
 [runtime]
 hub_container = "$ZEPHYROS_HUB_NAME"
@@ -170,9 +173,15 @@ call() {
     --url http://127.0.0.1:8081
 }
 
+rotate_token() {
+  docker exec "$ZEPHYROS_HUB_NAME" /opt/zephyros/bin/zephyros hub rotate-token "$1"
+}
+
 case "${1:-}" in
   up) up ;;
   down) shift; down "$@" ;;
   call) shift; call "$@" ;;
-  *) echo "usage: scripts/deploy.sh up|down|call TOOL [JSON]" >&2; exit 2 ;;
+  rotate-token) shift; rotate_token "${1:-}" ;;
+  *) echo "usage: scripts/deploy.sh up|down|call TOOL [JSON]|rotate-token operator|main-agent" >&2
+     exit 2 ;;
 esac

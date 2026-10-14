@@ -48,6 +48,8 @@ class Deployment:
         suffix = secrets.token_hex(3)
         self.name = f"zsrt{suffix}"
         self.hub = f"{self.name}-hub"
+        self.core_network = f"zephyros-core-{self.name}"
+        """The network of the hub and the filter, named in deploy/compose.yaml."""
         self.projects: list[str] = []
         self.env = {
             **os.environ,

@@ -160,6 +160,7 @@ class World:
             delivery=self.delivery,
         )
         self.hub, self.tokens, self.gateway = runtime.hub, runtime.tokens, runtime.gateway
+        self.audit = runtime.audit
         self.deliveries = runtime.deliveries
         self.notifier = runtime.notifier
         self.agent_app = build_agent_app(self.hub, model_name=MODEL, gateway=self.gateway)

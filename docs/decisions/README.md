@@ -18,7 +18,7 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0012 | [Epics and user stories are written by the owner side; the contractor owns the solution](0012-owner-writes-epics-and-stories.md) | Accepted |
 | 0013 | [Tokens are opaque, bound to their instance and checked against server-side records](0013-opaque-server-side-tokens.md) | Accepted |
 | 0014 | [The container filter is a typed broker, not a pass-through proxy](0014-container-filter-as-typed-broker.md) | Accepted |
-| 0015 | [Each instance has its own network and a network guard that enforces egress](0015-per-instance-networks-with-a-network-guard.md) | Accepted |
+| 0015 | [Each instance has its own network and a network guard that enforces egress](0015-per-instance-networks-with-a-network-guard.md) | Accepted; revision Proposed (0027) |
 | 0016 | [An instance is its network guard and its volumes; each agent container is one turn](0016-one-agent-container-per-turn.md) | Proposed |
 | 0017 | [A verification runner runs one verification kit; the method does not change with the project](0017-verification-runner-and-kits.md) | Proposed |
 | 0018 | [An instance resolves names through configured resolvers, never through the host's resolver chain](0018-instance-name-resolution.md) | Proposed |
@@ -27,3 +27,7 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0021 | [The continuity ladder waits until the contract is ready for the Contractor](0021-the-ladder-waits-for-a-ready-contract.md) | Proposed |
 | 0023 | [A decision on the contract is awaited from whoever is to take it](0023-a-decision-is-awaited-from-whoever-takes-it.md) | Proposed |
 | 0024 | [Three levels of network access for instances; regulated by default](0024-three-levels-of-network-access.md) | Proposed |
+| 0025 | [The operator channel and the main-agent endpoint are off the instance networks by construction](0025-operator-and-main-agent-off-the-instance-networks.md) | Proposed |
+| 0026 | [A lifetime and a rotation for the operator and main-agent tokens](0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md) | Proposed |
+| 0027 | [The network guard runs without root; its one capability comes from nft](0027-the-network-guard-runs-without-root.md) | Proposed |
+| 0028 | [The contract of a project is stored in SQLite, as immutable versions](0028-the-contract-of-a-project-is-stored-in-sqlite.md) | Accepted |

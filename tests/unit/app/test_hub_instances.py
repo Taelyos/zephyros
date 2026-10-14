@@ -20,6 +20,7 @@ import pytest
 
 from tests.support.fake_docker import FakeDocker
 from tests.support.filter_process import Running
+from tests.support.sockets import socket_path
 from zephyros.adapters.filter.journal import MemoryJournal
 from zephyros.app.hub import run
 from zephyros.core.config import Config, parse_config
@@ -61,6 +62,7 @@ def make_config(base: Path) -> Config:
                 "filter_socket": str(base / "f.sock"),
                 "operator_token_file": str(base / "t" / "operator.token"),
                 "main_agent_token_file": str(base / "t" / "main-agent.token"),
+                "control_socket": socket_path(base),
             },
         }
     )

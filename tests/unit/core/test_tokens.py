@@ -6,6 +6,7 @@ import base64
 import json
 import re
 from collections.abc import Iterator
+from datetime import timedelta
 
 import pytest
 from hypothesis import given, settings
@@ -361,3 +362,59 @@ def test_tokens_survive_a_restart_of_the_sqlite_store(tmp_path) -> None:  # type
     assert isinstance(result, Authenticated)
     assert result.principal == CONTRACTOR
     reopened.close()
+
+
+# ----------------------------------------------------------------------------- ADR 0026
+def test_a_token_that_never_expired_is_given_a_lifetime_once(
+    service: TokenService, store: TokenStore, clock: FakeClock
+) -> None:
+    old = service.issue_operator_token()
+    expiring = service.issue_operator_token(LIFETIME)
+    revoked = service.issue_operator_token()
+    service.revoke(revoked.token_id)
+    main = service.issue_main_agent_token()
+    clock.advance(10)
+    given = service.give_lifetime(TokenKind.OPERATOR, 600)
+    assert [record.token_id for record in given] == [old.token_id]
+    assert given[0].expires_at == clock.now() + timedelta(seconds=600)
+    assert service.give_lifetime(TokenKind.OPERATOR, 600) == []
+    stored = store.get(old.token_id)
+    assert stored is not None
+    assert stored.expires_at == clock.now() + timedelta(seconds=600)
+    for unchanged, expected in ((expiring, expiring.record.expires_at), (main, None)):
+        record = store.get(unchanged.token_id)
+        assert record is not None
+        assert record.expires_at == expected
+    with pytest.raises(ValueError, match="positive lifetime"):
+        service.give_lifetime(TokenKind.OPERATOR, 0)
+
+
+def test_the_live_tokens_of_a_kind_leave_out_the_revoked_and_the_expired(
+    service: TokenService, store: TokenStore, clock: FakeClock
+) -> None:
+    first = service.issue_main_agent_token(LIFETIME)
+    clock.advance(1)
+    second = service.issue_main_agent_token()
+    revoked = service.issue_main_agent_token()
+    service.revoke(revoked.token_id)
+    service.issue_operator_token()
+    assert [r.token_id for r in service.live_of_kind(TokenKind.MAIN_AGENT)] == [
+        first.token_id,
+        second.token_id,
+    ]
+    clock.advance(LIFETIME)
+    assert [r.token_id for r in service.live_of_kind(TokenKind.MAIN_AGENT)] == [second.token_id]
+    assert len(store.of_kind(TokenKind.MAIN_AGENT)) == 3
+    assert store.set_expiry("t_unknown", clock.now()) is False
+
+
+def test_an_expired_refusal_says_when(service: TokenService, clock: FakeClock) -> None:
+    issued = service.issue_operator_token(LIFETIME)
+    clock.advance(LIFETIME)
+    found = service.authenticate(issued.secret, peer_address=None, endpoint=Endpoint.OPERATOR)
+    assert isinstance(found, Rejected)
+    assert (found.reason, found.principal, found.expires_at) == (
+        Reason.EXPIRED,
+        OPERATOR,
+        issued.record.expires_at,
+    )

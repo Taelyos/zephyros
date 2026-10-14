@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime
 
-from zephyros.core.tokens import TokenRecord
+from zephyros.core.tokens import TokenKind, TokenRecord
 
 
 class InMemoryTokenStore:
@@ -37,3 +37,13 @@ class InMemoryTokenStore:
 
     def for_instance(self, instance_id: str) -> list[TokenRecord]:
         return [r for r in self._records.values() if r.instance_id == instance_id]
+
+    def of_kind(self, kind: TokenKind) -> list[TokenRecord]:
+        return [r for r in self._records.values() if r.kind is kind]
+
+    def set_expiry(self, token_id: str, at: datetime) -> bool:
+        record = self._records.get(token_id)
+        if record is None or record.expires_at is not None:
+            return False
+        self._records[token_id] = dataclasses.replace(record, expires_at=at)
+        return True

@@ -28,13 +28,14 @@ from zephyros.adapters.http.common import (
     peer_address,
     read_json,
     read_package,
+    token_refusal,
     unauthorized,
 )
 from zephyros.adapters.http.mcp import handle_message
 from zephyros.core.audit import Reason
 from zephyros.core.gateway import GatewayError, GatewayService, render_stream
 from zephyros.core.hub import Hub, ToolFailure
-from zephyros.core.tokens import Endpoint
+from zephyros.core.tokens import Endpoint, Rejected
 
 BUNDLE_TYPE: Final = "application/x-git-bundle"
 METADATA_PROBES: Final = frozenset(
@@ -47,11 +48,9 @@ DELIVERY_ID: Final = re.compile(r"d[0-9]{1,6}")
 
 async def mcp_endpoint(hub: Hub, request: Request, endpoint: Endpoint) -> Response:
     """POST, GET and DELETE on /mcp, for the agent endpoint and the main-agent endpoint."""
-    caller = hub.authenticate(
-        bearer(request), peer_address=peer_address(request), endpoint=endpoint
-    )
-    if caller is None:
-        return unauthorized()
+    caller = hub.identify(bearer(request), peer_address=peer_address(request), endpoint=endpoint)
+    if isinstance(caller, Rejected):
+        return token_refusal(caller)
     if request.method in ("GET", "HEAD"):
         # Hermes' MCP client probes with HEAD, then GET, before it posts: no stream is offered.
         return Response(status_code=405, headers={"Allow": "POST, DELETE"})
