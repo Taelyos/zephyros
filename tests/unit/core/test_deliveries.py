@@ -1114,7 +1114,6 @@ def test_a_decision_that_cannot_be_told_still_raises_the_alert_of_a_loop() -> No
 
 
 # ----------------------------------------------------------------------------- review of #9
-@pytest.mark.xfail(strict=True, reason="the addenda pile up until the fix")
 def test_a_record_without_a_gate_report_keeps_one_addendum_however_often_it_is_inspected() -> None:
     """A record built by hand, as the replay tools do, holds its report and no report of the
     gate: the first inspection takes that report as the report of the gate, and the next ones

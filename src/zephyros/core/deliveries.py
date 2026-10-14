@@ -408,6 +408,7 @@ class DeliveryService:
                 inspections=inspections,
                 decision=gate.decision.value,
                 addendum=addendum,
+                gate_report=base,
                 report=with_addendum(base or "", addendum),
             )
 
