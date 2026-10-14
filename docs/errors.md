@@ -1,6 +1,6 @@
 # Error messages
 
-Each error meant for the user carries three items (EXG-51, annex "Error message items"): a
+Each error meant for the user carries three items (EXG-51): a
 stable error code (the `reason` of the log record and of the answer), the cause of the error
 (the message), and the documented corrective action below. Where each answer carries them:
 

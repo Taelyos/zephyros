@@ -1,6 +1,6 @@
 """The delivery loop: staging area, acceptance tests, verification, gate, report, pull request.
 
-The steps of annex "Delivery steps", at the light process level:
+The steps of a delivery, at the light process level:
 
 1. `prepare`: the default branch of the project's repository becomes the base of its staging area.
 2. The Owner side puts its acceptance tests (`put_acceptance`); the Contractor never writes them.

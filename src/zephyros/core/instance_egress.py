@@ -36,7 +36,7 @@ PROTECTED_V6: tuple[str, ...] = (
     "2002::/16",
     "2001::/32",
 )
-"""The IPv6 networks of annex "Protected networks", as the guard loads them
+"""The protected IPv6 networks (EXG-03), as the guard loads them
 (images/guard/guard.sh)."""
 
 _PROTECTED = tuple(ipaddress.ip_network(item) for item in PROTECTED_V4 + PROTECTED_V6)

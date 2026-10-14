@@ -195,7 +195,7 @@ What holds and what does not, in version 0.2.0:
   own, but whoever can write the hub's data directory can forge both the log and the anchor; the
   anchor belongs on another medium when that matters. A lost anchor keeps the log verification
   failing: back it up with the database; there is no re-anchoring yet
-  ([ADR 0019](docs/decisions/0019-anchor-outside-the-store.md), Proposed for these reasons).
+  ([ADR 0019](docs/decisions/0019-anchor-outside-the-store.md)).
 - **The model policy is the configuration file.** The gateway sends only the models `gateway.models`
   names; the policy is as safe as the file that holds it.
 - The gate judges what the contract says, nothing more: a contract with no design requirement
@@ -216,8 +216,9 @@ What holds and what does not, in version 0.2.0:
 | guard | One per instance: its network rules, at the level the configuration sets, and its fixed address. |
 | turn | The pinned Hermes Agent, unprivileged, for one piece of work. |
 
-Zephyros is built with its own method: a written contract came first, and each increment is
-recorded against it. [The architecture decisions](docs/decisions/) explain the choices.
+Zephyros is not built inside Zephyros. A written specification came first, and it evolves
+through product decisions; the work goes through small pull requests, each checked by the CI and
+by an independent review. [The architecture decisions](docs/decisions/) explain the choices.
 
 ## Documentation
 

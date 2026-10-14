@@ -7,9 +7,10 @@ is never put in a name, an option or a path: names derive from the project ident
 hub issued and from enumerations, and the rest (an address, a token, a prompt) goes where the
 template puts it and nowhere else.
 
-`check_spec` is the allow-list of annex "Permitted container operations" and "Container
-hardening profile" written as code. The filter runs it on every specification before sending it
-to the runtime, and the tests run it on every specification the templates can produce.
+`check_spec` is the allow-list of the permitted container operations and of the hardened
+container profile (ADR 0014), written as code. The filter runs it on every specification before
+sending it to the runtime, and the tests run it on every specification the templates can
+produce.
 """
 
 from __future__ import annotations
@@ -461,7 +462,7 @@ _FORBIDDEN_HOST_KEYS = (
 def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
     """Raise SpecError unless `spec` is a container of the allowed kind with the full profile.
 
-    This is the last gate before the runtime. It states the annexes: no privileged mode, no
+    This is the last gate before the runtime. It states the profile: no privileged mode, no
     host namespace, no bind of a host path, no device, no runtime socket, the capabilities
     dropped (and for the guard only NET_ADMIN kept), a read-only root file system, the limits,
     the default syscall filter (no override), and an image from the configuration.

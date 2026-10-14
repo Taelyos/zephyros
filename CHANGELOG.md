@@ -1,7 +1,7 @@
 # Changelog
 
 The public API of Zephyros — the API of the hub, the command line, the contract schema, the
-events schema and the configuration schema (annex "Public API") — follows semantic versioning
+events schema and the configuration schema — follows semantic versioning
 2.0.0 (CTR-13). Before version 1.0, **breaking changes are announced here**, under a
 "Breaking changes" heading of the version that carries them; after 1.0 they move the major
 version. Each schema carries its own version number.
@@ -20,7 +20,7 @@ verification kit that delivered code cannot forge. Release notes:
 | --- | --- | --- |
 | Configuration schema | 1.12.0 | 1.14.0 |
 | Contract schema | 1.1.0 | 1.1.0 |
-| Events schema | 1.1.0 | 1.1.0 |
+| Events schema | 1.1.0 | 2.0.0 |
 | Verification interface | 0.1.0 | 0.2.0 |
 | Forge, agent engine, delivery and model provider interfaces | unchanged | unchanged |
 
@@ -34,20 +34,25 @@ verification kit that delivered code cannot forge. Release notes:
   Write `egress = "open"` in `[network]` for the former behavior. A guard whose level differs from
   the configuration is stopped when the hub starts or finds it, so the next turn of that instance
   starts with the configured level (#16).
-- A delivery is never PASS for want of evidence (ADR 0020, amendment Proposed). A contract with no
+- A delivery is never PASS for want of evidence (ADR 0020 and its amendment). A contract with no
   requirement or constraint, or a delivery where no acceptance test of the judged objects ran and
   passed, is CONCERNS at best, with a reservation that says nothing was judged. A contract judged
-  by inspection alone no longer reaches PASS (#9, #15).
+  by inspection alone no longer reaches PASS. A conforming inspection still turns CONCERNS into
+  PASS once at least one acceptance test ran and passed, and never makes up for a failed test
+  (decision D16, recorded in ADR 0020) (#9, #15, #18).
 - `contract.import` takes a document whole or not at all. An identifier defined twice, a
   verification method that is not T, I, A or D (`TBD`, `Test`), and a requirement or constraint
   row without its five cells are refused and named with their line, where they used to be
   replaced, read letter by letter, or dropped (#12).
-- `delivery.decided` is emitted for every declared delivery, exactly once: its `decision` can now
+- The events schema is 2.0.0: every notification says `"schema_version": "2.0.0"`. No field is
+  added or removed, but two fields take values they never took, which breaks a receiver that
+  checked them against a closed list:
+  `delivery.decided` is emitted for every declared delivery, exactly once: its `decision` can now
   be `REFUSED` (the checks refused it) or `ERROR` (its verification could not finish), besides
   `PASS`, `CONCERNS` and `FAIL`. A receiver that accepted three values must accept five (#9, #15,
   #17). The alerts of the continuity ladder can carry `side: main-agent`, for a change the Owner
-  side proposed and the main agent is to decide (ADR 0023) (#13). The events schema keeps its
-  version, 1.1.0: no field was added or removed.
+  side proposed and the main agent is to decide (ADR 0023) (#13). A receiver that reads
+  `schema_version` can tell the two apart (#18).
 
 ### Added
 - Three levels of network access for instances (ADR 0024, superseding ADR 0009): `regulated`
@@ -87,7 +92,7 @@ verification kit that delivered code cannot forge. Release notes:
   the asked test files to the SHA-256 the filter measured on the archive, and imports the bytes it
   read when the run began. The container of a sandbox has a log configuration with no rotation
   (#11).
-- A change of the contract awaits whoever is to decide it (ADR 0023, Proposed). A change the
+- A change of the contract awaits whoever is to decide it (ADR 0023). A change the
   Owner side proposed alerts the main agent, then the human; a later proposal no longer resets the
   decision ladder (#13).
 - The tree of a delivery is read with one `git cat-file --batch` instead of one git process per
@@ -95,6 +100,8 @@ verification kit that delivered code cannot forge. Release notes:
   (#12).
 - The title of a pull request is built when the worker opens or retitles it, from the record as
   it is then (#9).
+- The architecture decisions 0016 to 0019, 0021, 0023, 0024 and the amendment of 0020 are
+  Accepted; ADR 0020 records decision D16 on what an inspection can change (#18).
 
 ### Fixed
 - The continuity ladder wakes the Contractor only once its contract is ready: the version in

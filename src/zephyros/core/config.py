@@ -569,8 +569,8 @@ def _rule_resolvers(data: Mapping[str, object]) -> list[Problem]:
             problems.append(
                 Problem(
                     f"network.resolvers[{value}]",
-                    'is in a protected network (annex "Protected networks"): the network '
-                    "guard blocks it, so an instance could not reach it",
+                    "is in a protected network (private, loopback, link-local or similar): "
+                    "the network guard blocks it, so an instance could not reach it",
                 )
             )
     return problems

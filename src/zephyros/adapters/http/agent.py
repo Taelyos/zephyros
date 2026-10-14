@@ -1,9 +1,8 @@
-"""The agent endpoint: the one hub destination open to instances (annex "Hub endpoints open to
-instances"). It serves `/mcp`, the model endpoint `/v1`, and the staging area: `GET /staging/base`
-(the base of the project, as a package), `POST /staging/delivery?branch=<name>` (a pushed
-branch, as a package; the Contractor only) and `GET /staging/delivery/<delivery_id>` (a delivered
-branch, as a package, for the Owner to read what it judges; ADR 0020). Each is one call of the
-hub, with one record.
+"""The agent endpoint: the one hub destination open to instances. It serves `/mcp`, the model
+endpoint `/v1`, and the staging area: `GET /staging/base` (the base of the project, as a
+package), `POST /staging/delivery?branch=<name>` (a pushed branch, as a package; the Contractor
+only) and `GET /staging/delivery/<delivery_id>` (a delivered branch, as a package, for the Owner
+to read what it judges; ADR 0020). Each is one call of the hub, with one record.
 
 By decision of the Owner (2026-10-10), `GET /v1/models` answers without a token with a fixed,
 non-secret list, because Hermes asks for it bare after every turn. The metadata probes that
