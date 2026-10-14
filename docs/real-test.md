@@ -71,6 +71,14 @@ instead, so the variables always resolve.
    (requirement and constraint tables, story sections with their criteria), and its acceptance
    tests — or let the Owner instance write the stories, criteria and tests (step 4).
 
+   The `tests` kit runs acceptance tests as **black box** ([ADR 0017](decisions/0017-verification-runner-and-kits.md)):
+   a test runs the delivery as a subprocess and reads its output
+   (`subprocess.run([sys.executable, "-m", "calc", "1", "2"], ...)`, or
+   `python -c "from calc import add; print(add(1, 2))"`). A test that imports the delivered code,
+   or a module of its own beside it, fails to load and reads `error`. Keep each test file
+   self-contained, with its expected values inside it: a reference file in the tree can be
+   rewritten by the delivery before the test reads it.
+
 2. **Start the hub** with the delivery loop switched on:
 
    ```bash
@@ -87,6 +95,11 @@ instead, so the variables always resolve.
    runner** (`verification.runner` is `none`), and every verification ends in an error that says
    "no verification runner is configured". `ZEPHYROS_FORGE=github` writes the `[forge]` table
    (use `directory` and `ZEPHYROS_FORGE_DIR` for pull requests in a directory of the host).
+
+   Add `ZEPHYROS_EGRESS=sealed` or `open` to change what the instances reach; the default,
+   `regulated`, gives them the hub and the package registries, and not GitHub
+   ([what runs](running.md#start-and-stop)). The three runs below were made before the levels
+   existed, with the whole Internet open.
 
    `up` builds the images (the hub and filter, the network guard, the instance, and the kit),
    writes `deploy/state/zephyros.toml` with your `[gateway]` table appended, checks it with
@@ -145,6 +158,9 @@ before the Owner side writes its tests is safe; while it waits, the log says why
 - Shown with real models: the whole loop (contract, staging, delivery, sandbox replay, gate,
   report, pull request on GitHub), an Owner instance that writes and checks its own acceptance
   tests, inspections and a verdict posted on the pull request, two projects at once.
-- Not shown yet: projects larger than a small Python service, other models and providers, and
-  long runs. The report counts only the calls that go through the gateway: an operator who drives
-  a run with an agent of their own pays for it outside Zephyros.
+- Not shown yet: projects larger than a small Python service, other models and providers, long
+  runs, and the changes of version 0.2.0 (black-box acceptance tests, the network levels, the
+  Contractor's report without the run output), which the test suites cover but no real run has
+  tried. The report counts only the calls that go through the gateway: an operator who drives
+  a run with an agent of their own pays for it outside Zephyros. In the three runs the operator
+  was an agent (a Hermes agent in run 1, a Claude Opus 5.5 session in runs 2 and 3), not a person.

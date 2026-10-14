@@ -36,6 +36,14 @@ url = "https://main.example.test/zephyros/hook"  # empty turns notifications off
 secret = ""  # 16+ characters, shared with the receiver out of band
 ```
 
-Both keys are set together; the secret travels out of band, never through the hub's answers or the
-log. The events that fire a delivery are the transitions of a project — a delivery decided, a turn
-abandoned — sent by the hub as they happen.
+Both keys are set together, or neither; the secret travels out of band, never through the hub's
+answers or the log. The events that fire a delivery, and their payloads, are listed in
+[notifications](notifications.md): a delivery decided (refused and in error included), a loop of
+failed deliveries, a verdict of the Owner side, and the alerts of the continuity ladder.
+
+The hub queues each notification and sends the queue in order from a thread of its own: a slow or
+absent receiver holds up nothing else. Each notification is logged once, as `notification.sent`:
+sent, or an error that says why (`status <code>`; `egress`, for a destination the hub may not
+reach; the kind of error, such as `ConnectError`, for a receiver out of reach; `queue_full`; or
+`hub_stopped`, for what was still queued when the hub stopped). A notification is sent once: the
+hub does not retry.

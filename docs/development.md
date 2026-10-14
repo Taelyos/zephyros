@@ -2,10 +2,10 @@
 
 ## Set up
 
-You need Python 3.12 or later and [`uv`](https://docs.astral.sh/uv/) 0.12.24 or later. Any way of installing `uv` is fine, for example:
+You need Python 3.12 or later and [`uv`](https://docs.astral.sh/uv/) 0.12.24 exactly: `pyproject.toml` pins it (`required-version`), and any other version refuses to run. Any way of installing that version is fine, for example:
 
 ```bash
-python3 -m venv ~/.local/share/uv-bootstrap && ~/.local/share/uv-bootstrap/bin/pip install uv
+python3 -m venv ~/.local/share/uv-bootstrap && ~/.local/share/uv-bootstrap/bin/pip install uv==0.12.24
 ```
 
 Then put `uv` on your `PATH`. Every other tool (type checker, linter, test runner, audit, secret scan) comes from the lock file and is installed by `uv sync --locked`.
@@ -30,7 +30,7 @@ The tests that need a container runtime (`tests/runtime/`): the hardening of a t
 
 ## What the repository settings must enforce
 
-A failing workflow does not stop a merge by itself. Once the repository has a remote, the human sets branch protection on `main` so that both jobs `checks (ubuntu-latest)` and `checks (macos-latest)` are required. Without it, "the CI shall reject the change" (US-E11-04, US-E11-05, US-E11-03) is a convention, not a rule.
+A failing workflow does not stop a merge by itself. The human sets branch protection on `main` so that the three jobs `checks (ubuntu-latest)`, `checks (macos-latest)` and `runtime (ubuntu-latest)` are required; this repository does. Without it, "the CI shall reject the change" (US-E11-04, US-E11-05, US-E11-03) is a convention, not a rule.
 
 ## Known limits of the pins (CTR-10)
 
@@ -47,11 +47,11 @@ A failing workflow does not stop a merge by itself. Once the repository has a re
 | `src/zephyros/adapters/` | Container runtime, storage, HTTP, agent engine, model provider |
 | `tools/` | The repository checks (pins, suppressions, core purity) and the replay tools (`tools/replay/`, [replay format](replay-format.md)). Not part of the hub |
 | `tests/unit/` | Unit tests, no container runtime |
-| `tests/runtime/` | Tests that need a container runtime (`scripts/acceptance.sh`) |
-| `tests/acceptance/` | The executable attack catalog |
+| `tests/runtime/` | Tests that need a container runtime (`scripts/acceptance.sh`), attacks of the threat model among them |
+| `tests/acceptance/` | Stories and attacks of the threat model through a real hub, without containers |
 | `schemas/` | Versioned JSON Schemas, generated from the code |
-| `images/` | The images Zephyros builds: the network guard |
-| `scripts/` | `check.sh`, `acceptance.sh` |
+| `images/` | The images Zephyros builds: the hub and filter (`zephyros`), the network guard (`guard`), the instance (`instance`) and the `tests` verification kit (`kit-tests`) |
+| `scripts/` | `check.sh`, `acceptance.sh`, `deploy.sh` |
 
 ## Conventions
 
