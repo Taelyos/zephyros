@@ -1,6 +1,7 @@
 # 0016. An instance is its network guard and its volumes; each agent container is one turn
 
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-10
 - Supersedes: the sentence "Signed webhooks wake instances; activity flows back through signed outbound webhooks" of [0003](0003-owner-and-contractor-instances-with-hub.md)
 

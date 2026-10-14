@@ -1,5 +1,5 @@
 # 0013. Tokens are opaque, bound to their instance and checked against server-side records
-- Status: Accepted; in part replaced by [0016](0016-one-agent-container-per-turn.md), which is Proposed and which the code follows
+- Status: Accepted; in part replaced by [0016](0016-one-agent-container-per-turn.md)
 - Date: 2026-10-09
 - Replaced in part: "Rotation by restart" below. A token is bound to the address of the
   instance's network guard and lives as long as the instance; it is revoked when the instance

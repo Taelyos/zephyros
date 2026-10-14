@@ -1,6 +1,7 @@
 # 0018. An instance resolves names through configured resolvers, never through the host's resolver chain
 
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-12
 
 ## Context
@@ -23,12 +24,12 @@ Consequences for the suites on such a host: the ATK-44 positive control ("a publ
 - The configuration gains `network.resolvers`: the name resolvers the instances use, one to four IPv4 addresses. The guard of an instance carries them as its DNS, and the turn, which joins the guard's network namespace, uses them.
 - The default is `9.9.9.9` (Quad9), chosen by the Owner on 2026-10-12: a public resolver that filters malicious domains and does not log the client address. A deployment overrides it (`ZEPHYROS_RESOLVERS` for `scripts/deploy.sh`, or the key in the configuration file).
 - A resolver address inside a protected network is refused at startup, naming the key: the guard would block it, so it can never work (EXG-50 says the refusal names the faulty key). This is what keeps the default honest on the homelab.
-- No guard rule and no contract text change: a public resolver is a destination the annex already permits ("the public Internet stays open to instances").
+- No guard rule change: a public resolver is a destination the network rules of the time already permitted, since the public Internet was open to instances.
 
 ## Consequences
 
 - Positive: instances resolve names on every supported platform, homelab resolvers included; the behavior no longer depends on where the host's resolver sits; the misconfiguration that cannot work (a protected resolver) stops the start instead of failing at the first model call.
-- Negative: by default, the lookups of an instance go to a third party (Quad9) rather than to the user's own resolver. A user who wants no third party must either deploy a resolver reachable without a protected address, or wait for the amendment sketched in the alternatives.
+- Negative: by default, the lookups of an instance go to a third party (Quad9) rather than to the user's own resolver. A user who wants no third party must either deploy a resolver reachable without a protected address, or wait for the change sketched in the alternatives.
 - Neutral: the failure that motivated this ADR was found by the runtime suite on Linux; the contract and the threat model are untouched.
 - Later: since [ADR 0024](0024-three-levels-of-network-access.md), only an `open` instance resolves names itself; a `regulated` or `sealed` instance sends no query at all (the egress proxy of the hub resolves the allowed hosts). `network.resolvers` stays required and serves the `open` level.
 
@@ -36,5 +37,5 @@ Consequences for the suites on such a host: the ATK-44 positive control ("a publ
 
 - **Suppress or short-circuit AAAA queries.** No effect: the block hits IPv4 lookups too. The failure is not in the address family.
 - **Raise the timeout of the probe.** No effect: name resolution is not bounded by the socket timeout, and the lookup fails whether the fetch waits 2 s or 30 s.
-- **A guard exception for the host's resolvers.** Works (the fetch passes; the wildcard name resolves; a cold name costs about 4 s), and it keeps the user's own DNS. But the rule on protected networks (EXG-03) states today that a resolver reached at a protected address is not a permitted destination, so this needs an amendment and a guard rule change. Recorded as a candidate for the Owner.
-- **A recursive resolver inside the instance, on its own loopback.** The annex already permits "a name resolver that is served on the loopback interface of the execution context itself", and no third party is involved. Kept for a later milestone: every turn would carry another process, and it depends on outbound port 53, which some networks filter.
+- **A guard exception for the host's resolvers.** Works (the fetch passes; the wildcard name resolves; a cold name costs about 4 s), and it keeps the user's own DNS. But the rule on protected networks (EXG-03) states today that a resolver reached at a protected address is not a permitted destination, so this needs a product decision and a guard rule change. Recorded as a candidate for the project owner.
+- **A recursive resolver inside the instance, on its own loopback.** The network rules already permit a name resolver served on the loopback interface of the execution context itself, and no third party is involved. Kept for a later milestone: every turn would carry another process, and it depends on outbound port 53, which some networks filter.
