@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -53,14 +53,6 @@ from zephyros.core.projects import ProjectService
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
 
 
-@dataclass(frozen=True)
-class KitResult(VerificationResult):
-    """The answer of a kit of the verification interface 0.2.0: besides the outcomes, the tests
-    it found in the asked files and did not run, since no criterion names them (`path::name`)."""
-
-    deselected: tuple[str, ...] = ()
-
-
 class DeselectingRunner(AssertionRunner):
     """The assertions runner, answering like a kit of the interface 0.2.0: every other test line
     of an asked file is a test it saw and did not run."""
@@ -74,7 +66,7 @@ class DeselectingRunner(AssertionRunner):
             for line in request.files.get(path, b"").decode(errors="replace").splitlines()
             if ":" in line
         ]
-        return KitResult(
+        return VerificationResult(
             result.outcomes, result.log, deselected=tuple(t for t in seen if t not in asked)
         )
 
@@ -657,13 +649,13 @@ def test_a_delivery_whose_kit_ran_every_test_of_its_files_has_no_flag() -> None:
 
 def test_only_tests_of_the_files_the_kit_ran_and_never_one_asked_count_as_never_run() -> None:
     """What a kit names as deselected is taken only where it can be true."""
-    result = KitResult(
+    result = VerificationResult(
         {"a.py::test_a": VerificationOutcome.PASSED},
         deselected=("a.py::test_b", "a.py::test_a", "elsewhere.py::test_c", "a.py::test_b"),
     )
     assert deselected_tests(result, ("a.py::test_a",)) == ("a.py::test_b",)
     plain = VerificationResult({"a.py::test_a": VerificationOutcome.PASSED})
-    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a runner of the interface 0.1.0
+    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a kit that ran every test
 
 
 def _title_of(forge: InMemoryForge, number: int) -> str:
@@ -996,6 +988,101 @@ def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused_and_tol
     assert audit.read(project, 0, 1000)[-1].action is Action.VERIFICATION_RUN  # the error, logged
     told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
     assert told == ["REFUSED"]
+
+
+class NothingFailedLogged(RefusalUnlogged):
+    """A log that takes neither the record of a refusal nor the record of an error."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.VERIFICATION_RUN and record.outcome is Outcome.ERROR:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+@pytest.mark.parametrize(
+    ("runner", "files", "state"),
+    [
+        (None, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"}, DeliveryState.REFUSED),
+        (Exploding(), {**BASE, "calc.py": b"x = 2\n"}, DeliveryState.ERROR),
+    ],
+)
+def test_a_failure_the_log_cannot_take_is_still_told_once(
+    runner: AssertionRunner | None, files: dict[str, bytes], state: DeliveryState
+) -> None:
+    """EXG-23, review of #15: the log refuses the record of the error too. The delivery is told
+    once all the same, as a refusal or as an error, and the worker hears of the log's fault."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, audit, _store = service(
+        runner=runner,
+        events=lambda event, payload: events.append((event, payload)),
+        log_store=NothingFailedLogged(),
+    )
+    ready(made, project)
+    pushed = made.push(project, make_package(files, state_id(BASE)), "work")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(LogError):
+        made.step()  # the worker's loop reports it and goes on
+    assert made.status(project, pushed.delivery_id).state is state
+    assert audit.read(project, 0, 1000)[-1].action is not Action.VERIFICATION_RUN
+    told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
+    assert told == [state.name]
+
+
+class OpeningUnlogged(InMemoryLogStore):
+    """A log that takes no record of a pull request opened, or not."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.PULL_REQUEST_OPEN:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+class ProposalContended(InMemoryDeliveryStore):
+    """A store where another writer always gets in first once the pull request is open."""
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        if record.state is DeliveryState.PROPOSED:
+            raise StaleRecordError("written by someone else")
+        return super().put_record(record)
+
+
+@pytest.mark.parametrize(
+    ("forge", "log_store", "store", "fault"),
+    [
+        ("open", OpeningUnlogged(), None, LogError),
+        ("refusing", OpeningUnlogged(), None, LogError),
+        ("open", None, ProposalContended(), StaleRecordError),
+    ],
+    ids=["opened-unlogged", "refused-unlogged", "proposal-unwritten"],
+)
+def test_a_decision_is_told_once_whatever_becomes_of_its_pull_request(
+    forge: str,
+    log_store: InMemoryLogStore | None,
+    store: InMemoryDeliveryStore | None,
+    fault: type[Exception],
+) -> None:
+    """EXG-23, review of #15: a PASS whose pull request the log cannot record, opened or
+    refused, or whose proposal is never written. The main agent hears of the decision once,
+    and the worker hears of the fault."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, _audit, _store = service(
+        forge=calc_forge()
+        if forge == "open"
+        else RefusingForge(
+            {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+        ),
+        log_store=log_store,
+        store=store,
+        events=lambda event, payload: events.append((event, payload)),
+    )
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "w")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(fault):
+        made.step()  # the worker's loop reports it and goes on
+    assert made.status(project, pushed.delivery_id).decision == "PASS"
+    told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
+    assert told == ["PASS"]
 
 
 class Contended(InMemoryDeliveryStore):

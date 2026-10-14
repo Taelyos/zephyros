@@ -66,7 +66,19 @@ def test_sub():
         text=True,
     )
     assert out.stdout.strip() == "2", out.stderr
+
+
+def test_sub_negative():
+    # No criterion names this test: the kit deselects it, and the report says it never ran.
+    out = subprocess.run(
+        [sys.executable, "-c", "from calc import sub; print(sub(1, 3))"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "-2", out.stderr
 """
+NEVER_RUN = "test_sub.py::test_sub_negative"
+"""A test of a file the kit runs that no criterion names (A2a)."""
 
 
 def requirements() -> list[dict[str, Any]]:
@@ -217,6 +229,12 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
         assert "[masked]" in json.dumps(refused)
         # The report carried that name masked when the hub took it; refused, it is in no report.
         assert "**Decision: PASS**" in report
+        # A2a: the test no criterion names never ran, and the report names it, from the list
+        # the real kit returns (interface 0.2.0); the log counts it.
+        assert "Tests that no criterion names, in the files the kit ran: they never ran." in report
+        assert f"- `{NEVER_RUN}`" in report.splitlines()
+        runs = [r for r in deployment.records(project) if r.get("action") == "verification.run"]
+        assert [r["parameters"]["never_run"] for r in runs] == [1], runs
         # EXG-46: the run is marked as a simulation, in the report and in the pull request
         assert "**SIMULATION**" in report
         assert (

@@ -195,13 +195,12 @@ def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple
 def deselected_tests(result: VerificationResult, asked: tuple[str, ...]) -> tuple[str, ...]:
     """The tests the kit found in the files it ran and did not run, since no criterion names
     them: `VerificationResult.deselected` of the verification interface 0.2.0, as `path::name`.
-    Only tests of the asked files count, never a test asked for; a runner of the interface 0.1.0
-    names none."""
-    # Read by name until the interface 0.2.0 is in the port; then `result.deselected`.
-    found = getattr(result, "deselected", ())
+    Only tests of the asked files count, never a test asked for."""
     files = {test.partition("::")[0] for test in asked}
     return tuple(
-        sorted({str(test) for test in found if str(test).partition("::")[0] in files} - set(asked))
+        sorted(
+            {test for test in result.deselected if test.partition("::")[0] in files} - set(asked)
+        )
     )
 
 
@@ -650,18 +649,21 @@ class DeliveryService:
         if checked.state is DeliveryState.REFUSED:
             self._tell_decision(checked, REFUSED)
             return
-        if checked.decision != Decision.FAIL.value:
-            self._propose(checked, delivery)
-        # Told once the forge has answered, so that a receiver that fails cannot keep the pull
-        # request from opening; and told as it stands now, an inspection recorded meanwhile
-        # included, so that the last decision the main agent hears of is the one in force.
-        now = self._record(project_id, delivery_id)
         try:
-            self._tell_decision(now, str(now.decision))
+            if checked.decision != Decision.FAIL.value:
+                self._propose(checked, delivery)
         finally:
-            # EXG-23: a decision that cannot be told never hides the loop it closes.
-            if checked.decision == Decision.FAIL.value:
-                self._alert_loop(project_id, checked.branch)
+            # Told once the forge has answered, so that a receiver that fails cannot keep the
+            # pull request from opening; told even when what follows the forge's answer fails
+            # (EXG-23); and told as it stands now, an inspection recorded meanwhile included,
+            # so that the last decision the main agent hears of is the one in force.
+            now = self._record(project_id, delivery_id)
+            try:
+                self._tell_decision(now, str(now.decision))
+            finally:
+                # EXG-23: a decision that cannot be told never hides the loop it closes.
+                if checked.decision == Decision.FAIL.value:
+                    self._alert_loop(project_id, checked.branch)
 
     def _alert_loop(self, project_id: str, branch: str) -> None:
         """EXG-23: the loop the Owner and the Contractor may fall into — a streak of refused
