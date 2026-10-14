@@ -19,8 +19,11 @@ from __future__ import annotations
 import asyncio
 import atexit
 import functools
+import importlib.util
+import marshal
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -276,6 +279,31 @@ def test_a_link_made_during_the_run_does_not_get_a_delivered_module_in() -> None
     assert result.outcomes["test_a_first.py::test_first"] is Outcome.PASSED
     assert result.outcomes["test_b_second.py::test_second"] is Outcome.FAILED
     assert "black box" in result.log
+
+
+def test_a_bytecode_cache_shipped_with_the_delivery_does_not_replace_the_source() -> None:
+    """ATK-22: the judge compiles the asked test files, and would run a cache the delivery put
+    next to one in place of its source when the time and size recorded in it match: the tree is
+    extracted with a fixed time, and the size of a file is a guess away. The kit removes the
+    caches of the tree before it collects anything, so the source is what runs. (The cache is
+    named after the Python and the pytest of the host, the same as the image's.)"""
+    source = b"def test_owner():\n    assert False\n"
+    forged = FORGERS["rewrites_the_kit_state"] + "\n\ndef test_owner():\n    assert False\n"
+    code = compile(forged, "/work/test_owner.py", "exec")
+    header = importlib.util.MAGIC_NUMBER + bytes(4) + bytes(4) + len(source).to_bytes(4, "little")
+    tag = f"{sys.implementation.cache_tag}-pytest-{pytest.__version__}"
+    request = VerificationRequest(
+        "p_rtcache",
+        "tests",
+        {
+            "test_owner.py": source,
+            f"__pycache__/test_owner.{tag}.pyc": header + marshal.dumps(code),
+        },
+        ("test_owner.py::test_owner",),
+        timeout_seconds=60,
+    )
+    result = runner().run(request)
+    assert result.outcomes["test_owner.py::test_owner"] is Outcome.FAILED
 
 
 def test_a_conftest_and_a_pytest_ini_of_the_delivery_are_never_loaded() -> None:

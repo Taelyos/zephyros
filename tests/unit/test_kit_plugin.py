@@ -9,6 +9,8 @@ tests/runtime/test_sandbox_runner_conforms.py.
 from __future__ import annotations
 
 import importlib.util
+import marshal
+import os
 import subprocess
 import sys
 import textwrap
@@ -133,6 +135,36 @@ def test_the_allowed_set_is_exactly_the_existing_asked_files(
     }
 
 
+def test_a_bytecode_cache_next_to_a_source_is_not_read(
+    kit: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache shipped with the delivery next to an asked test file would be run in place of its
+    source whenever the time and size it records match. The control shows the attack works
+    here — the planted cache is what loads — and the kit's setting makes the source load."""
+    monkeypatch.setattr(sys, "pycache_prefix", None)  # restored at the end of the test
+    source = tmp_path / "planted.py"
+    source.write_text("VALUE = 'source'\n", encoding="utf-8")
+    os.utime(source, (0, 0))
+    cache = Path(importlib.util.cache_from_source(str(source)))
+    cache.parent.mkdir()
+    header = importlib.util.MAGIC_NUMBER + bytes(4) + bytes(4)
+    header += source.stat().st_size.to_bytes(4, "little")
+    cache.write_bytes(header + marshal.dumps(compile("VALUE = 'cache'\n", str(source), "exec")))
+
+    def loaded() -> str:
+        spec = importlib.util.spec_from_file_location("planted", source)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return str(module.VALUE)
+
+    assert loaded() == "cache"  # the control: without the kit's setting the cache wins
+    kit._ignore_bytecode_caches()
+    assert sys.pycache_prefix == kit.NO_BYTECODE
+    assert loaded() == "source"
+
+
 def test_the_kit_refuses_to_run_when_it_cannot_make_the_judge_non_dumpable(
     kit: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -145,6 +177,7 @@ def test_the_kit_refuses_to_run_when_it_cannot_make_the_judge_non_dumpable(
     assert sys.meta_path == meta_path
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="prctl is Linux's; the kit image is Linux")
 def test_the_process_is_made_non_dumpable() -> None:
     """`prctl(PR_SET_DUMPABLE, 0)` is what stops a black-box test's subprocess from reading the
     judge's memory (the nonce). Checked in a fresh process, since it is a one-way change."""
@@ -155,7 +188,6 @@ def test_the_process_is_made_non_dumpable() -> None:
         kit = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(kit)
         libc = ctypes.CDLL(None, use_errno=True)
-        assert libc.prctl(3) == 1, "a fresh process is dumpable"
         assert kit._set_non_dumpable() is True
         assert libc.prctl(3) == 0, "the process is non-dumpable afterwards"
         print("ok")

@@ -23,8 +23,10 @@ So the real defence is to keep every line of delivered code out of this process 
    An acceptance test is therefore black-box: it may run the delivery as a *subprocess* and read
    its output, but it may not `import` the delivered code into the judge. A test that tries to
    import it fails to load and is reported as an error, never a pass. The run also ignores the
-   project's own configuration and conftests (`-c /dev/null`, `--noconftest`), and keeps the
-   working directory off `sys.path` (`python -P`), so a delivered file cannot shadow this plugin.
+   project's own configuration and conftests (`-c /dev/null`, `--noconftest`), keeps the
+   working directory off `sys.path` (`python -P`), so a delivered file cannot shadow this plugin,
+   and never reads a bytecode cache the delivery shipped, so the source of an asked test file is
+   what runs and not a precompiled stand-in.
 2. **The judge is not debuggable.** `prctl(PR_SET_DUMPABLE, 0)` makes this process's memory
    unreadable to the unprivileged subprocesses a black-box test spawns, so a child cannot recover
    the nonce by attaching to its parent, whatever `kernel.yama.ptrace_scope` is on the host.
@@ -60,6 +62,8 @@ import pytest
 
 REQUEST = Path("/work/zephyros-request.json")
 WORK = "/work"
+NO_BYTECODE = "/opt/kit/no-bytecode"
+"""A directory that does not exist, on the read-only root of the image."""
 MARK = "ZEPHYROS-OUTCOMES "
 RUN_MARK = "ZEPHYROS-RUN "
 PR_SET_DUMPABLE = 4
@@ -155,12 +159,24 @@ def _install_barrier() -> None:
     sys.meta_path.insert(0, _WorkImportBarrier(_allowed_paths(), os.path.realpath(WORK)))
 
 
+def _ignore_bytecode_caches() -> None:
+    """Look for bytecode caches where there are none, instead of next to the sources. The judge
+    compiles the asked test files, and would run a cache the delivery shipped next to one in
+    place of its source whenever the time and size it records match (the tree is extracted with a
+    fixed time, and the size of a file is a guess away). The directories of the tree cannot be
+    cleaned — the archive extraction makes the ones it creates root's — so the import machinery
+    (and pytest's assertion rewriting, which follows it) is pointed at a directory of the
+    read-only image that does not exist."""
+    sys.pycache_prefix = NO_BYTECODE
+
+
 def pytest_load_initial_conftests(
     early_config: pytest.Config, parser: object, args: list[str]
 ) -> None:
     # The first hook, before pytest collects anything: harden the process while no delivered code
     # can yet run, then print the run line. Non-dumpable first (so no child can ever read the
-    # nonce), then the import barrier (so no delivered module enters the judge), then the run line
+    # nonce), then the bytecode caches ignored (so the source of an asked file is what runs),
+    # then the import barrier (so no delivered module enters the judge), then the run line
     # (before any file of the delivery could run). The rewritten arguments are the ones pytest
     # finally parses, so the options the kit relies on live here, not on the command line: the
     # project's own configuration stays ignored (-c /dev/null), no conftest of the delivery is
@@ -170,6 +186,7 @@ def pytest_load_initial_conftests(
         # Without it a subprocess of a test could read the nonce: fail closed. No line is printed,
         # so every test reads not_run and the run is refused.
         raise pytest.UsageError("the tests kit could not make its process non-dumpable (ATK-22)")
+    _ignore_bytecode_caches()
     _install_barrier()
     print(RUN_MARK + _NONCE, file=REAL_OUT, flush=True)
     files = [f for f in sorted({t.split("::", 1)[0] for t in ASKED}) if os.path.isfile(f)]
