@@ -8,7 +8,18 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
-Nothing yet.
+### Breaking changes
+- The "tests" verification kit keeps delivered code out of the process that records the results
+  (ADR 0017, EXG-37, ATK-22). An acceptance test is black box: it runs the delivery as a
+  subprocess and reads its output. A test that imports a module of the delivery no longer loads
+  and reads `error`.
+
+### Changed
+- The verification interface is 0.2.0: `VerificationResult.deselected` lists the tests the kit
+  found in the asked files but did not run because no acceptance criterion named them. The kit
+  signs it with the outcomes (`ZEPHYROS-OUTCOMES {"deselected": [...], "outcomes": {...}} <hmac>`).
+- The filter reads the whole log of a sandbox (up to 16 MiB) and believes nothing in a log that
+  was cut or that does not begin with the run line of the kit.
 
 ## [0.1.0] - 2026-10-13
 
