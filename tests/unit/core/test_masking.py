@@ -154,3 +154,25 @@ def test_a_canary_planted_as_a_key_of_the_parameters_is_masked() -> None:
     for canary in CANARIES[:2]:
         assert canary not in text
     assert text.count(MASK) == 2
+
+
+# What the output of a test run shows before a secret: pytest prints strings escaped, a
+# traceback prints the source line as written, a URL is percent-encoded, and colours are ANSI
+# codes. Each ends with a letter or a digit, and none is a word: a key after it is masked.
+ESCAPES = ["\\n", "\\t", "\\r", "%3D", "%20", "\x1b[31m", "\\x1b[0m", "\\033[1;32m"]
+
+
+def test_a_canary_after_an_escape_is_masked() -> None:
+    for canary in CANARIES:
+        for escape in ESCAPES:
+            masked = mask_text(f"'line{escape}{canary}'")
+            assert canary not in masked, (escape, canary)
+            assert masked == f"'line{escape}{MASK}'", (escape, canary)
+
+
+def test_only_a_provider_key_needs_the_start_of_a_token() -> None:
+    """Words end with "sk-", not with the other prefixes: those are masked wherever they stand,
+    after a letter or a digit too."""
+    for canary in CANARIES[1:]:
+        assert mask_text(f"v1{canary}") == f"v1{MASK}", canary
+    assert mask_text(f"v1{CANARIES[0]}") == f"v1{CANARIES[0]}"  # like the end of "risk-"

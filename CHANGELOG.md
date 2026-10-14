@@ -18,11 +18,12 @@ version. Each schema carries its own version number.
   allows. A file accepted by 1.12.0 is accepted by 1.13.0.
 
 ### Fixed
-- The masking of secrets (EXG-49) no longer changes ordinary words. A key shape counts only where
-  a token starts, so `risk-management-module` and `src/disk-usage-monitoring.py` stay as written
-  in the log, the evidence report, the comments and the retitled title of a pull request; a
-  canary glued to a separator (`add-sub-ghp_…`) is still masked. The log masks the keys of the
-  parameters as it masks their values.
+- The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`
+  (`risk-`, `disk-`, `task-`), so a provider key counts only where a token starts, or after an
+  escape that test output prints (`\n`, `\t`, `%3D`, an ANSI colour code): `risk-management-module`
+  and `src/disk-usage-monitoring.py` stay as written in the log, the evidence report, the comments
+  and the retitled title of a pull request. Every other shape is masked wherever it stands. The
+  log masks the keys of the parameters as it masks their values.
 - The anchor of the log (EXG-19, ATK-69, [ADR 0019](docs/decisions/0019-anchor-outside-the-store.md))
   no longer turns itself off. An anchor that is gone, that cannot be read, or that does not name a
   stream with records fails `log.verify` with a problem that says so (`first_bad_seq` is then
