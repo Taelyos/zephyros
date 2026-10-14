@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -53,14 +53,6 @@ from zephyros.core.projects import ProjectService
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
 
 
-@dataclass(frozen=True)
-class KitResult(VerificationResult):
-    """The answer of a kit of the verification interface 0.2.0: besides the outcomes, the tests
-    it found in the asked files and did not run, since no criterion names them (`path::name`)."""
-
-    deselected: tuple[str, ...] = ()
-
-
 class DeselectingRunner(AssertionRunner):
     """The assertions runner, answering like a kit of the interface 0.2.0: every other test line
     of an asked file is a test it saw and did not run."""
@@ -74,7 +66,7 @@ class DeselectingRunner(AssertionRunner):
             for line in request.files.get(path, b"").decode(errors="replace").splitlines()
             if ":" in line
         ]
-        return KitResult(
+        return VerificationResult(
             result.outcomes, result.log, deselected=tuple(t for t in seen if t not in asked)
         )
 
@@ -657,13 +649,13 @@ def test_a_delivery_whose_kit_ran_every_test_of_its_files_has_no_flag() -> None:
 
 def test_only_tests_of_the_files_the_kit_ran_and_never_one_asked_count_as_never_run() -> None:
     """What a kit names as deselected is taken only where it can be true."""
-    result = KitResult(
+    result = VerificationResult(
         {"a.py::test_a": VerificationOutcome.PASSED},
         deselected=("a.py::test_b", "a.py::test_a", "elsewhere.py::test_c", "a.py::test_b"),
     )
     assert deselected_tests(result, ("a.py::test_a",)) == ("a.py::test_b",)
     plain = VerificationResult({"a.py::test_a": VerificationOutcome.PASSED})
-    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a runner of the interface 0.1.0
+    assert deselected_tests(plain, ("a.py::test_a",)) == ()  # a kit that ran every test
 
 
 def _title_of(forge: InMemoryForge, number: int) -> str:

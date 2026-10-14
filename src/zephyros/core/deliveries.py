@@ -195,13 +195,12 @@ def flagged_paths(changed: tuple[str, ...], protected: tuple[str, ...]) -> tuple
 def deselected_tests(result: VerificationResult, asked: tuple[str, ...]) -> tuple[str, ...]:
     """The tests the kit found in the files it ran and did not run, since no criterion names
     them: `VerificationResult.deselected` of the verification interface 0.2.0, as `path::name`.
-    Only tests of the asked files count, never a test asked for; a runner of the interface 0.1.0
-    names none."""
-    # Read by name until the interface 0.2.0 is in the port; then `result.deselected`.
-    found = getattr(result, "deselected", ())
+    Only tests of the asked files count, never a test asked for."""
     files = {test.partition("::")[0] for test in asked}
     return tuple(
-        sorted({str(test) for test in found if str(test).partition("::")[0] in files} - set(asked))
+        sorted(
+            {test for test in result.deselected if test.partition("::")[0] in files} - set(asked)
+        )
     )
 
 
