@@ -18,6 +18,8 @@ scripts/check.sh
 
 This is the exact sequence the CI runs (`.github/workflows/ci.yml`): lock up to date, pins by hash, type-checker suppressions, core purity, import contracts, lint, format, strict types, tests with 85 % branch coverage, vulnerable dependencies, secrets. It needs network access for the vulnerability audit.
 
+The tests of the replay player (`tests/unit/tools/test_replay_player.py`) run it in headless Chromium or Chrome, found on the `PATH` or named by `CHROMIUM`; on a machine with neither they are skipped as not applicable, except on a CI (`CI` set), where they fail.
+
 ## Run the runtime suite
 
 ```bash
@@ -43,7 +45,7 @@ A failing workflow does not stop a merge by itself. Once the repository has a re
 | --- | --- |
 | `src/zephyros/core/` | The hub core: pure code, standard library only |
 | `src/zephyros/adapters/` | Container runtime, storage, HTTP, agent engine, model provider |
-| `tools/` | The repository checks (pins, suppressions, core purity). Not part of the hub |
+| `tools/` | The repository checks (pins, suppressions, core purity) and the replay tools (`tools/replay/`, [replay format](replay-format.md)). Not part of the hub |
 | `tests/unit/` | Unit tests, no container runtime |
 | `tests/runtime/` | Tests that need a container runtime (`scripts/acceptance.sh`) |
 | `tests/acceptance/` | The executable attack catalog |

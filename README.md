@@ -101,7 +101,7 @@ With a real model: [docs/real-test.md](docs/real-test.md).
 | turn | The pinned Hermes Agent, unprivileged, for one piece of work. |
 
 Zephyros is built with its own method: a written contract came first, and each increment is
-recorded against it. [20 architecture decisions](docs/decisions/) explain the choices.
+recorded against it. [21 architecture decisions](docs/decisions/) explain the choices.
 
 ## Documentation
 
