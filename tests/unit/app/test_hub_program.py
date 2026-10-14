@@ -13,17 +13,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from zephyros.adapters.memory.instance_control import FakeInstanceControl
-from zephyros.adapters.sqlite.database import Database
-from zephyros.app.hub import (
-    build_hub,
-    ensure_token_file,
-    main,
-    prepare_tokens,
-    run,
-)
+from tests.support.sockets import socket_path
+from zephyros.app import hub as program
+from zephyros.app.cli import main as cli_main
+from zephyros.app.hub import main, run
 from zephyros.core.config import Config, parse_config
-from zephyros.core.tokens import Endpoint
 
 DIGEST = "ghcr.io/example/app@sha256:" + "e" * 64
 
@@ -50,6 +44,7 @@ def make_config(tmp_path: Path) -> Config:
                 "filter_socket": str(tmp_path / "filter.sock"),
                 "operator_token_file": str(tmp_path / "tokens" / "operator.token"),
                 "main_agent_token_file": str(tmp_path / "tokens" / "main-agent.token"),
+                "control_socket": socket_path(tmp_path),
             },
         }
     )
@@ -64,38 +59,6 @@ def test_a_faulty_configuration_refuses_to_start_and_names_the_key(
     error = capsys.readouterr().err
     assert "refused to start" in error
     assert "hub.agent_port" in error
-
-
-def test_a_token_file_is_written_readable_by_its_owner_only(tmp_path: Path) -> None:
-    path = tmp_path / "deep" / "operator.token"
-    ensure_token_file(path, "zph_h_" + "A" * 43, working=False)
-    assert path.read_text(encoding="ascii").strip() == "zph_h_" + "A" * 43
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    ensure_token_file(path, "other", working=True)
-    assert "other" not in path.read_text(encoding="ascii")
-    ensure_token_file(path, None, working=False)
-    assert "other" not in path.read_text(encoding="ascii")
-
-
-def test_the_tokens_are_issued_once_and_reused(tmp_path: Path) -> None:
-    config = make_config(tmp_path)
-    database = Database(":memory:")
-    runtime = build_hub(database, FakeInstanceControl())
-    hub, tokens = runtime.hub, runtime.tokens
-    prepare_tokens(config, tokens, hub)
-    operator_file = Path(config.paths.operator_token_file)
-    main_file = Path(config.paths.main_agent_token_file)
-    first = operator_file.read_text(encoding="ascii")
-    assert first.startswith("zph_h_")
-    assert main_file.read_text(encoding="ascii").startswith("zph_m_")
-    prepare_tokens(config, tokens, hub)
-    assert operator_file.read_text(encoding="ascii") == first
-    operator_file.write_text("zph_h_" + "B" * 43 + "\n", encoding="ascii")  # a stale file
-    prepare_tokens(config, tokens, hub)
-    renewed = operator_file.read_text(encoding="ascii")
-    assert renewed != first
-    assert hub.authenticate(renewed.strip(), peer_address="172.18.0.1", endpoint=Endpoint.OPERATOR)
-    database.close()
 
 
 def test_the_three_listeners_serve_on_loopback_and_stop_cleanly(tmp_path: Path) -> None:
@@ -135,6 +98,20 @@ def test_the_three_listeners_serve_on_loopback_and_stop_cleanly(tmp_path: Path) 
             timeout=5,
         )
         assert main_answer.status_code == 200
+        # The control socket is the hub user's alone, and rotates a token in the running hub.
+        control = Path(config.paths.control_socket)
+        assert stat.S_IMODE(control.stat().st_mode) == 0o600
+        assert cli_main(["hub", "rotate-token", "operator", "--socket", str(control)]) == 0
+        rotated = Path(config.paths.operator_token_file).read_text(encoding="ascii").strip()
+        assert rotated != token
+        for secret, status in ((token, 401), (rotated, 200)):
+            answer = httpx.post(
+                f"{operator_url}/operator/call",
+                json={"tool": "whoami", "arguments": {}},
+                headers={"Authorization": f"Bearer {secret}"},
+                timeout=5,
+            )
+            assert answer.status_code == status
         listing = httpx.get(f"http://127.0.0.1:{config.hub.agent_port}/v1/models", timeout=5)
         assert listing.status_code == 200
         assert "server" not in listing.headers
@@ -189,3 +166,20 @@ def test_an_egress_port_already_taken_stops_the_hub_with_an_error(tmp_path: Path
         taken.listen()
         with pytest.raises(OSError, match="address already in use"):
             asyncio.run(run(config, agent_bind="127.0.0.1", stop=asyncio.Event()))
+
+
+def test_a_hub_that_cannot_keep_its_channels_off_the_instances_does_not_start(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "core" when every address of the hub is in the pool (or the hub is not in a Linux
+    container) refuses to start before anything opens (ADR 0025)."""
+    config = make_config(tmp_path)
+    config = replace(
+        config,
+        network=replace(config.network, instance_pool="0.0.0.0/0"),
+        hub=replace(config.hub, operator_bind="core"),
+    )
+    monkeypatch.setattr(program, "load_config", lambda _path: config)
+    assert main(["--config", str(tmp_path / "z.toml")]) == 2
+    assert "refused to start" in capsys.readouterr().err
+    assert not Path(config.paths.data_dir).exists()

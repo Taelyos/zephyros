@@ -3,6 +3,7 @@
 zephyros config check FILE | schema
 zephyros hub start --config FILE
 zephyros hub call TOOL [--args JSON]      the operator channel of a running hub
+zephyros hub rotate-token KIND            a new operator or main-agent token (ADR 0026)
 zephyros filter start --config FILE       the container filter
 """
 
@@ -70,6 +71,37 @@ def _hub_call(args: argparse.Namespace) -> int:
         return run_call(client, args.url, token, args.tool, arguments)
 
 
+DEFAULT_CONFIG = "/etc/zephyros/zephyros.toml"
+
+
+def run_rotation(client: httpx.Client, kind: str, socket: str = "") -> int:
+    """Ask the running hub for a new token of `kind`, on its control socket; print the answer.
+    The answer names the file the new token is in, never the token."""
+    try:
+        response = client.post("http://hub/tokens/rotate", json={"kind": kind})
+        body = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        where = f" {socket}" if socket else ""
+        print(f"the hub did not answer on its control socket{where}: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(body, indent=2, sort_keys=True))
+    return 0 if response.status_code == 200 and body.get("ok") is True else 1
+
+
+def _hub_rotate(args: argparse.Namespace) -> int:
+    """The socket is `--socket`, or else `paths.control_socket` of the configuration."""
+    socket_path = args.socket
+    if socket_path is None:
+        try:
+            socket_path = load_config(Path(args.config)).paths.control_socket
+        except ConfigError as error:
+            print(f"cannot read the configuration {args.config}: {error}", file=sys.stderr)
+            return 2
+    transport = httpx.HTTPTransport(uds=socket_path)
+    with httpx.Client(transport=transport, timeout=30) as client:
+        return run_rotation(client, args.kind, socket_path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="zephyros")
     parser.add_argument("--version", action="version", version=__version__)
@@ -88,6 +120,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     call.add_argument("--args", default="{}", help="the arguments, as a JSON object")
     call.add_argument("--url", default=DEFAULT_URL)
     call.add_argument("--token-file", default=DEFAULT_TOKEN_FILE)
+    rotate = hub_commands.add_parser(
+        "rotate-token",
+        help="issue a new operator or main-agent token into its file, and revoke the old one",
+    )
+    rotate.add_argument("kind", choices=["operator", "main-agent"])
+    rotate.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG,
+        help="the configuration of the hub, whose paths.control_socket is the socket",
+    )
+    rotate.add_argument("--socket", help="the control socket, instead of the configuration's")
     filter_ = commands.add_parser("filter", help="run the container filter")
     filter_commands = filter_.add_subparsers(dest="filter_command", required=True)
     filter_start = filter_commands.add_parser("start", help="run the filter")
@@ -101,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "hub":
         if args.hub_command == "call":
             return _hub_call(args)
+        if args.hub_command == "rotate-token":
+            return _hub_rotate(args)
         from zephyros.app.hub import main as hub_main
 
         return hub_main(["--config", str(args.config)])

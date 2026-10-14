@@ -42,3 +42,14 @@ scripts/deploy.sh down
 ```
 
 `down` stops the hub and the filter, then removes what the filter created outside compose: the guards, turns and sandboxes, and their networks. The instances keep their volumes; the hub creates a guard and a network again when it starts an instance. `down` removes every container and network labelled `org.zephyros.managed` on the host: run one deployment per machine. The model behind the gateway is the obedient stub unless the configuration names a provider (`ZEPHYROS_EXTRA_CONFIG`, see [configuration](configuration.md)).
+
+Both listeners are published on the loopback interface of the machine only, and never listen on an instance network ([ADR 0025](decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). Their tokens are in the hub's data volume (`/var/lib/zephyros/operator.token` and `main-agent.token`, mode 0600) and expire after 90 days by default. To replace one, before or after it expires:
+
+```bash
+scripts/deploy.sh rotate-token operator      # `call` reads the new one by itself
+scripts/deploy.sh rotate-token main-agent    # then give the main agent the new token
+```
+
+The running hub writes the new token to the file and revokes the old one; the turns under way go on ([ADR 0026](decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md), [configuration](configuration.md#the-operator-and-main-agent-tokens)).
+
+A deployment made before the core network was named `zephyros-core-<project>` (ADR 0025) keeps its former network after `scripts/deploy.sh up`; remove it with `docker network rm zephyros_core` (`<project>_core` for another `ZEPHYROS_PROJECT`). If the hub then refuses to start with `"core" needs exactly one address`, see [configuration](configuration.md#where-the-operator-channel-and-the-main-agent-endpoint-listen).

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from typing import Final
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from zephyros.core.audit import Reason
+from zephyros.core.clock import format_time
 from zephyros.core.ports.delivery import MAX_PACKAGE as DELIVERY_MAX_PACKAGE
+from zephyros.core.principals import MAIN_AGENT, OPERATOR
+from zephyros.core.tokens import Rejected, normalize_address
 
 MAX_BODY: Final = 1024 * 1024
 MAX_PACKAGE: Final = DELIVERY_MAX_PACKAGE
@@ -34,6 +39,20 @@ def bearer(request: Request) -> str | None:
 def peer_address(request: Request) -> str | None:
     """The TCP peer of the connection. Never a header: a forwarded address is the caller's claim."""
     return request.client.host if request.client is not None else None
+
+
+def from_instance_network(request: Request, pool: str | None) -> bool:
+    """True when the TCP peer is an address of the instance pool, that is, of an instance
+    network: the operator channel and the main-agent endpoint refuse it before anything else,
+    whatever runtime routed it there (ATK-13, ADR 0025). An unknown peer counts as one."""
+    if pool is None:
+        return False
+    peer = normalize_address(peer_address(request))
+    if peer is None:
+        return True
+    address = ipaddress.ip_address(peer)
+    network = ipaddress.ip_network(pool)
+    return address.version == network.version and address in network
 
 
 async def read_json(request: Request) -> object:
@@ -77,6 +96,36 @@ def unauthorized() -> Response:
     """The same answer for every authentication failure: it says nothing about why."""
     return JSONResponse(
         {"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+ROTATE_COMMAND: Final = "scripts/deploy.sh rotate-token"
+_EXPIRED_NEXT: Final = {
+    OPERATOR.id: (
+        f"on the machine of the hub, run `{ROTATE_COMMAND} operator`: it writes a new token "
+        "to the operator token file, which `zephyros hub call` reads"
+    ),
+    MAIN_AGENT.id: (
+        f"the human runs `{ROTATE_COMMAND} main-agent` on the machine of the hub, then gives "
+        "the main agent the new token from the main-agent token file"
+    ),
+}
+
+
+def token_refusal(rejected: Rejected) -> Response:
+    """The answer to a refused token. Every refusal is `unauthorized()`, save one: the holder of
+    an expired operator or main-agent token is told so, and what to do (ADR 0026). It learns
+    nothing it did not know: it presented that very token."""
+    principal = rejected.principal.id if rejected.principal else ""
+    next_step = _EXPIRED_NEXT.get(principal)
+    if rejected.reason is not Reason.EXPIRED or next_step is None:
+        return unauthorized()
+    when = format_time(rejected.expires_at) if rejected.expires_at else "an earlier time"
+    message = f"the {principal} token expired at {when}; {next_step}"
+    return JSONResponse(
+        {"error": "token_expired", "message": message},
+        status_code=401,
+        headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
     )
 
 

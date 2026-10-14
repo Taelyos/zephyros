@@ -1,6 +1,6 @@
 """The main-agent endpoint and the operator channel (ATK-13; US-E1-14; US-E2-02).
 
-The operator channel is unreachable from an execution context at the network level (the guard);
+The operator channel is unreachable from an execution context at the network level (ADR 0025);
 here we check what the listener itself refuses: tokens of the wrong kind, a browser's markers,
 a foreign Host.
 """
@@ -264,3 +264,49 @@ def test_nothing_but_the_operator_routes_answers_on_the_operator_port(env: Env) 
     for path in ("/", "/mcp", "/v1/models", "/docs", "/openapi.json", "/admin"):
         assert http.get(path).status_code == 404
         assert http.post(path, json={}).status_code == 404
+
+
+# ----------------------------------------------------------------------------- ADR 0025
+POOL = "10.200.0.0/16"
+
+
+@pytest.mark.parametrize("address", ["10.200.0.19", "10.200.255.3", "::ffff:10.200.4.3"])
+def test_a_peer_of_an_instance_network_is_refused_before_its_token_is_read(
+    env: Env, address: str
+) -> None:
+    """Whatever routed it there, a runtime without isolation between its networks or an absent
+    guard, a connection from an instance address meets a refusal, logged (ATK-13)."""
+    operator = TestClient(
+        build_operator_app(env.hub, port=PORT, instance_pool=POOL),
+        base_url=f"http://127.0.0.1:{PORT}",
+        client=(address, 42000),
+    )
+    operator.headers["Authorization"] = f"Bearer {env.secrets['operator']}"
+    assert operator.get("/operator/health").status_code == 403
+    assert operator_call(operator, "whoami").status_code == 403
+    main = TestClient(build_main_agent_app(env.hub, instance_pool=POOL), client=(address, 41000))
+    main.headers["Authorization"] = f"Bearer {env.secrets['main']}"
+    assert main.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 403
+    refused = [r for r in env.records() if r.reason is Reason.WRONG_SOURCE]
+    assert [r.action for r in refused] == [
+        Action.OPERATOR_CHANNEL,
+        Action.OPERATOR_CHANNEL,
+        Action.AUTHENTICATION,
+    ]
+
+
+def test_the_publication_and_the_hubs_own_loopback_are_served(env: Env) -> None:
+    for address in ("172.18.0.1", "127.0.0.1"):
+        operator = TestClient(
+            build_operator_app(env.hub, port=PORT, instance_pool=POOL),
+            base_url=f"http://127.0.0.1:{PORT}",
+            client=(address, 42000),
+        )
+        operator.headers["Authorization"] = f"Bearer {env.secrets['operator']}"
+        assert operator_call(operator, "whoami").status_code == 200
+        main = TestClient(
+            build_main_agent_app(env.hub, instance_pool=POOL), client=(address, 41000)
+        )
+        main.headers["Authorization"] = f"Bearer {env.secrets['main']}"
+        answer = main.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        assert answer.status_code == 200

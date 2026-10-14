@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import os
 import signal
 import socket
 import sys
@@ -25,7 +24,7 @@ from zephyros.adapters.filter.executor import Executor
 from zephyros.adapters.filter.journal import FileJournal, Journal
 from zephyros.adapters.filter.reaper import Reaper
 from zephyros.adapters.filter.server import build_filter_app
-from zephyros.adapters.http.server import HubServer
+from zephyros.adapters.http.server import HubServer, SocketPathError, bind_unix_socket
 from zephyros.core.config import Config, ConfigError
 from zephyros.core.containers import Policy
 
@@ -43,20 +42,10 @@ def bind_socket(path: Path) -> socket.socket:
 
     A stale socket from an earlier run is replaced. Anything else at the path stops the start:
     the filter does not delete files that are not its own."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_socket():
-        path.unlink()
-    elif path.exists() or path.is_symlink():
-        raise FilterStartError(f"{path} exists and is not a socket")
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    previous = os.umask(0o177)
     try:
-        listener.bind(str(path))
-    finally:
-        os.umask(previous)
-    os.chmod(path, SOCKET_MODE)
-    listener.setblocking(False)
-    return listener
+        return bind_unix_socket(path, SOCKET_MODE)
+    except SocketPathError as error:
+        raise FilterStartError(str(error)) from None
 
 
 def build_filter_server(executor: Executor, journal: Journal) -> HubServer:

@@ -135,6 +135,25 @@ def _check_ip_address(value: str) -> str | None:
     return None
 
 
+CORE_ADDRESS = "core"
+"""A listen address that names the hub's own address outside the instance networks, found when
+it starts (ADR 0025)."""
+
+
+def _check_listen_address(value: str) -> str | None:
+    if value == CORE_ADDRESS:
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return f'must be an IP address or "{CORE_ADDRESS}"'
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped  # ::ffff:0.0.0.0 is 0.0.0.0, whatever the Python version
+    if address.is_unspecified:
+        return "must not be a wildcard address: it would listen on the instance networks too"
+    return None
+
+
 def _check_http_url(value: str) -> str | None:
     try:
         parts = urlsplit(value)
@@ -159,6 +178,7 @@ _KINDS: dict[str, tuple[Callable[[str], str | None], str | None]] = {
     "ipv4-network": (_check_ipv4_network, None),
     "ipv4-address": (_check_ipv4_address, None),
     "ip-address": (_check_ip_address, None),
+    "listen-address": (_check_listen_address, None),
     "http-url": (_check_http_url, "^https?://"),
 }
 

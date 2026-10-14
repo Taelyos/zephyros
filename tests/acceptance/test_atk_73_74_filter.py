@@ -337,8 +337,14 @@ def test_atk_73_everything_the_runtime_creates_has_the_shape_of_a_template(filt:
         assert host["IpcMode"] == "none"
         assert host["NetworkMode"] != "host"
         assert host["NetworkMode"].startswith(("zs-net-", "container:zs-guard-"))
-        assert set(host["SecurityOpt"]) <= {"no-new-privileges", "no-new-privileges:true"}
-        assert host["SecurityOpt"]
+        if spec["Image"] == GUARD_IMAGE:
+            # ADR 0027: the guard is not root, and no-new-privileges is off for it alone, so
+            # that the file capability of its nft takes effect.
+            assert spec["User"] not in ("", "0", "0:0", "root")
+            assert host["SecurityOpt"] == ["no-new-privileges:false"]
+        else:
+            assert set(host["SecurityOpt"]) <= {"no-new-privileges", "no-new-privileges:true"}
+            assert host["SecurityOpt"]
         assert not any("unconfined" in option for option in host["SecurityOpt"])
         for mount in host.get("Mounts", []):
             assert mount["Type"] == "volume"

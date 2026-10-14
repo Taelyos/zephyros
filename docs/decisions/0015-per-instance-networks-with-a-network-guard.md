@@ -1,6 +1,7 @@
 # 0015. Each instance has its own network and a network guard that enforces egress
 - Status: Accepted
 - Date: 2026-10-09
+- Revised by: [0027](0027-the-network-guard-runs-without-root.md) (the guard runs without root, and without no-new-privileges)
 
 ## Context
 EXG-03 and EXG-41 need egress control that an instance cannot change, on Linux and on macOS. A measurement on both platforms showed that a small container per instance, holding the rules in a namespace that the instance shares but cannot modify, enforces them on both platforms.

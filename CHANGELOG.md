@@ -12,13 +12,14 @@ Nothing yet.
 
 ## [0.2.0] - 2026-10-14
 
-Fixes from two independent audits of 0.1.0, network access in three levels, and a
-verification kit that delivered code cannot forge. Release notes:
+Fixes from two independent audits of 0.1.0, network access in three levels, a
+verification kit that delivered code cannot forge, and the hardening of the operator channel, the
+main-agent endpoint, their tokens and the network guard. Release notes:
 [docs/release-notes/0.2.0.md](docs/release-notes/0.2.0.md).
 
 | Surface | 0.1.0 | 0.2.0 |
 | --- | --- | --- |
-| Configuration schema | 1.12.0 | 1.14.0 |
+| Configuration schema | 1.12.0 | 1.15.0 |
 | Contract schema | 1.1.0 | 1.1.0 |
 | Events schema | 1.1.0 | 2.0.0 |
 | Verification interface | 0.1.0 | 0.2.0 |
@@ -53,6 +54,28 @@ verification kit that delivered code cannot forge. Release notes:
   accepted three values must accept five (#9, #15, #17). The alerts of the continuity ladder can
   carry `side: main-agent`, for a change the Owner side proposed and the main agent is to decide
   (ADR 0023) (#13). A receiver that reads `schema_version` can tell the two apart (#18).
+- The operator channel and the main-agent endpoint never listen on an instance network
+  ([ADR 0025](docs/decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). The
+  configuration schema refuses a wildcard address (`0.0.0.0`, `::`) and an address of the
+  instance pool for `hub.operator_bind` and `hub.main_agent_bind`; a hub in a container writes
+  `"core"`, as `scripts/deploy.sh` now does. The hub refuses to start when it has not exactly one
+  address outside the instance pool; [docs/configuration.md](docs/configuration.md#where-the-operator-channel-and-the-main-agent-endpoint-listen)
+  says what to do. The core network of a deployment is now named `zephyros-core-<project>`; the
+  former one is left behind: remove it with `docker network rm zephyros_core` (the default project;
+  `<project>_core` otherwise) (#19).
+- The operator and main-agent tokens expire
+  ([ADR 0026](docs/decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md)),
+  90 days after they are issued by default (`tokens.channel_lifetime_days`). A token issued
+  before the update gets that lifetime from the first start of the hub after the update, and
+  stops working when it ends (90 days after that start by default). Before that day, run
+  `scripts/deploy.sh rotate-token main-agent` and give the main agent the new token; the operator
+  token needs nothing, `scripts/deploy.sh call` reads the new one from its file (#19).
+- The network guard runs as user 10002, not root
+  ([ADR 0027](docs/decisions/0027-the-network-guard-runs-without-root.md), revising ADR 0015),
+  without no-new-privileges (for it alone), and needs its image rebuilt, which
+  `scripts/deploy.sh up` does. A guard started before the update keeps running as root until its
+  instance stops: `scripts/deploy.sh down` then `scripts/deploy.sh up` replaces every guard (the
+  instances keep their volumes) (#19).
 
 ### Added
 - Three levels of network access for instances (ADR 0024, superseding ADR 0009): `regulated`
@@ -72,6 +95,12 @@ verification kit that delivered code cannot forge. Release notes:
   criterion names (#9, #11, #17).
 - A record of a delivery carries a `revision`; both stores refuse a write made from a stale read
   (#9).
+- `scripts/deploy.sh rotate-token operator|main-agent` (`zephyros hub rotate-token`, which finds
+  the control socket in `paths.control_socket`): the running hub writes a new token to its file,
+  replaced whole and synced (mode 0600), revokes the old ones and logs both (`token.issue`,
+  `token.revoke`, `why: rotation`); the answer names the file, never the token. A token given a
+  lifetime at start is logged as `token.lifetime`. An expired operator or main-agent token is
+  answered `{"error": "token_expired", "message": ...}`, which names the command (ADR 0026) (#19).
 
 ### Changed
 - The configuration schema, version 1.13.0: the models the gateway may serve come from the
@@ -83,6 +112,9 @@ verification kit that delivered code cannot forge. Release notes:
   allows. A file accepted by 1.12.0 is accepted by 1.13.0 (#10).
 - The configuration schema, version 1.14.0: `network.egress`, `network.allowed_hosts` and
   `hub.egress_port` (ADR 0024). `network.resolvers` serves the `open` level only (#16).
+- The configuration schema, version 1.15.0: the value `"core"` for `hub.operator_bind` and
+  `hub.main_agent_bind`, and the refusal of a wildcard or instance-pool address there (ADR 0025);
+  `tokens.channel_lifetime_days` (90 by default) and `paths.control_socket` (ADR 0026) (#19).
 - The verification interface is 0.2.0: `VerificationResult.deselected` lists the tests the kit
   found in the asked files but did not run because no acceptance criterion named them. The kit
   signs it with the outcomes (`ZEPHYROS-OUTCOMES {"deselected": [...], "outcomes": {...}} <hmac>`)
@@ -102,6 +134,10 @@ verification kit that delivered code cannot forge. Release notes:
   it is then (#9).
 - The architecture decisions 0016 to 0019, 0021, 0023, 0024 and the amendment of 0020 are
   Accepted; ADR 0020 records decision D16 on what an inspection can change (#18).
+- ADR 0025 to 0027 (the hardening above) and ADR 0028 are Accepted. ADR 0028 records that the
+  contract of a project is stored in SQLite as immutable versions, and what is not history: a
+  decided change is updated in place, and an acceptance test is overwritten by the next
+  `acceptance.put` (the log and the evidence report keep its digest) (#19).
 
 ### Fixed
 - The continuity ladder wakes the Contractor only once its contract is ready: the version in
@@ -156,6 +192,16 @@ verification kit that delivered code cannot forge. Release notes:
   into the judge, the judge cannot be read by the processes a test starts, a bytecode cache
   shipped with the delivery is never read, and a flooded or forged log is never believed (ATK-22,
   EXG-37) (#11).
+- The operator channel and the main-agent endpoint have a second barrier besides the guards
+  (ATK-13, ADR 0025): nothing listens on 8081 or 8082 at an address of an instance network, and
+  both refuse, and log (`wrong_source`), a peer whose address is in the instance pool. A runtime
+  test proves it on a real deployment with no guard at all (#19).
+- The operator and main-agent tokens, which hold every right of their channel, no longer live
+  forever: a leaked copy stops working at the end of the lifetime, or at once after a rotation
+  (ADR 0026) (#19).
+- The network guard is no longer user 0 of the machine: NET_ADMIN reaches its nft alone, through
+  a file capability; the runtime tests check that no other file of its image has a capability or
+  a setuid bit, and that its main process holds no capability (ADR 0027) (#19).
 
 ## [0.1.0] - 2026-10-13
 

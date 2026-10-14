@@ -1,10 +1,12 @@
-"""The hub program: read the configuration, build the services, run the three listeners.
+"""The hub program: read the configuration, build the services, run the listeners.
 
     python -m zephyros.app.hub --config /etc/zephyros/zephyros.toml
 
 The program refuses to start when the configuration violates the schema, and names each faulty
-key. The operator and main-agent tokens are written to their files the first time (mode 0600);
-the hub keeps only their hashes.
+key, or when the operator channel and the main-agent endpoint could listen on an instance network
+(ADR 0025). The operator and main-agent tokens are written to their files the first time (mode
+0600), with a lifetime, and rotated on the control socket (ADR 0026); the hub keeps only their
+hashes.
 """
 
 from __future__ import annotations
@@ -12,7 +14,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import signal
 import sys
 import time
@@ -30,9 +31,18 @@ from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.adapters.github.forge import GitHubForge
 from zephyros.adapters.http.agent import build_agent_app
 from zephyros.adapters.http.egress_proxy import start_egress_proxy
+from zephyros.adapters.http.listen import ListenError, listen_hosts
 from zephyros.adapters.http.main_agent import build_main_agent_app
 from zephyros.adapters.http.operator import build_operator_app
-from zephyros.adapters.http.server import HubServer, build_server, serve_all, stop_all
+from zephyros.adapters.http.server import (
+    HubServer,
+    SocketPathError,
+    bind_unix_socket,
+    build_server,
+    serve_all,
+    serve_on,
+    stop_all,
+)
 from zephyros.adapters.providers.openai_compatible import FileCredential, OpenAiCompatibleProvider
 from zephyros.adapters.sandbox_runner import SandboxRunner
 from zephyros.adapters.sqlite.continuity_store import SqliteContinuityStore
@@ -46,6 +56,7 @@ from zephyros.adapters.sqlite.token_store import SqliteTokenStore
 from zephyros.adapters.system_clock import SystemClock
 from zephyros.adapters.webhooks import Post, WebhookSender
 from zephyros.adapters.worker import InstanceWorker
+from zephyros.app.channel_tokens import ChannelTokens, build_control_app
 from zephyros.core.audit import AuditLog
 from zephyros.core.clock import Clock
 from zephyros.core.config import Config, ConfigError
@@ -69,37 +80,12 @@ from zephyros.core.ports.verification import (
     VerificationRunner,
 )
 from zephyros.core.projects import ProjectService
-from zephyros.core.tokens import Endpoint, TokenService
+from zephyros.core.tokens import TokenService
 from zephyros.core.webhooks import EVENTS_SCHEMA_VERSION, NotifyResult
 
 AGENT_BIND = "0.0.0.0"  # noqa: S104  # reason: the agent endpoint is reached on every instance network
-
-
-def ensure_token_file(path: Path, issue: str | None, working: bool) -> None:
-    """Write `issue` to `path` with mode 0600 unless a working token is already there."""
-    if working or issue is None:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="ascii") as handle:
-        handle.write(issue + "\n")
-    path.chmod(0o600)
-
-
-def prepare_tokens(config: Config, tokens: TokenService, hub_probe: Hub) -> None:
-    """Make sure the operator and the main agent each have a working token in its file."""
-    for path_text, endpoint, issuer in (
-        (config.paths.operator_token_file, Endpoint.OPERATOR, tokens.issue_operator_token),
-        (config.paths.main_agent_token_file, Endpoint.MAIN_AGENT, tokens.issue_main_agent_token),
-    ):
-        path = Path(path_text)
-        current = path.read_text(encoding="ascii").strip() if path.exists() else None
-        working = (
-            current is not None
-            and hub_probe.authenticate(current, peer_address="127.0.0.1", endpoint=endpoint)
-            is not None
-        )
-        ensure_token_file(path, None if working else issuer().secret, working)
+CONTROL_MODE = 0o600
+"""The control socket is the user of the hub's alone, as are the token files (ADR 0026)."""
 
 
 InstanceFactory = Callable[
@@ -314,7 +300,13 @@ async def run(
     stop: asyncio.Event | None = None,
     instances: InstanceControl | None = None,
 ) -> None:
-    """Run the three listeners until a signal arrives, or until `stop` is set."""
+    """Run the listeners until a signal arrives, or until `stop` is set."""
+    # Before anything opens: a hub that cannot keep these two off the instance networks does
+    # not start (ADR 0025).
+    pool = config.network.instance_pool
+    operator_hosts = listen_hosts(config.hub.operator_bind, pool)
+    main_agent_hosts = listen_hosts(config.hub.main_agent_bind, pool)
+    control = bind_unix_socket(Path(config.paths.control_socket), CONTROL_MODE)
     data_dir = Path(config.paths.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     database = Database(data_dir / "hub.db")
@@ -384,7 +376,8 @@ async def run(
         simulation=config.gateway.simulation,
     )
     hub = runtime.hub
-    prepare_tokens(config, runtime.tokens, hub)
+    channel_tokens = ChannelTokens.from_config(config, runtime.tokens, runtime.audit)
+    channel_tokens.prepare()
     workers: list[InstanceWorker] = []
     if isinstance(runtime.instances, InstanceManager):
         workers.append(InstanceWorker(runtime.instances, config.runtime.poll_seconds))
@@ -402,13 +395,16 @@ async def run(
             config.hub.agent_port,
         ),
         build_server(
-            build_main_agent_app(hub), config.hub.main_agent_bind, config.hub.main_agent_port
+            build_main_agent_app(hub, instance_pool=pool),
+            main_agent_hosts,
+            config.hub.main_agent_port,
         ),
         build_server(
-            build_operator_app(hub, port=config.hub.operator_port),
-            config.hub.operator_bind,
+            build_operator_app(hub, port=config.hub.operator_port, instance_pool=pool),
+            operator_hosts,
             config.hub.operator_port,
         ),
+        serve_on(build_control_app(channel_tokens), control),
     ]
     loop = asyncio.get_running_loop()
     egress: asyncio.Server | None = None
@@ -433,6 +429,7 @@ async def run(
             broker.close()
         await provider.aclose()
         database.close()
+        Path(config.paths.control_socket).unlink(missing_ok=True)
 
 
 async def _stop_when_set(stop: asyncio.Event, servers: list[HubServer]) -> None:
@@ -449,7 +446,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as error:
         print(f"refused to start: {error}", file=sys.stderr)
         return 2
-    asyncio.run(run(config))
+    try:
+        asyncio.run(run(config))
+    except (ListenError, SocketPathError) as error:
+        print(f"refused to start: {error}", file=sys.stderr)
+        return 2
     return 0
 
 

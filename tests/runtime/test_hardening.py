@@ -8,9 +8,13 @@ Hermes image in Z2-13.
 
 from __future__ import annotations
 
+import io
+import subprocess
+import tarfile
+
 import pytest
 
-from tests.runtime.rig import Instance, Runtime
+from tests.runtime.rig import Instance, Runtime, docker
 from zephyros.core.ports.agent_engine import Side
 
 pytestmark = [pytest.mark.runtime, pytest.mark.acceptance]
@@ -233,3 +237,77 @@ def test_atk_35_an_instance_of_project_b_sees_no_volume_of_project_a(runtime: Ru
         code, out = runtime.sh(b.turn, attempt)
         assert code != 0, f"{attempt}: {out}"
     assert runtime.sh(a.turn, "cat /work/secret")[1] == "secret-of-a"  # control
+
+
+# ----------------------------------------------------------------------------- ADR 0027
+NO_CAPABILITY = "0000000000000000"
+NET_ADMIN = "0000000000001000"
+CAPABILITY_XATTR = "SCHILY.xattr.security.capability"
+
+
+def guard_status(runtime: Runtime, guard: str, pid: str) -> dict[str, str]:
+    code, out = runtime.sh(guard, f"cat /proc/{pid}/status")
+    assert code == 0, out
+    return {
+        name.strip(): value.strip()
+        for name, _, value in (line.partition(":") for line in out.splitlines())
+    }
+
+
+def test_adr_0027_the_guard_runs_without_root_and_holds_no_capability(
+    runtime: Runtime, turn: Instance
+) -> None:
+    """The main process of the guard runs as its user, with no capability in any set but the
+    bounding one (NET_ADMIN), under the default syscall filter, without no-new-privileges."""
+    status = guard_status(runtime, turn.guard, "1")
+    assert status["Uid"].split() == ["10002"] * 4
+    assert status["Gid"].split() == ["10002"] * 4
+    for name in ("CapInh", "CapPrm", "CapEff", "CapAmb"):
+        assert status[name] == NO_CAPABILITY, name
+    assert status["CapBnd"] == NET_ADMIN
+    assert status["Seccomp"] == "2"
+    assert status["NoNewPrivs"] == "0"
+    # Every other process too, save an nft of the health check, which holds NET_ADMIN while it
+    # runs (that is the file capability at work, checked below).
+    code, out = runtime.sh(
+        turn.guard,
+        "for f in /proc/[0-9]*/status; do "
+        "awk '/^Name:/{n=$2} /^Uid:/{u=$2} /^CapEff:/{e=$2} END{if (n != \"nft\") print u, e}' "
+        "$f 2>/dev/null; done",
+    )
+    assert code == 0, out
+    assert {line for line in out.splitlines() if line.strip()} == {f"10002 {NO_CAPABILITY}"}
+
+
+def test_adr_0027_net_admin_reaches_nft_alone(runtime: Runtime, turn: Instance) -> None:
+    # nft loads and lists the rules; any other program of the guard is refused NET_ADMIN.
+    assert runtime.sh(turn.guard, "nft list table inet zeph >/dev/null")[0] == 0
+    code, out = runtime.sh(turn.guard, "ip link add zs0 type dummy")
+    assert code != 0
+    assert "not permitted" in out
+    # No program of the image gains a privilege on exec: no setuid, no setgid.
+    assert runtime.sh(turn.guard, "find / -xdev -perm /6000 -type f 2>/dev/null")[1] == ""
+
+
+def test_adr_0027_no_file_of_the_guard_image_but_nft_carries_a_capability(
+    runtime: Runtime,
+) -> None:
+    """The second invariant of ADR 0027, read from the image itself, from the machine: every
+    file of the image's file system, with its extended attributes as the runtime exports them.
+    nft must be found with its capability, so the scan does see them."""
+    name = f"zs-test-capscan-{runtime.suffix}"
+    docker("create", "--name", name, "--label", runtime.label, runtime.images["guard"])
+    try:
+        exported = subprocess.run(  # noqa: S603  # reason: a fixed program, arguments from the test
+            ["docker", "export", name],  # noqa: S607  # reason: the runtime's own command
+            capture_output=True,
+            check=True,
+            timeout=120,
+        ).stdout
+    finally:
+        docker("rm", "-f", name, check=False)
+    with tarfile.open(fileobj=io.BytesIO(exported)) as archive:
+        capable = sorted(
+            member.name for member in archive if CAPABILITY_XATTR in member.pax_headers
+        )
+    assert capable == ["usr/sbin/nft"]

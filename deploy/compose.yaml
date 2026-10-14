@@ -29,8 +29,10 @@ services:
 
   hub:
     # The hub, attached by the filter to the network of every instance. Its operator channel and
-    # main-agent endpoint are published on the loopback interface of the machine only; inside the
-    # instance networks the guards let through its agent endpoint (port 8080) and nothing else.
+    # main-agent endpoint listen on its core address and its own loopback only ("core" in the
+    # configuration, ADR 0025), and are published on the loopback interface of the machine only:
+    # on an instance network they are closed, guard or no guard. There the guards let through
+    # its agent endpoint (port 8080) and, for a regulated instance, its egress proxy.
     image: ${ZEPHYROS_IMAGE:?}
     container_name: ${ZEPHYROS_HUB_NAME:-zephyros-hub}
     command: ["hub", "start", "--config", "/etc/zephyros/zephyros.toml"]
@@ -72,6 +74,11 @@ services:
 
 networks:
   core:
+    # The runtime publishes the ports of a container on the network that carries its default
+    # route, and picks that network by the order of the names: this name sorts before every
+    # instance network ("zs-net-..."), so the publication stays on the core network once the
+    # hub is attached to the instances' (ADR 0025).
+    name: zephyros-core-${ZEPHYROS_PROJECT:-zephyros}
     labels:
       org.zephyros.deployment: ${ZEPHYROS_PROJECT:-zephyros}
 

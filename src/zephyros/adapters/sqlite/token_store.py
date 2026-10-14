@@ -93,3 +93,17 @@ class SqliteTokenStore:
             (instance_id,),
         )
         return [_record(row) for row in rows]
+
+    def of_kind(self, kind: TokenKind) -> list[TokenRecord]:
+        rows = self._db.query(
+            f"SELECT {_COLUMNS} FROM tokens WHERE kind = ? ORDER BY issued_at", (kind.value,)
+        )
+        return [_record(row) for row in rows]
+
+    def set_expiry(self, token_id: str, at: datetime) -> bool:
+        with self._db.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE tokens SET expires_at = ? WHERE token_id = ? AND expires_at IS NULL",
+                (format_time(at), token_id),
+            )
+            return cursor.rowcount == 1

@@ -1,9 +1,13 @@
 """The operator channel: the human's way to administer the hub until the dashboard exists.
 
-It is transitional, logged, and unreachable from an execution context. It takes a token in a
-header and nothing else: no cookie, no session. A request that looks like a browser's, or that
-names a host other than the ones this channel serves, is refused before any token is read, which
-is what stops a web page of the human's from driving it (DNS rebinding, cross-site requests).
+It is transitional and logged. No execution context reaches it: it listens on the hub's core
+address and its own loopback only, never on an instance network, and it refuses a peer whose
+address is one of the instance pool, so an instance finds nothing there even without its guard
+(ATK-13, ADR 0025). It takes a token in a header and nothing else: no cookie, no session. An
+expired operator token is told how to get a new one (ADR 0026). A request that looks like a
+browser's, or that names a host other than the ones this channel serves, is refused before any
+token is read, which is what stops a web page of the human's from driving it (DNS rebinding,
+cross-site requests).
 """
 
 from __future__ import annotations
@@ -19,14 +23,15 @@ from starlette.routing import Route
 from zephyros.adapters.http.common import (
     BodyError,
     bearer,
+    from_instance_network,
     not_found,
     peer_address,
     read_json,
-    unauthorized,
+    token_refusal,
 )
 from zephyros.core.audit import HUB_STREAM, Action, Reason
 from zephyros.core.hub import Hub
-from zephyros.core.tokens import Endpoint
+from zephyros.core.tokens import Endpoint, Rejected
 
 _STATUS: Final = {
     "forbidden": 403,
@@ -50,11 +55,23 @@ def _browser_marker(request: Request) -> str | None:
     return None
 
 
-def build_operator_app(hub: Hub, *, port: int, extra_hosts: Iterable[str] = ()) -> Starlette:
+def build_operator_app(
+    hub: Hub, *, port: int, extra_hosts: Iterable[str] = (), instance_pool: str | None = None
+) -> Starlette:
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}", *extra_hosts}
 
     def guard(request: Request) -> Response | None:
-        """Refuse what no command-line client sends: a browser's markers, a foreign Host."""
+        """Refuse a peer on an instance network, then what no command-line client sends: a
+        browser's markers, a foreign Host."""
+        if from_instance_network(request, instance_pool):
+            hub.log_refusal(
+                "unauthenticated",
+                HUB_STREAM,
+                Action.OPERATOR_CHANNEL,
+                Reason.WRONG_SOURCE,
+                {"source": peer_address(request) or ""},
+            )
+            return JSONResponse({"error": "refused"}, status_code=403)
         marker = _browser_marker(request)
         host = request.headers.get("host", "").lower()
         if marker is not None or host not in hosts:
@@ -77,11 +94,11 @@ def build_operator_app(hub: Hub, *, port: int, extra_hosts: Iterable[str] = ()) 
         refused = guard(request)
         if refused is not None:
             return refused
-        caller = hub.authenticate(
+        caller = hub.identify(
             bearer(request), peer_address=peer_address(request), endpoint=Endpoint.OPERATOR
         )
-        if caller is None:
-            return unauthorized()
+        if isinstance(caller, Rejected):
+            return token_refusal(caller)
         try:
             body = await read_json(request)
         except BodyError as error:

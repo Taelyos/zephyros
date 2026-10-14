@@ -225,6 +225,41 @@ def test_rules_across_keys() -> None:
         assert key in [problem.key for problem in caught.value.problems], key
 
 
+WILDCARD = "0.0.0.0"  # noqa: S104  # reason: a value under test, not a bind
+
+
+@pytest.mark.parametrize("key", ["hub.operator_bind", "hub.main_agent_bind"])
+@pytest.mark.parametrize(
+    "value", [WILDCARD, "::", "::ffff:0.0.0.0", "10.200.4.3", "::ffff:10.200.4.3", "anywhere"]
+)
+def test_the_operator_and_main_agent_never_listen_on_an_instance_network(
+    key: str, value: str
+) -> None:
+    """A wildcard listens on every network of the hub, an address of the pool is one of an
+    instance network: both are refused (ATK-13, ADR 0025)."""
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value(key, value))
+    assert key in [problem.key for problem in caught.value.problems]
+
+
+@pytest.mark.parametrize("value", ["core", "127.0.0.1", "::1", "172.18.0.2", "10.201.0.2"])
+def test_the_operator_and_main_agent_listen_on_core_or_an_address_off_the_pool(
+    value: str,
+) -> None:
+    config = parse_config(with_value("hub.operator_bind", value))
+    assert config.hub.operator_bind == value
+
+
+def test_the_channel_tokens_live_ninety_days_by_default() -> None:
+    config = parse_config(minimal())
+    assert config.tokens.channel_lifetime_days == 90
+    assert config.paths.control_socket == "/var/lib/zephyros/control.sock"
+    assert (
+        parse_config(with_value("tokens.channel_lifetime_days", 7)).tokens.channel_lifetime_days
+        == 7
+    )
+
+
 def test_an_openai_compatible_provider_needs_its_url_credential_file_and_models() -> None:
     document = with_value("gateway.provider", "openai-compatible")
     with pytest.raises(ConfigError) as caught:
@@ -356,7 +391,7 @@ def test_the_published_schema_matches_the_specification() -> None:
     assert exported["x-zephyros-schema-version"] == CONFIG_SCHEMA_VERSION
     assert exported["required"] == ["schema_version", "images"]
     assert exported["additionalProperties"] is False
-    assert len(exported["x-zephyros-rules"]) == 9  # type: ignore[arg-type]  # reason: the export holds a list
+    assert len(exported["x-zephyros-rules"]) == 10  # type: ignore[arg-type]  # reason: the export holds a list
 
 
 def test_the_defaults_do_not_alias_the_schema() -> None:

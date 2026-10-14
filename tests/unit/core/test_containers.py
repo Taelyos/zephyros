@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 
 from zephyros.adapters.hermes.engine import HermesEngine
 from zephyros.core.containers import (
+    GUARD_USER,
     HOME_PATH,
     INSTANCE_USER,
     LABEL_MANAGED,
@@ -146,10 +147,12 @@ def test_the_volume_template_carries_the_labels() -> None:
 def test_the_guard_keeps_net_admin_only_and_has_the_rest_of_the_profile() -> None:
     spec = guard()
     host = spec["HostConfig"]
+    assert spec["User"] == GUARD_USER != "0:0"
     assert host["CapDrop"] == ["ALL"]
     assert host["CapAdd"] == ["NET_ADMIN"]
     assert host["ReadonlyRootfs"] is True
-    assert host["SecurityOpt"] == ["no-new-privileges"]
+    # ADR 0027: off for the guard alone, so that the file capability of nft takes effect.
+    assert host["SecurityOpt"] == ["no-new-privileges:false"]
     assert host["Privileged"] is False
     assert host["IpcMode"] == "none"
     assert host["NetworkMode"] == f"zs-net-{PROJECT}-contractor"
@@ -357,6 +360,37 @@ def test_check_spec_refuses_a_volume_mounted_anywhere_but_the_two_paths_or_not_o
     spec["HostConfig"]["Mounts"] = [turn()["HostConfig"]["Mounts"][0]]
     with pytest.raises(SpecError):
         check_spec(spec, Role.GUARD, POLICY)
+
+
+@pytest.mark.parametrize("user", ["0:0", "0", "root", "10000:10000", None])
+def test_check_spec_refuses_a_guard_as_root_or_as_anyone_but_its_user(user: str | None) -> None:
+    spec = guard()
+    if user is None:
+        del spec["User"]
+    else:
+        spec["User"] = user
+    with pytest.raises(SpecError, match="never as root"):
+        check_spec(spec, Role.GUARD, POLICY)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [["no-new-privileges"], ["no-new-privileges:false", "seccomp=unconfined"], [], None],
+)
+def test_check_spec_gives_the_guard_its_security_options_and_no_other(
+    options: list[str] | None,
+) -> None:
+    spec = guard()
+    spec["HostConfig"]["SecurityOpt"] = options
+    with pytest.raises(SpecError, match="security options"):
+        check_spec(spec, Role.GUARD, POLICY)
+
+
+def test_no_new_privileges_stays_on_for_a_turn_and_a_sandbox() -> None:
+    spec = turn()
+    spec["HostConfig"]["SecurityOpt"] = ["no-new-privileges:false"]
+    with pytest.raises(SpecError, match="no-new-privileges"):
+        check_spec(spec, Role.TURN, POLICY)
 
 
 def test_check_spec_refuses_a_turn_with_another_user_or_more_writable_places() -> None:

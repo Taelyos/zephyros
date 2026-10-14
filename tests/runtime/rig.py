@@ -371,7 +371,20 @@ class Runtime:
         self.fixtures.append(name)
         lan_ip = self.ip_of(name, instance.network)
         for address in LAN_ADDRESSES:
-            docker("exec", instance.guard, "ip", "route", "add", f"{address}/32", "via", lan_ip)
+            # The test, not the guard, adds the routes: as root of the guard's container, with
+            # the NET_ADMIN of its bounding set (the guard's own user holds none outside nft).
+            docker(
+                "exec",
+                "-u",
+                "0",
+                instance.guard,
+                "ip",
+                "route",
+                "add",
+                f"{address}/32",
+                "via",
+                lan_ip,
+            )
         time.sleep(1)
         return name
 

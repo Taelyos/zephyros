@@ -90,7 +90,7 @@ def test_the_hub_reaches_the_configured_host_only(tmp_path: Path) -> None:
     )
     deployment.up()
     suffix = deployment.name
-    network = f"{deployment.name}_core"
+    network = deployment.core_network
     try:
         # The configured host: the receiver, which answers every POST with a redirect to a host
         # the configuration does not name.
@@ -198,9 +198,7 @@ def test_the_hub_reaches_the_configured_host_only(tmp_path: Path) -> None:
         networks = json.loads(
             _docker("inspect", "-f", "{{json .NetworkSettings.Networks}}", deployment.hub)
         )
-        hub_ip = next(
-            entry["IPAddress"] for name, entry in networks.items() if name.endswith("core")
-        )
+        hub_ip = networks[deployment.core_network]["IPAddress"]
         assert hub_ip
         trap_networks = json.loads(
             _docker("inspect", "-f", "{{json .NetworkSettings.Networks}}", f"{suffix}-trap")

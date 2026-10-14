@@ -18,6 +18,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from tests.support.sockets import socket_path
 from tests.unit.core.contract_fixtures import change, put, requirement
 from zephyros.adapters.memory.instance_control import FakeInstanceControl
 from zephyros.adapters.sqlite.contract_store import SqliteContractStore
@@ -173,6 +174,7 @@ def hub_config(tmp_path: Path, url: str) -> Config:
                 "filter_socket": str(tmp_path / "filter.sock"),
                 "operator_token_file": str(tmp_path / "tokens" / "operator.token"),
                 "main_agent_token_file": str(tmp_path / "tokens" / "main-agent.token"),
+                "control_socket": socket_path(tmp_path),
             },
         }
     )
