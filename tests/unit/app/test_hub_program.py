@@ -7,6 +7,7 @@ import socket
 import stat
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -42,6 +43,7 @@ def make_config(tmp_path: Path) -> Config:
                 "agent_port": free_port(),
                 "operator_port": free_port(),
                 "main_agent_port": free_port(),
+                "egress_port": free_port(),
             },
             "paths": {
                 "data_dir": str(tmp_path / "data"),
@@ -136,9 +138,45 @@ def test_the_three_listeners_serve_on_loopback_and_stop_cleanly(tmp_path: Path) 
         listing = httpx.get(f"http://127.0.0.1:{config.hub.agent_port}/v1/models", timeout=5)
         assert listing.status_code == 200
         assert "server" not in listing.headers
+        # The egress proxy of the default level (regulated, ADR 0024) listens beside the agent
+        # endpoint, and opens nothing without a project token.
+        with socket.create_connection(("127.0.0.1", config.hub.egress_port), timeout=5) as proxy:
+            proxy.sendall(b"CONNECT pypi.org:443 HTTP/1.1\r\nHost: pypi.org\r\n\r\n")
+            assert proxy.recv(64).startswith(b"HTTP/1.1 407")
     finally:
         loop.call_soon_threadsafe(stop.set)
         thread.join(timeout=15)
     assert not thread.is_alive()
     with pytest.raises(httpx.TransportError):
         httpx.get(f"{operator_url}/operator/health", timeout=1)
+    with pytest.raises(ConnectionRefusedError):
+        socket.create_connection(("127.0.0.1", config.hub.egress_port), timeout=1).close()
+
+
+@pytest.mark.parametrize("level", ["sealed", "open"])
+def test_no_egress_proxy_listens_outside_the_regulated_level(tmp_path: Path, level: str) -> None:
+    config = make_config(tmp_path)
+    config = replace(config, network=replace(config.network, egress=level))
+    loop = asyncio.new_event_loop()
+    stop = asyncio.Event()
+    thread = threading.Thread(
+        target=lambda: loop.run_until_complete(run(config, agent_bind="127.0.0.1", stop=stop)),
+        daemon=True,
+    )
+    thread.start()
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                url = f"http://127.0.0.1:{config.hub.agent_port}/v1/models"
+                if httpx.get(url, timeout=1).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            assert time.monotonic() < deadline, "the hub did not start"
+            time.sleep(0.05)
+        with pytest.raises(ConnectionRefusedError):
+            socket.create_connection(("127.0.0.1", config.hub.egress_port), timeout=1).close()
+    finally:
+        loop.call_soon_threadsafe(stop.set)
+        thread.join(timeout=15)

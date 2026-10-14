@@ -29,6 +29,7 @@ from zephyros.adapters.git.delivery import GitDeliveryArea
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.adapters.github.forge import GitHubForge
 from zephyros.adapters.http.agent import build_agent_app
+from zephyros.adapters.http.egress_proxy import start_egress_proxy
 from zephyros.adapters.http.main_agent import build_main_agent_app
 from zephyros.adapters.http.operator import build_operator_app
 from zephyros.adapters.http.server import HubServer, build_server, serve_all, stop_all
@@ -392,6 +393,7 @@ async def run(
             config.hub.operator_port,
         ),
     ]
+    egress = await start_egress_proxy(config, hub, runtime.audit, agent_bind)  # ADR 0024
     loop = asyncio.get_running_loop()
     if stop is None:
         for number in (signal.SIGINT, signal.SIGTERM):
@@ -403,6 +405,8 @@ async def run(
     finally:
         if stop is not None:
             waiter.cancel()
+        if egress is not None:
+            egress.close()
         for worker in workers:
             worker.stop()
         if broker is not None:

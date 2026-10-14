@@ -72,6 +72,7 @@ class Action(StrEnum):
     CONTINUITY = "continuity.step"
     NOTIFICATION = "notification.sent"
     EGRESS = "egress.refused"
+    INSTANCE_EGRESS = "instance.egress"
     TOKEN_ISSUE = "token.issue"  # noqa: S105  # reason: an action name, not a secret
     TOKEN_REVOKE = "token.revoke"  # noqa: S105  # reason: an action name, not a secret
     GATEWAY_CALL = "gateway.call"
