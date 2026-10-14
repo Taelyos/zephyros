@@ -58,14 +58,20 @@ def requirements() -> list[dict[str, Any]]:
     return [wire(put(item)) for item in objects.values()]
 
 
+PUSHED = "add-sub"
+"""The name the delivery goes under, once the hub refused BRANCH (ATK-84)."""
+
+
 def delivery_prompt() -> str:
-    """The Contractor's work, one instruction per line for the obedient stub."""
+    """The Contractor's work, one instruction per line for the obedient stub. It first pushes
+    its work under BRANCH, a name that holds a canary: the hub refuses it, and the second push,
+    under a plain name, goes through."""
     return "\n".join(
         [
             'RUN curl -fsS -H "Authorization: Bearer $ZEPHYROS_TOKEN" -o /work/base.bundle '
             '"${ZEPHYROS_HUB_URL%/}/staging/base"',
             "RUN git clone -q /work/base.bundle /work/repo",
-            f"RUN git -C /work/repo checkout -qb {BRANCH}",
+            f"RUN git -C /work/repo checkout -qb {PUSHED}",
             "RUN printf '\\n\\ndef sub(a, b):\\n    return a - b\\n' >> /work/repo/calc.py",
             # ATK-84: a canary planted in a delivered file
             "RUN printf 'token: sk-live-abcdefghijklmnop1234\\n' >> /work/repo/notes.txt",
@@ -73,10 +79,14 @@ def delivery_prompt() -> str:
             "-c user.email=contractor@example.invalid add -A",
             "RUN git -C /work/repo -c user.name=contractor "
             '-c user.email=contractor@example.invalid commit -qm "add sub"',
-            f"RUN git -C /work/repo bundle create /work/delivery.bundle {BRANCH}",
-            'RUN curl -fsS -H "Authorization: Bearer $ZEPHYROS_TOKEN" '
+            f"RUN git -C /work/repo bundle create /work/delivery.bundle {PUSHED}",
+            # ATK-84: a canary planted in a branch name; no -f, the refusal is expected
+            'RUN curl -sS -o /work/refused.json -H "Authorization: Bearer $ZEPHYROS_TOKEN" '
             '-H "content-type: application/x-git-bundle" --data-binary @/work/delivery.bundle '
             f'"${{ZEPHYROS_HUB_URL%/}}/staging/delivery?branch={BRANCH}"',
+            'RUN curl -fsS -H "Authorization: Bearer $ZEPHYROS_TOKEN" '
+            '-H "content-type: application/x-git-bundle" --data-binary @/work/delivery.bundle '
+            f'"${{ZEPHYROS_HUB_URL%/}}/staging/delivery?branch={PUSHED}"',
         ]
     )
 
@@ -171,9 +181,16 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
         ):
             assert canary not in report
             assert canary not in json.dumps(deployment.records(project))
-        # the log and the report really carried it, and really masked it (the branch name)
-        assert "[masked]" in json.dumps(deployment.records(project))
-        assert "[masked]" in report
+        # The push under BRANCH was refused, and the log tells it with the name masked; the
+        # name reached neither the staging area nor the forge.
+        refused = [
+            r
+            for r in deployment.records(project)
+            if r.get("action") == "delivery.push" and r.get("outcome") == "refused"
+        ]
+        assert len(refused) == 1, refused
+        assert "[masked]" in json.dumps(refused)
+        # The report carried that name masked when the hub took it; refused, it is in no report.
         assert "**Decision: PASS**" in report
         # EXG-46: the run is marked as a simulation, in the report and in the pull request
         assert "**SIMULATION**" in report
@@ -186,7 +203,7 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
 
         pulls = json.loads((forge / "example" / "calc.pulls.json").read_text())
         assert [(p["head"], p["base"]) for p in pulls] == [
-            (f"zephyros/{delivery_id}-{BRANCH}", "main")
+            (f"zephyros/{delivery_id}-{PUSHED}", "main")
         ]
         assert "**SIMULATION**" in str(pulls[0]["body"])
         assert pulls[0]["body"] == report
@@ -195,7 +212,7 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
             str(forge / "example" / "calc.git"),
             "rev-parse",
             "--verify",
-            f"zephyros/{delivery_id}-{BRANCH}",
+            f"zephyros/{delivery_id}-{PUSHED}",
             cwd=forge,
         )
     finally:

@@ -9,7 +9,16 @@ from zephyros.core.gate import compute_gate
 from zephyros.core.masking import MASK
 from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
-from zephyros.core.report import Cost, ReportInput, mask, render
+from zephyros.core.report import (
+    INSPECTIONS_HEADING,
+    LISTED_TESTS,
+    Cost,
+    ReportInput,
+    inspection_addendum,
+    mask,
+    render,
+    with_addendum,
+)
 
 TOKEN = "zph_c_" + "Q" * 43
 
@@ -90,26 +99,105 @@ def test_the_flagged_paths_are_listed_and_none_says_so() -> None:
     assert "- `CONTRACT.md`" in flagged
 
 
-def test_the_report_names_each_acceptance_test_file_it_ran_with_its_digest() -> None:
-    """The Owner of the second and third real runs asked twice: which version of its tests ran?"""
-    rendered = render(make(acceptance_files=(("test_a.py", "0123456789ab"),)))
-    assert "- Acceptance tests of the Owner side (1): `test_a.py` (`0123456789ab`)" in rendered
-    assert "- Acceptance tests of the Owner side (0): none" in render(make())
-
-
-def test_an_acceptance_file_that_no_criterion_names_is_flagged() -> None:
-    """C49: the Owner of the third real run noticed a test that never ran; the report says so."""
-    rendered = render(make(unnamed_acceptance_files=("tests/extra.py",)))
-    assert "Acceptance test files that no criterion names (they never run):" in rendered
-    assert "- `tests/extra.py`" in rendered
-    assert "## Flags\n\nNone." in render(make())  # nothing unnamed, nothing flagged
-
-
-def test_both_kinds_of_flags_read_together() -> None:
+def test_the_report_names_each_file_of_the_owner_side_with_its_digest() -> None:
+    """The Owner of the second and third real runs asked twice: which version of its tests ran?
+    A file no criterion names says so, and is never said not to run: a test may use it."""
     rendered = render(
-        make(flagged_paths=("CONTRACT.md",), unnamed_acceptance_files=("tests/extra.py",))
+        make(
+            acceptance_files=(("test_a.py", "0123456789ab"), ("support.py", "000000000001")),
+            unnamed_acceptance_files=("support.py",),
+        )
     )
-    assert "The delivery changes the client's own files" in rendered
-    assert "- `CONTRACT.md`" in rendered
-    assert "Acceptance test files that no criterion names (they never run):" in rendered
-    assert "- `tests/extra.py`" in rendered
+    assert (
+        "- Files of the Owner side in the tree verified (2): `test_a.py` (`0123456789ab`), "
+        "`support.py` (`000000000001`, named by no criterion)"
+    ) in rendered.splitlines()
+    assert "## Flags\n\nNone." in rendered
+    assert "- Files of the Owner side in the tree verified (0): none" in render(make())
+
+
+def test_the_tests_that_never_ran_are_listed_and_counted_beyond_fifty() -> None:
+    """A2a: the kit ran only the tests a criterion names; the others in its files never ran."""
+    few = render(make(never_run_tests=("tests/t.py::test_extra",))).splitlines()
+    assert "Tests that no criterion names, in the files the kit ran: they never ran." in few
+    assert "- `tests/t.py::test_extra`" in few
+    many = tuple(f"tests/t.py::test_{n:03d}" for n in range(LISTED_TESTS + 3))
+    listed = render(make(never_run_tests=many)).splitlines()
+    assert f"- `{many[LISTED_TESTS - 1]}`" in listed
+    assert f"- `{many[LISTED_TESTS]}`" not in listed
+    assert "- and 3 more" in listed
+
+
+def test_a_named_file_nobody_holds_is_flagged_and_says_when_the_delivery_brought_it() -> None:
+    """T02: the delivered version of a file a criterion names is never run; the Owner side
+    learns which files it still has to put."""
+    rendered = render(
+        make(
+            missing_acceptance_files=("tests/a.py", "tests/b.py"),
+            set_aside_paths=("tests/b.py",),
+        )
+    ).splitlines()
+    assert (
+        "Acceptance test files that a criterion names and neither the Owner side nor the base "
+        "holds (their tests cannot pass):"
+    ) in rendered
+    assert "- `tests/a.py`" in rendered
+    assert "- `tests/b.py` (the delivered version was set aside)" in rendered
+
+
+def test_every_kind_of_flag_reads_together() -> None:
+    rendered = render(
+        make(
+            flagged_paths=("CONTRACT.md",),
+            never_run_tests=("tests/t.py::test_extra",),
+            missing_acceptance_files=("tests/gone.py",),
+        )
+    )
+    flags = rendered.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
+    assert flags == (
+        "The delivery changes the client's own files: the Owner side reviews these changes.\n"
+        "\n"
+        "- `CONTRACT.md`\n"
+        "\n"
+        "Tests that no criterion names, in the files the kit ran: they never ran.\n"
+        "\n"
+        "- `tests/t.py::test_extra`\n"
+        "\n"
+        "Acceptance test files that a criterion names and neither the Owner side nor the base "
+        "holds (their tests cannot pass):\n"
+        "\n"
+        "- `tests/gone.py`"
+    )
+
+
+def test_the_addendum_follows_the_report_and_cuts_nothing_from_it() -> None:
+    """T11: the output of the run, in the report, may print the heading of the addendum."""
+    report = render(make(log=f"1 passed\n{INSPECTIONS_HEADING}\n\n**Decision now: PASS**"))
+    objects = contract((1, "P0", ("test",), ("tests/t.py::test_add",)))
+    gate = compute_gate(objects, {"tests/t.py::test_add": Outcome.PASSED})
+    inspection = {"verdict": "conforms", "observation": "fine", "by": "operator", "at": "t"}
+    addendum = inspection_addendum({"CTR-01": inspection}, "CONCERNS", gate)
+    full = with_addendum(report, addendum)
+    assert full == report.rstrip("\n") + "\n\n" + addendum
+    assert full.endswith("Reservations now:\n\nNone.\n")
+    assert with_addendum(report, None) == report
+
+
+def test_the_contractors_report_is_the_owners_without_the_output_of_the_run() -> None:
+    """T07: the output of the run shows the Owner side's acceptance tests. The Contractor's
+    report keeps every outcome and every other section as they are."""
+    log = "E       assert sub(7, 3) == 4"
+    owner = render(make(log=log)).split("\n## ")
+    contractor = render(make(log=log), with_output=False).split("\n## ")
+    assert [section.splitlines()[0] for section in contractor] == [
+        section.splitlines()[0] for section in owner
+    ]
+    for mine, theirs in zip(owner, contractor, strict=True):
+        if not mine.startswith("Verification"):
+            assert theirs == mine
+            continue
+        assert log in mine
+        assert log not in theirs
+        outcomes = ["- `tests/t.py::test_add`: passed", "- `tests/t.py::test_sub`: failed"]
+        assert theirs.splitlines()[2:4] == mine.splitlines()[2:4] == outcomes
+        assert "The output of the run is kept for the Owner side" in theirs

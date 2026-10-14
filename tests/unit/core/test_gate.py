@@ -10,6 +10,9 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from zephyros.core.gate import (
+    NOTHING_JUDGED,
+    NOTHING_PASSED,
+    NOTHING_TESTED,
     Decision,
     Inspected,
     Rules,
@@ -205,10 +208,45 @@ def test_the_rules_can_be_stricter() -> None:
     assert compute_gate(objects, outcomes, rules=Rules(p1=100)).decision is Decision.FAIL
 
 
-def test_a_contract_with_no_requirement_passes_vacuously_and_says_so() -> None:
+def test_a_contract_with_nothing_to_judge_never_passes_and_says_so() -> None:
+    """T10: a rule with nothing to count is met, yet nothing was judged."""
     result = compute_gate({}, {})
-    assert result.decision is Decision.PASS
-    assert all(c.total == 0 for c in result.checks)
+    assert all(c.total == 0 and c.met for c in result.checks)
+    assert result.decision is Decision.CONCERNS
+    assert result.reservations == (NOTHING_JUDGED,)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "decision", "reservations"),
+    [
+        (NOT_RUN, Decision.CONCERNS, (NOTHING_TESTED,)),
+        (FAIL, Decision.CONCERNS, (NOTHING_PASSED,)),
+        (ERROR, Decision.CONCERNS, (NOTHING_PASSED,)),
+        (PASS, Decision.PASS, ()),
+    ],
+)
+def test_a_delivery_where_no_acceptance_test_passed_never_passes(
+    outcome: Outcome, decision: Decision, reservations: tuple[str, ...]
+) -> None:
+    """T10: nine P2 objects verified by inspection meet every rule, and a tenth is tested.
+    Unless its test passed, nothing the hub ran supports a PASS; and a test that ran and
+    failed never does better than one that did not run."""
+    objects = contract(
+        *[(n, "P2", ("inspection",), ()) for n in range(1, 10)],
+        (10, "P2", ("test",), ("t.py::t10",)),
+    )
+    inspections = {f"EXG-{n:02d}": Inspected.CONFORMS for n in range(1, 10)}
+    result = compute_gate(objects, {"t.py::t10": outcome}, inspections=inspections)
+    assert all(check.met for check in result.checks)
+    assert (result.decision, result.reservations) == (decision, reservations)
+
+
+def test_a_contract_judged_by_inspection_alone_is_concerns_at_best() -> None:
+    """T10: the hub ran nothing; the inspections alone do not make a PASS."""
+    objects = {"CTR-01": constraint(1, "P0", ("inspection",))}
+    result = compute_gate(objects, {}, inspections={"CTR-01": Inspected.CONFORMS})
+    assert [j.verified for j in result.requirements] == [True]
+    assert (result.decision, result.reservations) == (Decision.CONCERNS, (NOTHING_TESTED,))
 
 
 specs_strategy = st.lists(
