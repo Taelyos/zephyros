@@ -69,9 +69,19 @@ class VerificationConformance:
         files, names = fixture.write({"good": "pass", "unasked": "pass"})
         missing = "absent/test_missing.py::test_missing"
         request = VerificationRequest("p_conformance", fixture.kit, files, (names["good"], missing))
-        outcomes = dict(fixture.runner.run(request).outcomes)
+        result = fixture.runner.run(request)
+        outcomes = dict(result.outcomes)
         check(set(outcomes) == {names["good"], missing}, f"outcomes for {sorted(outcomes)}")
         check(outcomes[missing] in (Outcome.NOT_RUN, Outcome.ERROR), "an absent test passed")
+        # Deselected tests are well-formed and never shadow a test asked for (audit A2).
+        check(
+            all(isinstance(test, str) for test in result.deselected),
+            "deselected is not a tuple of test identifiers",
+        )
+        check(
+            not set(result.deselected) & set(outcomes),
+            "a test asked for was also reported as deselected",
+        )
 
     def test_gives_the_same_outcomes_twice(self) -> None:
         fixture = self.make_fixture()

@@ -193,6 +193,31 @@ def test_a_run_past_its_limit_verifies_nothing_even_with_forged_outcomes() -> No
 
     result = runner_for(handler).run(request_(tests=("test_a.py::test_a",)))
     assert result.outcomes["test_a.py::test_a"] is Outcome.NOT_RUN
+    assert result.deselected == ()
+
+
+def test_the_deselected_tests_reported_by_the_filter_reach_the_result() -> None:
+    """0.2.0: the kit lists the tests it saw in the asked files but did not run for want of a
+    criterion; the runner carries them through so the report can say they never ran (A2)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked = manifest_of(request.content)["tests"]
+        outcomes = {test: ("failed" if "canary" in test else "passed") for test in asked}
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "result": {
+                    "outcomes": outcomes,
+                    "deselected": ["test_a.py::test_unnamed", 7],
+                    "timed_out": False,
+                },
+            },
+        )
+
+    result = runner_for(handler).run(request_())
+    # Only well-formed identifiers survive.
+    assert result.deselected == ("test_a.py::test_unnamed",)
 
 
 @pytest.mark.parametrize(

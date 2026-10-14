@@ -2,7 +2,9 @@
 # The filter runs it as a sandbox: no network, read-only root, the files to verify in /work,
 # destroyed after the run. It prints a run line and one signed outcome line
 # `ZEPHYROS-OUTCOMES {...} <hmac>` with the outcome of each acceptance test asked for in
-# /work/zephyros-request.json; the filter checks the pair before believing the results (ATK-22).
+# /work/zephyros-request.json and the tests it deselected; the filter checks the pair before
+# believing the results (ATK-22). The acceptance tests are black box: the plugin refuses to
+# import any delivered module into the judging process (ADR 0017).
 FROM python@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4
 COPY requirements.txt zephyros_kit.py kit-run /opt/kit/
 RUN python -m pip install --no-cache-dir --no-deps --only-binary :all: --require-hashes -r /opt/kit/requirements.txt \

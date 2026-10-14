@@ -31,20 +31,41 @@ CONTRACTOR = Side.CONTRACTOR
 REPOSITORY = "example/calc"
 CANARY = "ghp_abcdefghijklmnopqrstuvwxyz012345"  # pragma: allowlist secret
 BRANCH = f"add-sub-{CANARY}"  # ATK-84: a canary planted in a branch name, so it reaches the log
+# The acceptance tests are black box (ADR 0017, ATK-22): the kit does not import the delivered
+# code into the judging process, so a test exercises the delivery as a subprocess and reads its
+# output. `calc` is run with `python -c`, which puts the working directory (/work) on sys.path.
+ADD_TEST = """import subprocess
+import sys
+
+
+def test_add():
+    out = subprocess.run(
+        [sys.executable, "-c", "from calc import add; print(add(1, 2))"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "3", out.stderr
+"""
 BASE = {
     ".gitignore": b"__pycache__/\n",
     "calc.py": b"def add(a, b):\n    return a + b\n",
-    "test_calc.py": b"from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+    "test_calc.py": ADD_TEST.encode(),
     "README.md": b"# calc\n",
 }
-SUB_TEST = """from calc import sub
+SUB_TEST = """import subprocess
+import sys
 
 CANARY = "ghp_abcdefghijklmnopqrstuvwxyz012345"  # pragma: allowlist secret
 
 
 def test_sub():
     print("acceptance run, token:", CANARY)  # ATK-84: planted in test output
-    assert sub(3, 1) == 2
+    out = subprocess.run(
+        [sys.executable, "-c", "from calc import sub; print(sub(3, 1))"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "2", out.stderr
 """
 
 

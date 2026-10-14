@@ -17,6 +17,7 @@ from zephyros.core.containers import (
     HOME_PATH,
     INSTANCE_USER,
     LABEL_MANAGED,
+    SANDBOX_LOG,
     WORK_PATH,
     Policy,
     Role,
@@ -32,6 +33,7 @@ from zephyros.core.containers import (
     labels,
     network_name,
     network_spec,
+    sandbox_spec,
     turn_name,
     turn_spec,
     volume_name,
@@ -339,6 +341,41 @@ def test_no_name_resolver_is_carried_when_the_configuration_names_none() -> None
     spec = guard_spec(without, PROJECT, Side.CONTRACTOR, SUBNET, "10.200.0.19")
     assert "Dns" not in spec["HostConfig"]
     check_spec(spec, Role.GUARD, without)
+
+
+SANDBOX_POLICY = replace(POLICY, sandbox_images=(("tests", DIGEST + "c" * 64),))
+
+
+def test_a_sandbox_log_is_never_rotated() -> None:
+    """ATK-22: the filter believes the kit's lines only in a log that begins with them, so the
+    runtime must not rotate it. A runtime that does would drop the head of a flood, and a pair of
+    the delivery's own at the point of the cut could be all that was left: the template fixes a
+    log driver and a size no sandbox reaches, whatever the daemon's own default is."""
+    spec = sandbox_spec(SANDBOX_POLICY, PROJECT, "0a1b2c3d", "tests")
+    assert spec["HostConfig"]["LogConfig"] == SANDBOX_LOG
+    assert SANDBOX_LOG["Config"]["max-file"] == "1"
+    check_spec(spec, Role.SANDBOX, SANDBOX_POLICY)
+
+
+@pytest.mark.parametrize(
+    "log_config",
+    [
+        None,  # the daemon's default, which may rotate
+        {"Type": "json-file", "Config": {}},  # the default size of the daemon is merged in
+        {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}},
+        {"Type": "json-file", "Config": {"max-size": "1t", "max-file": "3"}},
+        {"Type": "local", "Config": {"max-size": "1t", "max-file": "1"}},
+        {"Type": "none"},
+    ],
+)
+def test_a_sandbox_whose_log_could_be_rotated_is_refused(log_config: Any) -> None:
+    spec = sandbox_spec(SANDBOX_POLICY, PROJECT, "0a1b2c3d", "tests")
+    if log_config is None:
+        del spec["HostConfig"]["LogConfig"]
+    else:
+        spec["HostConfig"]["LogConfig"] = log_config
+    with pytest.raises(SpecError, match="log of a sandbox is never rotated"):
+        check_spec(spec, Role.SANDBOX, SANDBOX_POLICY)
 
 
 @given(

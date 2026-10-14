@@ -93,7 +93,25 @@ def test_a_good_archive_gives_the_manifest_and_a_clean_tar() -> None:
         10000,
         0,
     )
-    assert stored == {"tests": list(TESTS)}
+    digest = hashlib.sha256(b"def test_a():\n    assert True\n").hexdigest()
+    assert stored == {"tests": list(TESTS), "sha256": {"test_a.py": digest}}
+
+
+def test_the_kit_manifest_carries_the_digest_of_each_asked_file_only() -> None:
+    """The kit holds the files it runs to what the hub sent (ADR 0017): the filter measures the
+    digest of each file a test is asked from, on the bytes it received. A file no test is asked
+    from, and an asked file the archive does not hold, have none."""
+    raw = make_tar(
+        [
+            (MANIFEST, manifest_bytes()),
+            ("test_a.py", b"A\n"),
+            ("helper.py", b"not asked\n"),
+        ]
+    )
+    _, clean = read_archive(raw)
+    with tarfile.open(fileobj=io.BytesIO(clean), mode="r:") as archive:
+        stored = json.loads(archive.extractfile(MANIFEST).read())  # type: ignore[union-attr]  # reason: a regular member
+    assert stored["sha256"] == {"test_a.py": hashlib.sha256(b"A\n").hexdigest()}
 
 
 def test_the_manifest_is_found_wherever_it_sits_and_directories_are_skipped() -> None:
@@ -214,9 +232,12 @@ def test_the_size_limits_are_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
 NONCE = "test-nonce"
 
 
-def signed(outcomes: dict[str, str], nonce: str = NONCE) -> str:
-    """The two lines of an honest kit: the run line, then the signed outcome line."""
-    payload = json.dumps(outcomes, sort_keys=True)
+def signed(
+    outcomes: dict[str, str], nonce: str = NONCE, deselected: list[str] | None = None
+) -> str:
+    """The two lines of an honest kit: the run line, then the signed outcome line. The signed
+    payload carries both the outcomes and the deselected tests (interface 0.2.0)."""
+    payload = json.dumps({"outcomes": outcomes, "deselected": deselected or []}, sort_keys=True)
     mac = hmac.new(nonce.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"ZEPHYROS-RUN {nonce}\nZEPHYROS-OUTCOMES {payload} {mac}"
 
@@ -224,25 +245,52 @@ def signed(outcomes: dict[str, str], nonce: str = NONCE) -> str:
 def test_the_signed_pair_is_believed_and_everything_else_is_not_run() -> None:
     log = "\n".join(
         [
-            "noise",
-            signed({"test_a.py::test_a": "failed", "test_b.py::test_b": "weird"}),
+            signed(
+                {"test_a.py::test_a": "failed", "test_b.py::test_b": "weird"},
+                deselected=["test_a.py::test_other"],
+            ),
+            "noise, such as pytest's own report, may follow the pair",
         ]
     )
-    assert parse_outcomes(log, TESTS) == {
-        "test_a.py::test_a": "failed",
-        "test_b.py::test_b": "not_run",
-    }
+    assert parse_outcomes(log, TESTS) == (
+        {"test_a.py::test_a": "failed", "test_b.py::test_b": "not_run"},
+        ("test_a.py::test_other",),
+    )
+
+
+def test_deselected_tests_are_inside_the_signed_payload() -> None:
+    """The deselected list is part of the signed payload (0.2.0), so it is authenticated like the
+    outcomes: tampering with it after signing breaks the pair and nothing is believed."""
+    good = signed({"test_a.py::test_a": "passed"}, deselected=["test_a.py::test_extra"])
+    assert parse_outcomes(good, TESTS)[1] == ("test_a.py::test_extra",)
+    payload, _, mac = good.rpartition(" ")
+    tampered = payload.replace("test_extra", "test_hidden")
+    assert parse_outcomes(f"{tampered} {mac}", TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_non_string_in_the_deselected_list_is_dropped() -> None:
+    """A validly signed payload whose deselected list holds anything but a test identifier keeps
+    only the identifiers: the filter never passes on a stray value."""
+    body = json.dumps(
+        {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": ["x::y", 7, None]},
+        sort_keys=True,
+    )
+    mac = hmac.new(NONCE.encode(), body.encode(), hashlib.sha256).hexdigest()
+    log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {body} {mac}"
+    outcomes, deselected = parse_outcomes(log, ("test_a.py::test_a",))
+    assert outcomes == {"test_a.py::test_a": "passed"}
+    assert deselected == ("x::y",)
 
 
 def test_a_line_without_a_run_line_is_not_believed() -> None:
     """ATK-22: a line with no run line of the kit is someone else's."""
     log = 'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"} 00ff'
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_a_forged_line_next_to_the_real_one_is_not_believed() -> None:
-    """ATK-22: the delivered code can reach the log and write a pair of its own — with the
-    kit's own run line already there, anything but the kit's single signed line is refused."""
+    """ATK-22: a black-box test's subprocess can reach the log and write a pair of its own — with
+    the kit's own run line already there, anything but the kit's single signed line is refused."""
     log = "\n".join(
         [
             f"ZEPHYROS-RUN {NONCE}",
@@ -250,29 +298,54 @@ def test_a_forged_line_next_to_the_real_one_is_not_believed() -> None:
             signed({"test_a.py::test_a": "passed"}),
         ]
     )
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_log_whose_beginning_is_gone_is_not_believed() -> None:
+    """ATK-22: the run line, with the nonce, is the first thing the kit prints. A log that does
+    not begin with it has lost its head, and a pair left at its end is no longer anchored to
+    the kit's nonce — nothing is believed."""
+    forged = signed({"test_a.py::test_a": "passed"}, nonce="evil")
+    log = "\n".join(["the tail of a flooded log", forged])
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_blank_lines_before_the_run_line_are_not_a_lost_head() -> None:
+    """The head is the first line that says something: empty lines before the run line cost
+    nothing, so an honest log is not refused for them."""
+    log = "\n\n" + signed({"test_a.py::test_a": "passed"})
+    assert parse_outcomes(log, TESTS)[0]["test_a.py::test_a"] == "passed"
 
 
 def test_a_signature_that_does_not_match_is_not_believed() -> None:
-    payload = '{"test_a.py::test_a": "passed"}'
+    payload = '{"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}'
     log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {payload} {'0' * 64}"
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_a_second_outcome_line_is_not_believed() -> None:
-    """ATK-22: an honest kit prints its results once; a delivered test can reach the log and
-    print a line of its own — more than one line means nothing is believed."""
+    """ATK-22: an honest kit prints its results once; a black-box test's subprocess can reach the
+    log and print a line of its own — more than one line means nothing is believed."""
     log = "\n".join(
         [
-            'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"}',
-            'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"}',
+            'ZEPHYROS-OUTCOMES {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}',
+            'ZEPHYROS-OUTCOMES {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}',
         ]
     )
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_payload_without_an_outcomes_object_is_not_believed() -> None:
+    """0.2.0: the signed payload is an object with an `outcomes` mapping; the old flat shape, or
+    anything else, is refused rather than guessed at — even when its own signature is valid."""
+    legacy = '{"test_a.py::test_a": "passed"}'
+    mac = hmac.new(NONCE.encode(), legacy.encode(), hashlib.sha256).hexdigest()
+    log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {legacy} {mac}"
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_without_an_outcome_line_every_test_is_not_run() -> None:
-    assert parse_outcomes("nothing to see", TESTS) == dict.fromkeys(TESTS, "not_run")
+    assert parse_outcomes("nothing to see", TESTS) == (dict.fromkeys(TESTS, "not_run"), ())
 
 
 # ----------------------------------------------------------------------------- one run
@@ -314,6 +387,93 @@ def test_one_run_creates_the_sandbox_destroys_it_and_reports_the_outcomes() -> N
         "project_id": PROJECT,
         "run": "0a1b2c3d",
     }
+
+
+def test_a_flooded_log_cannot_push_the_real_lines_out_to_leave_a_forged_pair() -> None:
+    """ATK-22: pytest prints a failing test's captured output after the kit's signed line, so a
+    delivery whose output is echoed there can write more than the window the filter used to read
+    and end with a pair of its own — a nonce of its choosing and a signature that matches it.
+    With the kit's real lines pushed out of that window, the forged pair was the only one left
+    and was believed. The filter now reads the whole log: both pairs are there, and nothing is."""
+    real = signed({"test_a.py::test_a": "failed", "test_b.py::test_b": "failed"})
+    forged = signed(dict.fromkeys(TESTS, "passed"), nonce="the-delivery-chose-this")
+    flood = "x" * 250_000
+    rig = SandboxRig(lambda archive: (1, "\n".join([real, flood, forged])))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_longer_than_the_filter_reads_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A log past the most the filter reads has lost its beginning, where the run line is: even
+    a single, validly signed pair at its end proves nothing, because the delivery may have
+    written it after pushing the kit's lines out."""
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", 4096)
+    log = "\n".join(["y" * 5000, signed(dict.fromkeys(TESTS, "passed"))])
+    rig = SandboxRig(lambda archive: (0, log))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_whose_last_bytes_open_with_a_pair_of_the_delivery_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ATK-22: the delivery writes last a block of exactly one byte more than the filter reads,
+    which opens with a run line of its own and a pair signed under it, and stops the judge. Were
+    the log read from its end, the block would be all the filter saw: one run line, one pair,
+    a valid signature — the kit's lines pushed out. The cap alone refuses it: this test
+    fails if the check on the length is taken out or moved by a byte."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    real = signed(dict.fromkeys(TESTS, "failed"))
+    forged = signed(dict.fromkeys(TESTS, "passed"), nonce="the-delivery-chose-this")
+    block = forged + "\n" + "x" * (limit + 1 - len(forged.encode()) - 1)
+    assert len(block.encode()) == limit + 1
+    log = "\n".join([real, "y" * 3 * limit, block])
+    rig = SandboxRig(lambda archive: (1, log))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_one_byte_longer_than_what_the_filter_reads_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary, from above: the pair is whole in what the filter reads, and the log has one
+    byte more, so it was cut — and a cut log proves nothing."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    pair = signed({"test_a.py::test_a": "passed"})
+    log = pair + "\n" + "x" * (limit + 1 - len(pair.encode()) - 1)
+    assert len(log.encode()) == limit + 1
+    rig = SandboxRig(lambda archive: (0, log))
+    assert rig.run()["outcomes"] == dict.fromkeys(TESTS, "error")
+
+
+def test_a_log_of_exactly_what_the_filter_reads_ending_with_a_pair_is_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of the same boundary: one byte less, and the whole log is read."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    pair = signed({"test_a.py::test_a": "passed"})
+    log = pair + "\n" + "x" * (limit - len(pair.encode()) - 1)
+    assert len(log.encode()) == limit
+    rig = SandboxRig(lambda archive: (0, log))
+    assert rig.run()["outcomes"]["test_a.py::test_a"] == "passed"
+
+
+def test_a_log_just_within_what_the_filter_reads_is_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary: the whole log, up to the limit, is read and its pair believed."""
+    pair = signed({"test_a.py::test_a": "passed"})
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", len(pair.encode()))
+    rig = SandboxRig(lambda archive: (0, pair))
+    assert rig.run()["outcomes"] == {"test_a.py::test_a": "passed", "test_b.py::test_b": "not_run"}
 
 
 def test_a_run_past_its_limit_is_killed_reported_and_still_destroyed() -> None:

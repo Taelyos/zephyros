@@ -57,11 +57,7 @@ class DockerApi:
                 0, f"the runtime could not be reached ({type(error).__name__})"
             ) from None
         if response.status_code >= 400 and response.status_code not in allow:
-            try:
-                message = str(response.json().get("message", response.text))
-            except ValueError:
-                message = response.text
-            raise DockerError(response.status_code, message[:300])
+            raise _failure(response)
         return response
 
     # ------------------------------------------------------------------ networks
@@ -145,12 +141,33 @@ class DockerApi:
             raise DockerError(response.status_code, response.text[:300])
         return int(response.json().get("StatusCode", -1))
 
-    def logs(self, name: str, limit: int = 200_000) -> str:
-        """What the container wrote, both streams, cut to the last `limit` bytes."""
-        response = self._call(
-            "GET", f"/containers/{name}/logs", params={"stdout": "1", "stderr": "1"}
-        )
-        return demultiplex(response.content)[-limit:].decode("utf-8", errors="replace")
+    def logs_head(self, name: str, limit: int) -> tuple[str, bool]:
+        """What the container wrote, both streams, from its beginning, and whether it wrote more
+        than `limit` bytes of it.
+
+        The stream is read as it comes and abandoned a little past twice the limit (a framed
+        stream carries eight bytes of header per frame), so that what a container floods its log
+        with does not reach the memory of the caller. The text is cut to `limit` bytes."""
+        raw = bytearray()
+        try:
+            with self._client.stream(
+                "GET",
+                f"/{API_VERSION}/containers/{name}/logs",
+                params={"stdout": "1", "stderr": "1"},
+            ) as response:
+                if response.status_code >= 400:
+                    response.read()
+                    raise _failure(response)
+                for chunk in response.iter_bytes():
+                    raw += chunk
+                    if len(raw) > 2 * limit + 8:
+                        break
+        except httpx.HTTPError as error:
+            raise DockerError(
+                0, f"the runtime could not be reached ({type(error).__name__})"
+            ) from None
+        log = demultiplex(bytes(raw))
+        return log[:limit].decode("utf-8", errors="replace"), len(log) > limit
 
     def inspect(self, name: str) -> dict[str, Any] | None:
         response = self._call("GET", f"/containers/{name}/json", allow=(404,))
@@ -175,6 +192,14 @@ class DockerApi:
             },
         )
         return [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+
+def _failure(response: httpx.Response) -> DockerError:
+    try:
+        message = str(response.json().get("message", response.text))
+    except ValueError:
+        message = response.text
+    return DockerError(response.status_code, message[:300])
 
 
 def demultiplex(raw: bytes) -> bytes:

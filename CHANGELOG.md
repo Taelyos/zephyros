@@ -8,6 +8,12 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
+### Breaking changes
+- The "tests" verification kit keeps delivered code out of the process that records the results
+  (ADR 0017, EXG-37, ATK-22). An acceptance test is black box: it runs the delivery as a
+  subprocess and reads its output. A test that imports a module of the delivery no longer loads
+  and reads `error`.
+
 ### Changed
 - The configuration schema, version 1.13.0: the models the gateway may serve come from the
   configuration alone (`gateway.models`); the code no longer holds a list of authorised models
@@ -16,6 +22,13 @@ version. Each schema carries its own version number.
   provider is not in the list, the refusal names the key that sets it, `gateway.upstream_model`,
   or `gateway.model` when the file has no `gateway.upstream_model`, and lists the models it
   allows. A file accepted by 1.12.0 is accepted by 1.13.0.
+- The verification interface is 0.2.0: `VerificationResult.deselected` lists the tests the kit
+  found in the asked files but did not run because no acceptance criterion named them. The kit
+  signs it with the outcomes (`ZEPHYROS-OUTCOMES {"deselected": [...], "outcomes": {...}} <hmac>`).
+- The filter reads the log of a sandbox from its beginning, as a stream, up to 16 MiB, and believes
+  nothing in a log that was cut or that does not begin with the run line of the kit. The kit holds
+  the asked test files to the SHA-256 the filter measured on the archive, and imports the bytes it
+  read when the run began. The container of a sandbox has a log configuration with no rotation.
 
 ### Fixed
 - The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`
