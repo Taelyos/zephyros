@@ -981,7 +981,6 @@ class RefusalUnlogged(InMemoryLogStore):
         super().append(record)
 
 
-@pytest.mark.xfail(strict=True, reason="EXG-23: the refusal is silent until the fix")
 def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused_and_told() -> None:
     """The job fails after the refusal is kept: the delivery stays refused, never ERROR, and the
     main agent hears of it once, like any refusal."""
@@ -1093,7 +1092,6 @@ def test_a_secret_the_hub_learns_after_the_push_stays_off_the_forge_and_the_even
     assert [payload["branch"] for payload in told] == ["work-[masked]"]
 
 
-@pytest.mark.xfail(strict=True, reason="EXG-23: the alert is skipped until the fix")
 def test_a_decision_that_cannot_be_told_still_raises_the_alert_of_a_loop() -> None:
     """EXG-23: telling a FAIL fails (a receiver that is down); the streak of failed deliveries
     still reaches the main agent, and the worker hears of the failure."""
