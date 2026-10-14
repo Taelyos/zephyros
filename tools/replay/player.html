@@ -628,10 +628,13 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     if (integ.chain === 'verified') {
       ib.className = 'badge integrity ok';
       ib.textContent = 'hash chain consistent (' + (Number(integ.records) || 0) + ' records)';
-      ib.title = 'Each exported record of the hub log matches its hash and links to the record ' +
-        'before it. Not checked here: the head and the anchor the hub keeps, so records cut ' +
-        'after the last exported one, or a log rewritten with its hashes recomputed, would not ' +
-        'show; log.verify on the hub checks those. Only events from the hub log are covered.';
+      // The player checks nothing: it shows what the exporter found, and a replay edited by hand
+      // would show the same. The tooltip says whose check it is.
+      ib.title = 'Checked by the exporter when it wrote this replay, not by this player: each ' +
+        'exported record of the hub log matched its hash and linked to the record before it. ' +
+        'Not checked: the head and the anchor the hub keeps, so records cut after the last ' +
+        'exported one, or a log rewritten with its hashes recomputed, would not show; log.verify ' +
+        'on the hub checks those. Only events from the hub log are covered.';
     } else if (integ.chain === 'broken') {
       ib.className = 'badge integrity bad';
       ib.textContent = 'hash chain broken';
