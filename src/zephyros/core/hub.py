@@ -30,7 +30,15 @@ from zephyros.core.audit import (
     format_line,
 )
 from zephyros.core.clock import Clock, SystemClock, format_time
-from zephyros.core.continuity import HOLD, RELEASE, Continuity, TaskState, delivery_waits_for
+from zephyros.core.continuity import (
+    DECISION,
+    DELIVERY,
+    HOLD,
+    RELEASE,
+    Continuity,
+    TaskState,
+    delivery_waits_for,
+)
 from zephyros.core.contract import (
     Change,
     ContractError,
@@ -700,16 +708,26 @@ class Hub:
     def _contract_changed(self, project_id: str) -> None:
         """A version or a pending change came or went: the Contractor's task is held while the
         contract is not ready for it, and its ladder starts once it is (US-E7-01). The log says
-        each change, so that a held task is not mistaken for a ladder that stopped."""
+        each change, so that a held task is not mistaken for a ladder that stopped. The contract
+        is read under the continuity's lock: a task created meanwhile by the delivery loop's
+        thread is either seen here, or created from the contract as it is now."""
         if self._continuity is None:
             return
-        side = Side.CONTRACTOR.value
-        why = self._delivery_waits_for(project_id)
-        if why is not None:
-            if self._continuity.hold(project_id, side, why):
-                self._record_delivery_task(project_id, HOLD, why=why)
-        elif self._continuity.release(project_id, side, self._clock.now()):
-            self._record_delivery_task(project_id, RELEASE)
+        with self._continuity.locked():
+            why = self._delivery_waits_for(project_id)
+            if why is not None:
+                if self._continuity.hold(project_id, DELIVERY, why):
+                    self._record_delivery_task(project_id, HOLD, why=why)
+            elif self._continuity.release(project_id, DELIVERY, self._clock.now()):
+                self._record_delivery_task(project_id, RELEASE)
+
+    def check_tasks(self) -> None:
+        """At the start of the hub, the tasks kept from before follow the contract as it is now:
+        a change the hub wrote but had no time to act upon is acted upon."""
+        if self._continuity is None:
+            return
+        for project_id in sorted({state.project_id for state in self._continuity.waiting()}):
+            self._contract_changed(project_id)
 
     def _record_delivery_task(self, project_id: str, step: str, **parameters: object) -> None:
         self._audit.append(
@@ -721,7 +739,7 @@ class Hub:
                 parameters={
                     "side": Side.CONTRACTOR.value,
                     "step": step,
-                    "task": "delivery",
+                    "task": DELIVERY,
                     **parameters,
                 },
             )
@@ -732,21 +750,24 @@ class Hub:
         notification is queued: the thread that raised the event never waits for the receiver."""
         if event == "staging.prepared" and self._continuity is not None:
             project_id = str(payload["project_id"])
-            why = self._delivery_waits_for(project_id)
-            self._continuity.expect(
-                TaskState(
-                    project_id,
-                    Side.CONTRACTOR.value,
-                    "delivery",
-                    "the base of "
-                    f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is ready "
-                    "and awaits a delivery",
-                    self._clock.now(),
-                ),
-                held=why,
-            )
-            if why is not None:
-                self._record_delivery_task(project_id, HOLD, why=why)
+            # under the lock, so that a decision on another thread cannot fall between the read
+            # of the contract and the task it decides
+            with self._continuity.locked():
+                why = self._delivery_waits_for(project_id)
+                self._continuity.expect(
+                    TaskState(
+                        project_id,
+                        Side.CONTRACTOR.value,
+                        DELIVERY,
+                        "the base of "
+                        f"{payload.get('repository', '?')} ({payload.get('branch', '?')}) is "
+                        "ready and awaits a delivery",
+                        self._clock.now(),
+                    ),
+                    held=why,
+                )
+                if why is not None:
+                    self._record_delivery_task(project_id, HOLD, why=why)
         if event in NOTIFIED_EVENTS and self._notifier is not None:
             marked = {**dict(payload), "simulation": self._simulation}
             self._notifier.notify(
@@ -953,7 +974,7 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         record = self._delivery_service().declare(project_id, str(arguments["delivery_id"]))
         if self._continuity is not None:
-            self._continuity.answered(project_id, Side.CONTRACTOR.value)
+            self._continuity.answered(project_id, DELIVERY)
         data: dict[str, object] = {
             "project_id": project_id,
             "delivery_id": record.delivery_id,
@@ -1182,7 +1203,7 @@ class Hub:
                 TaskState(
                     project_id,
                     Side.OWNER.value,
-                    "decision",
+                    DECISION,
                     f"change {pending.id} of version {pending.base_version} awaits a decision",
                     self._clock.now(),
                 )
@@ -1211,7 +1232,7 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         version = self._contracts.approve(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
-            self._continuity.answered(project_id, Side.OWNER.value)
+            self._continuity.answered(project_id, DECISION)
         self._contract_changed(project_id)
         return ToolResult(
             {"version_id": version.id, "number": version.number},
@@ -1228,7 +1249,7 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         resolved = self._contracts.reject(caller.principal, project_id, str(arguments["change_id"]))
         if self._continuity is not None:
-            self._continuity.answered(project_id, Side.OWNER.value)
+            self._continuity.answered(project_id, DECISION)
         self._contract_changed(project_id)
         return ToolResult(
             {"change_id": resolved.id, "status": resolved.status.value},

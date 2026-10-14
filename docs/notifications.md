@@ -40,8 +40,11 @@ The log says why a task waits, so that a held task is not mistaken for a ladder 
 `continuity.step` record with the step `hold` gives the reason in `why`: `no_acceptance_test`,
 or `pending_decision`. A record with the step `release` marks the start of the ladder.
 
-The ladder lives in the hub's memory. After a restart of the hub, a task begins again with the
-next preparation of a base or the next proposed change.
+The hub keeps each task, why it is held and where its ladder stands in its database. After a
+restart of the hub, a held task is still held and a ladder goes on from its step. The time the
+hub was down counts as time without activity: a step that fell due meanwhile is taken at the
+first round of the watchdog. At its start, the hub also checks each task against the contract
+as it is, in case it stopped between a change of the contract and acting upon it.
 
 ## Configuration
 

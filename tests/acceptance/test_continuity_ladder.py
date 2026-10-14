@@ -68,21 +68,22 @@ class LadderWorld(World):
     manager: InstanceManager | None = None
 
     def _boot(self) -> None:
-        # Each boot is a new hub process: a new memory and a new manager. The database and the
-        # containers outlive it, as they would on a host.
+        # Each boot is a new hub process: a new memory and a new manager. The database (and the
+        # ladders it keeps) and the containers outlive it, as they would on a host.
         if not self.docker.containers:
             self.docker.add_hub()
         journal = MemoryJournal()
         executor = Executor(self.docker.api(), POLICY, journal, clock=lambda: 1_000_000)
         broker = FilterClient(TestClient(build_filter_app(executor, journal)))
-        continuity = Continuity(
-            ContinuityTiming(inactivity_seconds=INACTIVITY, restarts=1, unblock_seconds=3600)
-        )
         self.database = Database(self.db_path)
         timing = replace(TIMING, turn_seconds=10**6, silence_seconds=10**6)
 
         def manager(
-            tokens: TokenService, audit: AuditLog, clock: Clock, notifier: Notifier
+            tokens: TokenService,
+            audit: AuditLog,
+            clock: Clock,
+            notifier: Notifier,
+            continuity: Continuity | None,
         ) -> InstanceControl:
             self.manager = InstanceManager(
                 broker,
@@ -103,7 +104,9 @@ class LadderWorld(World):
             instance_factory=manager,
             model=MODEL,
             delivery=self.delivery,
-            continuity=continuity,
+            continuity=ContinuityTiming(
+                inactivity_seconds=INACTIVITY, restarts=1, unblock_seconds=3600
+            ),
         )
         self.hub, self.tokens, self.gateway = runtime.hub, runtime.tokens, runtime.gateway
         self.deliveries = runtime.deliveries
@@ -304,23 +307,27 @@ def test_each_project_wakes_its_contractor_for_its_own_contract(world: LadderWor
     assert world.status(draft) == "absent"
 
 
-def test_after_a_restart_the_hub_wakes_no_contractor_on_what_it_forgot(
-    world: LadderWorld,
-) -> None:
-    """The ladder lives in the hub's memory. A restart forgets the task of a base prepared
-    before it: nothing is woken on it, even once its contract is ready. The next preparation
-    of the base starts the ladder again."""
+def test_a_restart_of_the_hub_keeps_each_task_where_its_ladder_was(world: LadderWorld) -> None:
+    """T12 (I10): the ladder is kept in the hub's database. A task held before a restart is
+    still held after it, until the contract is ready; a task woken before a restart goes on to
+    the next step of its ladder, not back to the wake."""
     project = world.project_a
     the_need(world, project)
     base_prepared(world, project)
     world.restart_hub()
     owner_works(world, project, rounds=4)
+    assert world.story(project) == [NO_TEST]  # still held, and nothing woken
+    assert world.status(project) == "absent"
     world.operator_tool(
         "contract.approve", project_id=project, change_id=owner_writes_the_stories(world, project)
     )
-    world.beat(INACTIVITY * 4)
-    assert world.story(project) == [NO_TEST]  # said before the restart; nothing since
-    assert world.status(project) == "absent"
-    base_prepared(world, project)
     world.beat(INACTIVITY)
-    assert world.story(project) == [NO_TEST, "wake"]
+    woken = [NO_TEST, DECISION, "release", "wake"]
+    assert world.story(project) == woken
+    world.docker.finish(turn_name(project, Side.CONTRACTOR))  # the turn ends with no delivery
+    world.restart_hub()
+    world.beat(INACTIVITY - 1)
+    assert world.story(project) == woken
+    world.beat(1)
+    assert world.story(project) == [*woken, "restart"]
+    assert world.turns(project) == ["contractor", "contractor"]

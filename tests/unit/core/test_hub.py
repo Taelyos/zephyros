@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
@@ -19,7 +20,9 @@ from hypothesis import strategies as st
 from tests.unit.core.contract_fixtures import note, put, requirement, story, wire
 from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
 from zephyros.core.audit import Action, Outcome, Reason
+from zephyros.core.contract import PendingChange
 from zephyros.core.hub import NOTIFIED_EVENTS, TOOL_SPECS
+from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.rights import PERMISSIONS
 from zephyros.core.tokens import Endpoint
 
@@ -806,6 +809,46 @@ def test_the_log_says_why_the_contractors_task_waits_and_when_it_goes_on(env: En
         operations=[wire(put(requirement(4)))],
     ).ok
     assert delivery_task_log(env, env.project_a)[2:] == [released]
+
+
+def test_an_approval_while_the_base_is_announced_is_not_lost(env: Env) -> None:
+    """The delivery loop's thread reads the contract, then creates the Contractor's task; an
+    approval on a listener's thread may land between the two. Both run under the continuity's
+    lock: the approval waits, then finds the task and releases it (T12)."""
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    read_pending = env.contracts.pending
+    approvals: list[threading.Thread] = []
+
+    def pending_then_an_approval(principal: Principal, project_id: str) -> list[PendingChange]:
+        found = read_pending(principal, project_id)
+        if not approvals:  # once: the approval of the change just read as pending
+            approval = threading.Thread(
+                target=lambda: env.call(
+                    "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+                )
+            )
+            approvals.append(approval)
+            approval.start()
+            approval.join(0.5)  # done by now, unless the lock holds it back
+        return found
+
+    env.contracts.pending = pending_then_an_approval  # type: ignore[method-assign]  # reason: the window between the read and the task
+    base_prepared(env, env.project_a)
+    approvals[0].join()
+    assert env.contracts.read(OPERATOR, env.project_a).number == 2  # the change was approved
+    assert contractor_steps(env, after=900) == ["wake"]
+
+
+def test_a_hub_that_starts_again_acts_on_a_change_it_had_no_time_to_act_upon(env: Env) -> None:
+    """The hub wrote a version, then stopped before it released the task the version made
+    ready. At its next start the tasks it kept follow the contract as it is (T12)."""
+    base_prepared(env, env.project_a)
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    env.contracts.approve(OPERATOR, env.project_a, change_id)  # written; nothing acted upon
+    assert contractor_steps(env, after=86_400) == []
+    env.hub.check_tasks()
+    assert delivery_task_log(env, env.project_a)[-1]["step"] == "release"
+    assert contractor_steps(env, after=900) == ["wake"]
 
 
 def test_each_project_waits_for_its_own_contract(env: Env) -> None:

@@ -34,6 +34,7 @@ from zephyros.adapters.http.operator import build_operator_app
 from zephyros.adapters.http.server import HubServer, build_server, serve_all, stop_all
 from zephyros.adapters.providers.openai_compatible import FileCredential, OpenAiCompatibleProvider
 from zephyros.adapters.sandbox_runner import SandboxRunner
+from zephyros.adapters.sqlite.continuity_store import SqliteContinuityStore
 from zephyros.adapters.sqlite.contract_store import SqliteContractStore
 from zephyros.adapters.sqlite.database import Database
 from zephyros.adapters.sqlite.delivery_store import SqliteDeliveryStore
@@ -100,7 +101,9 @@ def prepare_tokens(config: Config, tokens: TokenService, hub_probe: Hub) -> None
         ensure_token_file(path, None if working else issuer().secret, working)
 
 
-InstanceFactory = Callable[[TokenService, AuditLog, Clock, Notifier], InstanceControl]
+InstanceFactory = Callable[
+    [TokenService, AuditLog, Clock, Notifier, Continuity | None], InstanceControl
+]
 """Builds the instance control from services the hub creates, which it needs."""
 
 
@@ -113,6 +116,7 @@ class HubRuntime:
     instances: InstanceControl
     notifier: Notifier
     deliveries: DeliveryService | None = None
+    continuity: Continuity | None = None
 
 
 def build_forge(config: Config) -> tuple[Forge | None, CredentialSource | None]:
@@ -225,7 +229,7 @@ def build_hub(
     model: str = "zephyros-default",
     credentials: CredentialSource | None = None,
     delivery: DeliverySetup | None = None,
-    continuity: Continuity | None = None,
+    continuity: ContinuityTiming | None = None,
     notify: Send | None = None,
     rejections_alert: int | None = None,
     refusals_per_minute: int | None = None,
@@ -242,11 +246,15 @@ def build_hub(
     contracts = ContractService(SqliteContractStore(database), clock)
     projects = ProjectService(SqliteProjectStore(database), clock)
     notifier = Notifier(audit, notify)
+    # The ladder of each task is kept in the database: a restart takes it back (T12).
+    ladders = (
+        Continuity(continuity, SqliteContinuityStore(database)) if continuity is not None else None
+    )
     if instances is not None:
         control = instances
     else:
         assert instance_factory is not None  # noqa: S101  # reason: checked at the top
-        control = instance_factory(tokens, audit, clock, notifier)
+        control = instance_factory(tokens, audit, clock, notifier, ladders)
     deliveries = None
     hub_box: list[Hub] = []
 
@@ -281,20 +289,21 @@ def build_hub(
         projects=projects,
         instances=control,
         deliveries=deliveries,
-        continuity=continuity,
+        continuity=ladders,
         notifier=notifier,
         clock=clock,
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
     )
     hub_box.append(hub)
+    hub.check_tasks()
     gateway = GatewayService(
         audit=audit,
         provider=provider or ObedientStubProvider(),
         model=model,
         credentials=credentials,
     )
-    return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries)
+    return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries, ladders)
 
 
 async def run(
@@ -309,13 +318,6 @@ async def run(
     data_dir.mkdir(parents=True, exist_ok=True)
     database = Database(data_dir / "hub.db")
     provider, credentials = build_provider(config)
-    continuity = Continuity(
-        ContinuityTiming(
-            inactivity_seconds=config.continuity.inactivity_seconds,
-            restarts=config.continuity.restarts,
-            unblock_seconds=config.continuity.unblock_seconds,
-        )
-    )
     notify = build_notifier(config)
     broker: FilterClient | None = None
     factory: InstanceFactory | None = None
@@ -324,7 +326,11 @@ async def run(
         filter_client = broker
 
         def factory(
-            tokens: TokenService, audit: AuditLog, clock: Clock, notifier: Notifier
+            tokens: TokenService,
+            audit: AuditLog,
+            clock: Clock,
+            notifier: Notifier,
+            continuity: Continuity | None,
         ) -> InstanceControl:
             return InstanceManager(
                 filter_client,
@@ -366,7 +372,11 @@ async def run(
         provider=provider,
         model=config.gateway.model,
         credentials=credentials,
-        continuity=continuity,
+        continuity=ContinuityTiming(
+            inactivity_seconds=config.continuity.inactivity_seconds,
+            restarts=config.continuity.restarts,
+            unblock_seconds=config.continuity.unblock_seconds,
+        ),
         notify=notify,
         rejections_alert=config.continuity.rejections,
         refusals_per_minute=config.limits.refusals_per_minute,

@@ -45,11 +45,10 @@ external guard had to stop such turns from then on.
   Owner side that proposes more often than `continuity.inactivity_seconds` (a model in a loop,
   or a hostile instance) keeps both ladders silent. A later ticket on the decision task covers
   this.
-- Negative: the delivery loop's thread reads the contract, then creates the task. An approval
-  between the two releases a task that does not exist yet, which stays held until the next
-  change of the contract. The window is a few milliseconds; a lock is planned (T12).
-- Negative: the ladder still lives in the hub's memory only. After a restart of the hub, the
-  Contractor's task begins again with the next preparation of its base.
+- The tasks, their reason to be held and the step of their ladder are kept in the hub's
+  database, and the hub reads the contract and changes a task under one lock (T12). A restart
+  of the hub keeps a held task held and a ladder on its step; an approval that lands while the
+  delivery loop's thread creates the task waits for it, then releases it.
 - Negative: the Owner side's decision task still ends with any decision of the project. If
   another change that could still be approved remains, the Contractor's task stays held and no
   ladder runs until that change is decided (`contract.pending` lists it).
