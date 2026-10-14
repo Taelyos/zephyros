@@ -13,6 +13,7 @@ from tests.unit.core.hub_fixtures import Env, make_env, seed_contract
 from zephyros import __version__
 from zephyros.adapters.http.agent import METADATA_PROBES, build_agent_app
 from zephyros.core.audit import Action, Reason
+from zephyros.core.errors import remedy
 from zephyros.core.hub import TOOL_SPECS
 
 MODEL = "zephyros-default"
@@ -106,6 +107,27 @@ def test_a_refused_tool_call_is_an_error_result_and_an_unknown_tool_a_protocol_e
     unknown = call(http, "log_delete", {})
     assert unknown["error"]["code"] == -32602
     assert env.last(env.project_a).action is Action.UNKNOWN
+
+
+def test_a_refused_tool_call_carries_its_code_cause_and_documented_action(env: Env) -> None:
+    """EXG-51 through MCP, end to end: the three items reach the instance, as on the operator
+    channel."""
+    http = client_for(env, "contractor_a")
+    refused = call(
+        http,
+        "contract_apply_reserved",
+        {"project_id": env.project_a, "summary": "x", "operations": []},
+    )["result"]
+    assert refused["isError"] is True
+    body = json.loads(refused["content"][0]["text"])
+    assert body["reason"] == Reason.FORBIDDEN.value
+    assert body["message"]
+    assert body["action"] == remedy(Reason.FORBIDDEN)
+    missing = call(
+        http, "delivery_status", {"project_id": env.project_a, "delivery_id": "d999"}
+    )["result"]
+    body = json.loads(missing["content"][0]["text"])
+    assert (body["reason"], body["action"]) == ("not_found", remedy(Reason.NOT_FOUND))
 
 
 def test_a_contract_can_be_read_through_mcp_and_nothing_else_of_it(env: Env) -> None:
