@@ -8,6 +8,7 @@ tests/runtime/test_sandbox_runner_conforms.py.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import marshal
 import os
@@ -113,6 +114,100 @@ def test_an_asked_file_replaced_by_a_link_after_the_start_is_refused(
             barrier.find_spec("test_owner")
     finally:
         sys.path.remove(str(work))
+
+
+def test_a_real_file_of_the_tree_listed_outside_it_is_refused(
+    kit: ModuleType, tmp_path: Path
+) -> None:
+    """The other way round from a link into the tree: a module found through a directory outside
+    /work, whose real file is in /work, is a delivered module. Judged by where it is listed alone,
+    it would pass."""
+    work = _delivery_tree(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "mirror.py").symlink_to(work / "payload.py")
+    barrier = _barrier(kit, work, allowed={work / "test_owner.py"})
+    sys.path.insert(0, str(outside))
+    try:
+        with pytest.raises(ImportError, match="black box"):
+            barrier.find_spec("mirror")
+    finally:
+        sys.path.remove(str(outside))
+
+
+def _held_to_the_manifest(kit: ModuleType, work: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The kit as the run begins: the test asked for, and the digest the filter measured."""
+    data = (work / "test_owner.py").read_bytes()
+    monkeypatch.setattr(kit, "WORK", str(work))
+    monkeypatch.setattr(kit, "ASKED", ["test_owner.py::test_owner", "missing.py::test_gone"])
+    monkeypatch.setattr(kit, "DIGESTS", {"test_owner.py": hashlib.sha256(data).hexdigest()})
+    monkeypatch.setattr(kit, "PINNED", {})
+
+
+def test_the_asked_files_are_read_once_and_held_to_the_manifest(
+    kit: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = _delivery_tree(tmp_path)
+    _held_to_the_manifest(kit, work, monkeypatch)
+    kit._pin_asked_files()
+    held = {str(work / "test_owner.py"): (work / "test_owner.py").read_bytes()}
+    assert held == kit.PINNED
+
+
+def test_an_asked_file_that_is_not_the_one_the_hub_sent_stops_the_run(
+    kit: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = _delivery_tree(tmp_path)
+    _held_to_the_manifest(kit, work, monkeypatch)
+    (work / "test_owner.py").write_text("def test_owner():\n    pass\n", encoding="utf-8")
+    with pytest.raises(pytest.UsageError, match="not the one the hub sent"):
+        kit._pin_asked_files()
+
+
+def test_an_asked_file_the_manifest_has_no_digest_for_stops_the_run(
+    kit: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filter that does not measure the files is not one this kit can be held to: fail closed."""
+    work = _delivery_tree(tmp_path)
+    _held_to_the_manifest(kit, work, monkeypatch)
+    monkeypatch.setattr(kit, "DIGESTS", {})
+    with pytest.raises(pytest.UsageError, match="not the one the hub sent"):
+        kit._pin_asked_files()
+
+
+def test_an_asked_file_is_compiled_from_the_bytes_held_when_the_run_began(
+    kit: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file is rewritten on disk after the kit read it — by a subprocess of a test that ran
+    before it was imported. What pytest compiles for it is what the kit read."""
+    from _pytest.assertion import rewrite
+
+    monkeypatch.setattr(rewrite, "_rewrite_test", rewrite._rewrite_test)  # restored afterwards
+    work = _delivery_tree(tmp_path)
+    _held_to_the_manifest(kit, work, monkeypatch)
+    kit._pin_asked_files()
+    kit._install_pinned_sources()
+    (work / "test_owner.py").write_text("RAN = 'the rewritten file'\n", encoding="utf-8")
+    other = work / "other.py"
+    other.write_text("RAN = 'a file that was not pinned'\n", encoding="utf-8")
+    compile_for_pytest: Any = rewrite._rewrite_test  # without a configuration, as pytest allows
+    pinned: dict[str, Any] = {}
+    exec(compile_for_pytest(work / "test_owner.py", None)[1], pinned)  # noqa: S102  # reason: the code under test, compiled from a fixture
+    assert "RAN" not in pinned
+    assert callable(pinned["test_owner"])
+    untouched: dict[str, Any] = {}
+    exec(compile_for_pytest(other, None)[1], untouched)  # noqa: S102  # reason: same
+    assert untouched["RAN"] == "a file that was not pinned"
+
+
+def test_the_kit_refuses_to_run_with_a_pytest_it_cannot_hold_to_the_files_it_read(
+    kit: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from _pytest.assertion import rewrite
+
+    monkeypatch.delattr(rewrite, "_rewrite_test")
+    with pytest.raises(pytest.UsageError, match="this pytest differs"):
+        kit._install_pinned_sources()
 
 
 def test_a_module_outside_the_delivery_tree_is_untouched(kit: ModuleType, tmp_path: Path) -> None:

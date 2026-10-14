@@ -25,8 +25,10 @@ So the real defence is to keep every line of delivered code out of this process 
    import it fails to load and is reported as an error, never a pass. The run also ignores the
    project's own configuration and conftests (`-c /dev/null`, `--noconftest`), keeps the
    working directory off `sys.path` (`python -P`), so a delivered file cannot shadow this plugin,
-   and never reads a bytecode cache the delivery shipped, so the source of an asked test file is
-   what runs and not a precompiled stand-in.
+   never reads a bytecode cache the delivery shipped, and imports the asked test files from the
+   bytes it read when the run began, held to the digests the filter put in the manifest: the
+   source of an asked test file is what the hub sent, not a precompiled stand-in nor a file
+   rewritten since.
 2. **The judge is not debuggable.** `prctl(PR_SET_DUMPABLE, 0)` makes this process's memory
    unreadable to the unprivileged subprocesses a black-box test spawns, so a child cannot recover
    the nonce by attaching to its parent, whatever `kernel.yama.ptrace_scope` is on the host.
@@ -47,6 +49,7 @@ could forge. Keeping delivered files out of that set is the hub's job, not the k
 
 from __future__ import annotations
 
+import ast
 import ctypes
 import hashlib
 import hmac
@@ -54,6 +57,7 @@ import json
 import os
 import secrets
 import sys
+import types
 from collections.abc import Mapping
 from importlib.machinery import PathFinder
 from pathlib import Path
@@ -76,15 +80,33 @@ REAL_OUT = os.fdopen(os.dup(1), "w", buffering=1)
 _NONCE = secrets.token_hex(16)
 
 
-def _asked() -> list[str]:
+def _manifest() -> dict[str, object]:
     try:
-        tests = json.loads(REQUEST.read_text(encoding="utf-8"))["tests"]
-    except (OSError, ValueError, KeyError, TypeError):
+        found = json.loads(REQUEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def _asked() -> list[str]:
+    tests = _manifest().get("tests")
+    if not isinstance(tests, list):
         return []
     return [t for t in tests if isinstance(t, str) and "::" in t]
 
 
+def _digests() -> dict[str, str]:
+    """The SHA-256 of each file a test is asked from, as the filter measured it on the archive."""
+    found = _manifest().get("sha256")
+    if not isinstance(found, dict):
+        return {}
+    return {k: v for k, v in found.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 ASKED = _asked()
+DIGESTS = _digests()
+PINNED: dict[str, bytes] = {}
+"""The asked test files as they were when the run began, by path: what is imported for them."""
 OUTCOMES: dict[str, str] = dict.fromkeys(ASKED, "not_run")
 DESELECTED: list[str] = []
 BROKEN_FILES: set[str] = set()
@@ -159,6 +181,55 @@ def _install_barrier() -> None:
     sys.meta_path.insert(0, _WorkImportBarrier(_allowed_paths(), os.path.realpath(WORK)))
 
 
+def _pin_asked_files() -> None:
+    """Read each asked test file once, now, and hold it to the digest the filter measured on the
+    archive. The files are the hub's, but the volume they sit on is as writable by delivered code
+    as the rest of the tree: a test file that runs the delivery while it is imported can have the
+    delivery rewrite another asked file before that one is imported, and its code would then run
+    in the judge. What is imported for an asked file is these bytes (`_install_pinned_sources`),
+    whatever the file says by then."""
+    PINNED.clear()
+    for listed in _allowed_paths():
+        data = Path(listed).read_bytes()
+        if DIGESTS.get(os.path.relpath(listed, WORK)) != hashlib.sha256(data).hexdigest():
+            relative = os.path.relpath(listed, WORK)
+            raise pytest.UsageError(
+                f"the asked test file {relative} is not the one the hub sent (ATK-22)"
+            )
+        PINNED[listed] = data
+
+
+def _install_pinned_sources() -> None:
+    """Have pytest's assertion rewriting compile an asked file from the bytes `_pin_asked_files`
+    read, instead of reading the file again. It is the only place pytest reads the source of a
+    test module it imports (the bytecode caches are never read, `_ignore_bytecode_caches`). A
+    pytest that does not have the function this replaces is one the kit cannot hold to what it
+    read: it refuses to run."""
+    from _pytest.assertion import rewrite
+
+    original = getattr(rewrite, "_rewrite_test", None)
+    rewrite_asserts = getattr(rewrite, "rewrite_asserts", None)
+    if original is None or rewrite_asserts is None:
+        raise pytest.UsageError(
+            "the tests kit cannot hold the asked test files to what it read: this pytest differs"
+        )
+
+    def pinned(fn: Path, config: pytest.Config | None) -> tuple[os.stat_result, types.CodeType]:
+        source = PINNED.get(os.path.abspath(fn))
+        if source is None:
+            return original(fn, config)  # type: ignore[no-any-return]  # reason: pytest's own
+        name = str(fn)
+        tree = ast.parse(source, filename=name)
+        rewrite_asserts(tree, source, name, config)
+        try:
+            stat = os.stat(fn)
+        except OSError:
+            stat = os.stat(WORK)
+        return stat, compile(tree, name, "exec", dont_inherit=True)
+
+    rewrite._rewrite_test = pinned  # type: ignore[assignment]  # reason: the point of the kit
+
+
 def _ignore_bytecode_caches() -> None:
     """Look for bytecode caches where there are none, instead of next to the sources. The judge
     compiles the asked test files, and would run a cache the delivery shipped next to one in
@@ -175,8 +246,9 @@ def pytest_load_initial_conftests(
 ) -> None:
     # The first hook, before pytest collects anything: harden the process while no delivered code
     # can yet run, then print the run line. Non-dumpable first (so no child can ever read the
-    # nonce), then the bytecode caches ignored (so the source of an asked file is what runs),
-    # then the import barrier (so no delivered module enters the judge), then the run line
+    # nonce), then the bytecode caches ignored and the asked files read (so the source of an asked
+    # file is what it was when the run began, and is what runs), then the import barrier (so no
+    # delivered module enters the judge), then the run line
     # (before any file of the delivery could run). The rewritten arguments are the ones pytest
     # finally parses, so the options the kit relies on live here, not on the command line: the
     # project's own configuration stays ignored (-c /dev/null), no conftest of the delivery is
@@ -187,6 +259,8 @@ def pytest_load_initial_conftests(
         # so every test reads not_run and the run is refused.
         raise pytest.UsageError("the tests kit could not make its process non-dumpable (ATK-22)")
     _ignore_bytecode_caches()
+    _pin_asked_files()
+    _install_pinned_sources()
     _install_barrier()
     print(RUN_MARK + _NONCE, file=REAL_OUT, flush=True)
     files = [f for f in sorted({t.split("::", 1)[0] for t in ASKED}) if os.path.isfile(f)]

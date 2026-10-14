@@ -93,7 +93,25 @@ def test_a_good_archive_gives_the_manifest_and_a_clean_tar() -> None:
         10000,
         0,
     )
-    assert stored == {"tests": list(TESTS)}
+    digest = hashlib.sha256(b"def test_a():\n    assert True\n").hexdigest()
+    assert stored == {"tests": list(TESTS), "sha256": {"test_a.py": digest}}
+
+
+def test_the_kit_manifest_carries_the_digest_of_each_asked_file_only() -> None:
+    """The kit holds the files it runs to what the hub sent (ADR 0017): the filter measures the
+    digest of each file a test is asked from, on the bytes it received. A file no test is asked
+    from, and an asked file the archive does not hold, have none."""
+    raw = make_tar(
+        [
+            (MANIFEST, manifest_bytes()),
+            ("test_a.py", b"A\n"),
+            ("helper.py", b"not asked\n"),
+        ]
+    )
+    _, clean = read_archive(raw)
+    with tarfile.open(fileobj=io.BytesIO(clean), mode="r:") as archive:
+        stored = json.loads(archive.extractfile(MANIFEST).read())  # type: ignore[union-attr]  # reason: a regular member
+    assert stored["sha256"] == {"test_a.py": hashlib.sha256(b"A\n").hexdigest()}
 
 
 def test_the_manifest_is_found_wherever_it_sits_and_directories_are_skipped() -> None:

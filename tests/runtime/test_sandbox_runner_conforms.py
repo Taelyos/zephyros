@@ -19,11 +19,8 @@ from __future__ import annotations
 import asyncio
 import atexit
 import functools
-import importlib.util
-import marshal
 import os
 import shutil
-import sys
 import tempfile
 import threading
 import time
@@ -33,7 +30,7 @@ from typing import ClassVar
 
 import pytest
 
-from tests.runtime.rig import ROOT, SOCKET, build
+from tests.runtime.rig import ROOT, SOCKET, build, docker
 from zephyros.adapters.docker.api import DockerApi
 from zephyros.adapters.filter.client import FilterClient
 from zephyros.adapters.filter.journal import MemoryJournal
@@ -281,30 +278,75 @@ def test_a_link_made_during_the_run_does_not_get_a_delivered_module_in() -> None
     assert "black box" in result.log
 
 
+def forged_cache(source: bytes, forged: str) -> tuple[str, bytes]:
+    """The name and the content of a bytecode cache of `forged` that the pytest of the kit image
+    takes for the cache of `source` at /work/test_owner.py: made by the Python and the pytest of
+    the image itself, so that it cannot be refused for a version it was not made with."""
+    script = (
+        "import importlib.util, marshal, sys, pytest\n"
+        f"source, forged = {source!r}, {forged!r}\n"
+        "code = compile(forged, '/work/test_owner.py', 'exec')\n"
+        "header = importlib.util.MAGIC_NUMBER + bytes(8) + len(source).to_bytes(4, 'little')\n"
+        "print(f'{sys.implementation.cache_tag}-pytest-{pytest.__version__}')\n"
+        "print((header + marshal.dumps(code)).hex())\n"
+    )
+    done = docker("run", "--rm", "--entrypoint", "python", kit_image(), "-c", script)
+    tag, content = done.stdout.split()
+    return f"__pycache__/test_owner.{tag}.pyc", bytes.fromhex(content)
+
+
 def test_a_bytecode_cache_shipped_with_the_delivery_does_not_replace_the_source() -> None:
     """ATK-22: the judge compiles the asked test files, and would run a cache the delivery put
     next to one in place of its source when the time and size recorded in it match: the tree is
     extracted with a fixed time, and the size of a file is a guess away. The kit never reads a
     cache from the tree (it points the import machinery at a directory that does not exist),
-    so the source is what runs. (The cache is named after the Python and the pytest of the
-    host, the same as the image's.)"""
+    so the source is what runs. The cache is made inside the image, with its Python and pytest."""
     source = b"def test_owner():\n    assert False\n"
     forged = FORGERS["rewrites_the_kit_state"] + "\n\ndef test_owner():\n    assert False\n"
-    code = compile(forged, "/work/test_owner.py", "exec")
-    header = importlib.util.MAGIC_NUMBER + bytes(4) + bytes(4) + len(source).to_bytes(4, "little")
-    tag = f"{sys.implementation.cache_tag}-pytest-{pytest.__version__}"
+    runner()  # builds the image
+    name, content = forged_cache(source, forged)
     request = VerificationRequest(
         "p_rtcache",
         "tests",
-        {
-            "test_owner.py": source,
-            f"__pycache__/test_owner.{tag}.pyc": header + marshal.dumps(code),
-        },
+        {"test_owner.py": source, name: content},
         ("test_owner.py::test_owner",),
         timeout_seconds=60,
     )
     result = runner().run(request)
     assert result.outcomes["test_owner.py::test_owner"] is Outcome.FAILED
+
+
+def test_an_asked_file_rewritten_during_the_run_is_the_one_that_was_asked_for_that_runs() -> None:
+    """ATK-22: an Owner's test file that runs the delivery as it is imported (to build its
+    parameters, say) gives the delivery time to rewrite another asked file that has not been
+    imported yet; imported as it then is, the delivery's code would run in the judge. The kit
+    keeps the asked files as they were when the run began, and imports those: the second test
+    runs as the Owner wrote it (and fails), whatever the tree says by then."""
+    forged = FORGERS["rewrites_the_kit_state"] + "\n\ndef test_second():\n    pass\n"
+    rewriter = (
+        "import pathlib\n\n"
+        f"pathlib.Path('/work/test_b_second.py').write_text({forged!r}, encoding='utf-8')\n"
+    )
+    first = (
+        "import subprocess, sys\n\n"
+        "subprocess.run([sys.executable, 'rewriter.py'], check=True)\n\n\n"
+        "def test_first():\n"
+        "    pass\n"
+    )
+    request = VerificationRequest(
+        "p_rtrewrite",
+        "tests",
+        {
+            "test_a_first.py": first.encode(),
+            "test_b_second.py": b"def test_second():\n    assert False\n",
+            "rewriter.py": rewriter.encode(),
+        },
+        ("test_a_first.py::test_first", "test_b_second.py::test_second"),
+        timeout_seconds=60,
+    )
+    result = runner().run(request)
+    assert result.outcomes["test_a_first.py::test_first"] is Outcome.PASSED
+    assert result.outcomes["test_b_second.py::test_second"] is Outcome.FAILED
 
 
 def test_a_conftest_and_a_pytest_ini_of_the_delivery_are_never_loaded() -> None:

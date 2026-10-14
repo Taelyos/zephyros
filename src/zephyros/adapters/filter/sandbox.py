@@ -82,6 +82,7 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
     except tarfile.TarError:
         raise BrokerError("bad_request", "the body is not a tar archive") from None
     manifest: SandboxManifest | None = None
+    digests: dict[str, str] = {}
     clean = io.BytesIO()
     with source, tarfile.open(fileobj=clean, mode="w:") as target:
         members = source.getmembers()
@@ -104,6 +105,7 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
                 manifest = parse_sandbox_manifest(data)
                 continue
             seen.add(name)
+            digests[name] = hashlib.sha256(data).hexdigest()
             info = tarfile.TarInfo(name)
             info.size = len(data)
             info.mode = 0o644
@@ -113,7 +115,12 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
         if manifest is None:
             raise BrokerError("bad_request", f"the archive has no {MANIFEST}")
         info = tarfile.TarInfo(MANIFEST)
-        body = json.dumps({"tests": list(manifest.tests)}).encode()
+        # The kit's own manifest: the tests asked for, and the digest of each file that holds
+        # one, measured here on what was received, so that the kit can hold the files it runs to
+        # what the hub sent (ADR 0017).
+        asked_files = {test.split("::", 1)[0] for test in manifest.tests}
+        pinned = {name: digests[name] for name in sorted(asked_files) if name in digests}
+        body = json.dumps({"tests": list(manifest.tests), "sha256": pinned}).encode()
         info.size, info.mode, info.uid, info.gid = len(body), 0o444, _UID, _GID
         target.addfile(info, io.BytesIO(body))
     return manifest, clean.getvalue()
