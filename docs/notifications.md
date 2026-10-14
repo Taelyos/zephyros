@@ -76,8 +76,10 @@ signs every delivery and never leaves the hub (EXG-49 masks it in logs and repor
 - `X-Zephyros-Timestamp` — the moment of the signature, in seconds since the epoch.
 - `X-Zephyros-Signature` — `HMAC-SHA256(secret, "<delivery>.<timestamp>.<body>")`, hex.
 
-The body is JSON: `{"event": "...", "schema_version": "...", ...fields}`. `schema_version` is
-the version of the event payloads, on every notification. The events of the delivery loop also
+The body is JSON: `{"event": "...", "schema_version": "2.0.0", ...fields}`. `schema_version` is
+the version of the event payloads, on every notification. Version 2.0.0 (Zephyros 0.2.0) is
+incompatible with 1.1.0: `decision` can be `REFUSED` or `ERROR`, and `side` can be `main-agent`.
+A receiver should accept values it does not know, or check `schema_version` first. The events of the delivery loop also
 carry `simulation`: `true` when the hub runs with the simulated model provider (EXG-46). A
 receiver verifies the signature, refuses a timestamp older than five minutes and refuses a
 delivery identifier it has already seen; [docs/webhooks.md](webhooks.md) shows the reference

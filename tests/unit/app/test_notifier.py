@@ -35,6 +35,7 @@ from zephyros.core.principals import OPERATOR
 from zephyros.core.projects import ProjectService
 from zephyros.core.webhooks import (
     DELIVERY_HEADER,
+    EVENTS_SCHEMA_VERSION,
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
     verify,
@@ -304,7 +305,7 @@ def test_a_review_reaches_the_main_agent_signed_and_a_slow_receiver_holds_up_not
         assert (event["project_id"], event["delivery_id"]) == (project, delivery)
         assert (event["verdict"], event["decision"]) == ("reject", "PASS")
         assert event["simulation"] is False
-        assert event["schema_version"]
+        assert event["schema_version"] == EVENTS_SCHEMA_VERSION
 
         receiver.release.set()
 

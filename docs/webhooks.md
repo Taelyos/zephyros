@@ -39,7 +39,7 @@ secret = ""  # 16+ characters when url is set; empty when url is
 Set both keys, or neither: with neither, notifications are off. The hub refuses to start with a
 `url` and no `secret` of at least 16 characters, or with a `secret` and no `url`. The secret
 travels out of band, never through the hub's answers or the log. The events that fire a delivery, and their payloads, are listed in
-[notifications](notifications.md): a delivery decided (refused and in error included), a loop of
+[notifications](notifications.md), with the version of their schema (2.0.0): a delivery decided (refused and in error included), a loop of
 failed deliveries, a verdict of the Owner side, and the alerts of the continuity ladder.
 
 The hub queues each notification and sends the queue in order from a thread of its own: a slow or
