@@ -123,11 +123,9 @@ def test_a_refused_tool_call_carries_its_code_cause_and_documented_action(env: E
     assert body["reason"] == Reason.FORBIDDEN.value
     assert body["message"]
     assert body["action"] == remedy(Reason.FORBIDDEN)
-    missing = call(
-        http, "delivery_status", {"project_id": env.project_a, "delivery_id": "d999"}
-    )["result"]
-    body = json.loads(missing["content"][0]["text"])
-    assert (body["reason"], body["action"]) == ("not_found", remedy(Reason.NOT_FOUND))
+    invalid = call(http, "delivery_status", {"project_id": env.project_a, "colour": "red"})
+    body = json.loads(invalid["result"]["content"][0]["text"])
+    assert (body["reason"], body["action"]) == ("invalid_request", remedy(Reason.INVALID_REQUEST))
 
 
 def test_a_contract_can_be_read_through_mcp_and_nothing_else_of_it(env: Env) -> None:

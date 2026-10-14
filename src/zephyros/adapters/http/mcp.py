@@ -40,7 +40,12 @@ def _tool_result(response: ToolResponse) -> dict[str, object]:
         return {"content": [{"type": "text", "text": text}], "isError": False}
     failure = response.failure
     assert failure is not None  # noqa: S101  # reason: a failed response carries its failure
-    body = {"error": failure.kind, "reason": failure.reason.value, "message": failure.message}
+    body = {
+        "error": failure.kind,
+        "reason": failure.reason.value,
+        "message": failure.message,
+        "action": failure.action,
+    }
     return {
         "content": [{"type": "text", "text": json.dumps(body, sort_keys=True)}],
         "isError": True,
