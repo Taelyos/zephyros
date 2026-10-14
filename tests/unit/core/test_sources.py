@@ -1,4 +1,4 @@
-"""The accepted repository sources (EXG-44): the annex, and only the annex."""
+"""The accepted repository sources (EXG-44): GitHub https URLs, and nothing else."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ REFUSED = [
 
 
 @pytest.mark.parametrize("url", ACCEPTED)
-def test_the_sources_of_the_annex_are_accepted(url: str) -> None:
+def test_the_accepted_sources_are_accepted(url: str) -> None:
     assert accepted(url)
 
 

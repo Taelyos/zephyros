@@ -2,7 +2,7 @@
 
 The hub tells the main agent about the transitions it must not miss. It does so over the
 signed webhooks of EXG-43: one HTTP delivery per event, signed, fresh and single-use. When
-`[notifications]` is empty, nothing is sent — the events are still recorded in the log.
+`[notifications]` sets neither key, nothing is sent — the events are still recorded in the log.
 
 The hub never waits for the receiver. An event is queued where it happens, and a thread of the
 hub that does nothing else sends the queue in order. A receiver that takes its time delays only
@@ -66,8 +66,9 @@ url = "https://main-agent.example.invalid/zephyros"
 secret = "a-shared-secret-of-at-least-16-characters"  # pragma: allowlist secret
 ```
 
-Both keys are set together; either empty turns notifications off. The secret signs every
-delivery and never leaves the hub (EXG-49 masks it in logs and reports).
+Set both keys, or neither: with neither, notifications are off. The hub refuses to start with a
+`url` and no `secret` of at least 16 characters, or with a `secret` and no `url`. The secret
+signs every delivery and never leaves the hub (EXG-49 masks it in logs and reports).
 
 ## What the receiver sees
 
@@ -75,9 +76,12 @@ delivery and never leaves the hub (EXG-49 masks it in logs and reports).
 - `X-Zephyros-Timestamp` — the moment of the signature, in seconds since the epoch.
 - `X-Zephyros-Signature` — `HMAC-SHA256(secret, "<delivery>.<timestamp>.<body>")`, hex.
 
-The body is JSON: `{"event": "...", "schema_version": "...", ...fields}`. `schema_version` is
-the version of the event payloads, on every notification. The events of the delivery loop also
-carry `simulation`: `true` when the hub runs with the simulated model provider (EXG-46). A
+The body is JSON: `{"event": "...", "schema_version": "2.0.0", ...fields}`. `schema_version` is
+the version of the event payloads, on every notification. Version 2.0.0 (Zephyros 0.2.0) is
+incompatible with 1.1.0: `decision` can be `REFUSED` or `ERROR`, and `side` can be `main-agent`.
+A receiver should accept values it does not know, or check `schema_version` first.
+
+The events of the delivery loop also carry `simulation`: `true` when the hub runs with the simulated model provider (EXG-46). A
 receiver verifies the signature, refuses a timestamp older than five minutes and refuses a
 delivery identifier it has already seen; [docs/webhooks.md](webhooks.md) shows the reference
 verifier (`zephyros.core.webhooks`).

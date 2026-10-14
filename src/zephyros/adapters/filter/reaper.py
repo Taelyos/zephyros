@@ -1,4 +1,4 @@
-"""The reaper: a turn must not outlive the hub past its limit (build log, decision 22).
+"""The reaper: a turn must not outlive the hub past its limit, even when the hub is gone.
 
 The hub stops a turn that runs too long (core/lifecycle.py), but the hub itself can be gone:
 nothing then stops a turn it had started. The filter outlives the hub and is the other

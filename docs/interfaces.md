@@ -4,10 +4,11 @@ The hub reaches the agent engine, the model provider, the forge, the delivery ar
 
 ## Stability
 
-All five interfaces are at version 0.x. Until 1.0, a change can break an implementation, and the change is announced in the commit that makes it.
+All five interfaces are at version 0.x. Until 1.0, a change can break an implementation, and the change is announced in the [CHANGELOG](../CHANGELOG.md).
 
-- **AgentEngine** and **ModelProvider** may change after spike Z2-01, which settles how the pinned Hermes Agent takes its configuration and its token, and whether it needs streaming answers. Nothing here assumes the answer.
-- **Forge**, **DeliveryArea** and **VerificationRunner** carry the first slice of the delivery loop (Z3). They will grow with it: more kits, the evidence a kit returns. The validation of repository sources is in: a project source must match annex "Accepted repository sources" (`core/sources.py`).
+- **AgentEngine** (0.2.0) starts a turn with the configuration of the instance image and the first prompt on the command line, as the pinned Hermes Agent takes them. **ModelProvider** answers a call whole, without streaming; the gateway turns a whole answer into a stream for a client that asks for one. Either may change when another engine or provider is supported.
+- **The model of the contract's objects** that the hub's API reads and writes (requirements, constraints, stories, criteria, links, notes, and the contract schema that describes them) and **the events schema** of the notifications are unstable too until 1.0: an incompatible change remains possible in 0.x, and is always announced in the CHANGELOG with the new version of the schema.
+- **Forge**, **DeliveryArea** and **VerificationRunner** carry the delivery loop. They will grow with it: more kits, more evidence from a kit. A project source must be one the hub accepts (`core/sources.py`, EXG-44).
 
 ## Implementing an interface
 

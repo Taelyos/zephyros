@@ -19,10 +19,12 @@ DELIVERY_HEADER = "X-Zephyros-Delivery"
 TIMESTAMP_HEADER = "X-Zephyros-Timestamp"
 
 TOLERANCE_SECONDS = 300
-
-EVENTS_SCHEMA_VERSION = "1.1.0"
-"""The version of the event payloads (annex "Public API"): every notification carries it."""
 """How far the timestamp of a delivery may be from the receiver's clock."""
+
+EVENTS_SCHEMA_VERSION = "2.0.0"
+"""The version of the event payloads, part of the public API: every notification carries it.
+2.0.0: `delivery.decided` can say `REFUSED` or `ERROR`, and an alert of the continuity ladder
+can carry `side: main-agent`; a receiver that checked a closed list of values breaks."""
 
 
 def sign(secret: str | bytes, delivery_id: str, timestamp: int, body: bytes) -> str:

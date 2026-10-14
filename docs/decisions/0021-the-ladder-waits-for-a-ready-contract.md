@@ -1,5 +1,6 @@
 # 0021. The continuity ladder waits until the contract is ready for the Contractor
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-14
 
 ## Context

@@ -1,5 +1,6 @@
 # 0019. An anchor for the log head, outside the store
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-12, revised 2026-10-14
 
 ## Context
@@ -45,7 +46,8 @@ truncation, naming the first record that disagrees.
 - Positive: nothing changes for the callers; the anchor is written by the store.
 - Negative: an attacker with write access to the whole data directory can still forge both the
   log and the anchor. The anchor belongs on another medium (a second host, a read-only mount)
-  when the threat model requires it — the reason this record stays Proposed.
+  when the threat model requires it. Accepted as it is, with this limit stated; an anchor on
+  another medium would be a later decision.
 - Negative: an anchor lost by accident (a backup restored without it) keeps the verification
   failing: the anchor is part of the backup of the data directory. Taking a new anchor from the
   store is an operation of its own, by the operator and recorded, that the hub does not offer

@@ -1,8 +1,8 @@
 name: CI
 
-# Every push and every pull request runs the checks of annex "Continuous integration checks"
-# (CTR-09), so every change to the main branch is covered. The steps live in scripts/check.sh
-# so that the CI and a local run are the same.
+# Every push and every pull request runs the continuous integration checks (CTR-09), so every
+# change to the main branch is covered. The steps live in scripts/check.sh so that the CI and a
+# local run are the same.
 # Actions are pinned by commit hash (CTR-10); the version is in the comment.
 
 on:

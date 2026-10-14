@@ -65,21 +65,21 @@ def test_atk_74_a_hostile_project_name_is_stored_as_text_and_reaches_no_specific
 
 
 @pytest.mark.parametrize("url", HOSTILE_URLS)
-def test_atk_74_a_repository_source_outside_the_annex_is_refused(
+def test_atk_74_a_repository_source_the_hub_does_not_accept_is_refused(
     restarted: World, url: str
 ) -> None:
-    """Z3, EXG-44: the URL is checked against the annex — a source that is not an https URL of
-    a repository hosted on GitHub is refused, logged, and nothing is stored."""
+    """Z3, EXG-44: the URL is checked against the accepted sources — a source that is not an
+    https URL of a repository hosted on GitHub is refused, logged, and nothing is stored."""
     world = restarted
     world.step("ATK-74.url")
     result = world["main"].tool("project_create", {"name": "ok", "repository_url": url})
     assert result.refused
     assert result.error is not None
-    assert "Accepted repository sources" in json.dumps(result.error)
+    assert "repository hosted on GitHub" in json.dumps(result.error)
     world.verify_logs()
 
 
-def test_atk_74_a_source_of_the_annex_is_stored_and_reaches_no_specification(
+def test_atk_74_an_accepted_source_is_stored_and_reaches_no_specification(
     restarted: World,
 ) -> None:
     world = restarted

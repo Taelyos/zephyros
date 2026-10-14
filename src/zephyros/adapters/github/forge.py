@@ -1,6 +1,6 @@
 """A forge on GitHub: repositories, branches and pull requests over its API and git.
 
-The hub opens pull requests on GitHub (annex "Accepted repository sources", version 1: the https
+The hub opens pull requests on GitHub (the accepted repository sources, EXG-44: the https
 URLs of GitHub repositories). The token is read from a file at each call; it never appears in a
 command line, a message, an error or a log record — git receives it through a credential helper
 that reads the file itself, and every message built here is redacted against it.

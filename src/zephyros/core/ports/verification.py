@@ -6,7 +6,7 @@ test with bounded evidence. It renders no decision: the gate does (ADR 0005).
 
 Version 0.x. 0.2.0 adds `VerificationResult.deselected`: the tests the kit found in the asked
 files but did not run because no acceptance criterion named them, so the report can say which
-acceptance tests never ran (audit A2).
+acceptance tests never ran.
 """
 
 from __future__ import annotations

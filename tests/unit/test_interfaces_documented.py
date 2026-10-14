@@ -28,4 +28,4 @@ def test_every_section_lists_its_operations_checks_and_dummy() -> None:
 def test_the_page_warns_that_the_interfaces_are_not_stable_yet() -> None:
     text = PAGE.read_text(encoding="utf-8")
     assert "version 0.x" in text
-    assert "spike Z2-01" in text
+    assert "CHANGELOG" in text

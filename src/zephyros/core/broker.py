@@ -6,7 +6,7 @@ parser is strict. It refuses a kind that is not listed, a field that its kind do
 field that is missing, a value outside its pattern, a body that is not a single JSON object,
 and a key that appears twice.
 
-The kinds are the operations of annex "Permitted container operations", in the form the hub
+The kinds are the container operations the hub may ask for (ADR 0014), in the form the hub
 needs them: create a network, connect the hub to it, create the volumes, start the guard, start
 and stop a turn, inspect and list Zephyros containers, and read their events.
 """

@@ -8,8 +8,8 @@ command and which environment start a turn of it. A description therefore holds 
 widens a container: no image (the image is configured), no user, mount, capability, network,
 limit or file.
 
-Version 0.2: after spike Z2-01, a turn takes its configuration from the image and its first
-prompt on the command line; the files of version 0.1 are gone.
+Version 0.2: a turn takes its configuration from the image and its first prompt on the command
+line, as the pinned Hermes Agent does; the files of version 0.1 are gone.
 """
 
 from __future__ import annotations

@@ -1,6 +1,7 @@
 # 0020. The Owner side sees what it judges, and its verdict is recorded
 
-- Status: Accepted (implemented in C36 to C43); the amendment below is Proposed
+- Status: Accepted (implemented in C36 to C43); the amendment below and decision D16 are Accepted, 2026-10-14
+- The amendment and D16: decided by the project owner on 2026-10-14.
 - Date: 2026-10-13
 
 ## Context
@@ -30,15 +31,16 @@ Two resource limits were also reached: a real Contractor turn peaked at 1 019 Mi
 - Positive: the approver reads what it approves; the evidence report is honest about what tests cannot show; the Owner judges the delivered code and its effect on the client's files, not only a table of green tests; the Owner's verdict joins the evidence trail and the pull request.
 - Negative: new tools and a new staging route widen the Owner's surface. Each is read-only or records data, is scoped to the Owner's own project and is logged; ATK attacks for them join the catalogue. CONCERNS will appear on deliveries that would have passed, until each project records its inspections: this is the intended effect.
 - The schemas move: configuration 1.12.0 (`verification.protected_paths`, new defaults), contract unchanged, events 1.1.0 (`delivery.reviewed`); the forge interface 0.3.0.
-- Attacks ATK-90 to ATK-93 (threat model 0.8, section 5.16) test the new surface: the Contractor never judges its own delivery, a rewritten `CONTRACT.md` changes no decision and is flagged, a P0 constraint without its inspection never passes, an Owner of another project neither reads nor judges.
+- Attacks ATK-90 to ATK-93 (added to the threat model with this decision) test the new surface: the Contractor never judges its own delivery, a rewritten `CONTRACT.md` changes no decision and is flagged, a P0 constraint without its inspection never passes, an Owner of another project neither reads nor judges.
 - `scripts/deploy.sh down` now removes the guards, turns and sandboxes the filter created outside compose (the second run left four guards), and keeps the instances' volumes.
 - To decide later (Z5): whether a `reject` should also forbid opening the pull request, and whether the Contractor may answer a review (change requests between sides).
 
-## Amendment (Proposed, 2026-10-14): never PASS without a test that ran
+## Amendment (Accepted, 2026-10-14): never PASS without an executed test
+
+Decided by the project owner on 2026-10-14.
 
 The decision above lets a recorded inspection verify the object it judges. It leaves open whether
-a delivery that the hub never ran a test on can reach PASS. The default chosen, which the
-program lead confirms or reverses, is that it cannot:
+a delivery that the hub never ran a test on can reach PASS. It cannot:
 
 - **PASS needs evidence that the hub produced itself:** at least one acceptance test of the
   judged objects ran and passed.
@@ -59,4 +61,20 @@ Consequences:
 - Reversible: the rule is one function of the gate (`_vacuous` in `core/gate.py`). Letting
   conforming inspections stand in for a test means returning no reservation when every judged
   object is verified. `tests/unit/core/test_gate.py` names the cases that would change.
+
+## Decision D16 (Accepted, 2026-10-14): what an inspection can and cannot change
+
+Decided by the project owner on 2026-10-14. This records what `core/gate.py` already does.
+
+- **An inspection can turn CONCERNS into PASS.** An object verified by inspection, analysis or
+  demonstration awaits the Owner side's judgment, and the delivery is CONCERNS while it waits.
+  Once the Owner side records an inspection that finds it conforming, the object is verified, and
+  the gate decides again: PASS if the rules are met and nothing else holds it back.
+- **Only when a test ran and passed.** By the amendment above, PASS also needs at least one
+  acceptance test of the judged objects that ran and passed. Conforming inspections alone leave
+  the delivery at CONCERNS.
+- **An inspection never makes up for a failed test.** For an object verified by test and by
+  another method, every acceptance test linked to it must pass first; a test that failed, broke
+  or did not run leaves the object not verified, whatever the inspection found. An inspection
+  that finds an object not conforming leaves it not verified too.
 

@@ -128,7 +128,7 @@ def test_an_unknown_token_is_logged_as_unauthenticated_in_the_hub_stream(env: En
     before = len(env.audit.read("hub"))
     assert (
         env.hub.authenticate(
-            "zph_c_" + "A" * 43, peer_address="192.168.1.5", endpoint=Endpoint.AGENT
+            "zph_c_" + "A" * 43, peer_address="192.168.7.5", endpoint=Endpoint.AGENT
         )
         is None
     )
@@ -425,18 +425,18 @@ def test_a_hostile_project_name_is_plain_text(env: Env, name: str) -> None:
         "https://github.com/Taelyos",
     ],
 )
-def test_a_source_outside_the_annex_is_refused(env: Env, url: str) -> None:
+def test_a_source_the_hub_does_not_accept_is_refused(env: Env, url: str) -> None:
     """EXG-44: only the https URLs of repositories hosted on GitHub, by exact host."""
     before = env.record_count()
     response = env.call("operator", "project.create", name="ok", repository_url=url)
     assert not response.ok
     assert response.failure is not None
     assert response.failure.reason.value == "invalid_request"
-    assert "Accepted repository sources" in response.failure.message
+    assert "repository hosted on GitHub" in response.failure.message
     assert env.record_count() == before + 1
 
 
-def test_a_source_of_the_annex_is_stored_as_written(env: Env) -> None:
+def test_an_accepted_source_is_stored_as_written(env: Env) -> None:
     response = env.call(
         "operator",
         "project.create",

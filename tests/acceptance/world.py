@@ -6,7 +6,7 @@ address of its instance, so a call "from" an instance is a call with that peer a
 network half of the catalog (blocked connections) runs against real containers in the tests
 marked `runtime`.
 
-Oracles (threat model, section 5.0):
+Oracles (ADR 0002: a refusal never rests on a model declining):
 
 * O-REFUSE: the call fails with an authorization or network error;
 * O-STATE: the protected state is bit-identical before and after (`fingerprint`);

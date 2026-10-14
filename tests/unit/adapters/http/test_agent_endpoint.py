@@ -13,6 +13,7 @@ from tests.unit.core.hub_fixtures import Env, make_env, seed_contract
 from zephyros import __version__
 from zephyros.adapters.http.agent import METADATA_PROBES, build_agent_app
 from zephyros.core.audit import Action, Reason
+from zephyros.core.errors import remedy
 from zephyros.core.hub import TOOL_SPECS
 
 MODEL = "zephyros-default"
@@ -108,6 +109,25 @@ def test_a_refused_tool_call_is_an_error_result_and_an_unknown_tool_a_protocol_e
     assert env.last(env.project_a).action is Action.UNKNOWN
 
 
+def test_a_refused_tool_call_carries_its_code_cause_and_documented_action(env: Env) -> None:
+    """EXG-51 through MCP, end to end: the three items reach the instance, as on the operator
+    channel."""
+    http = client_for(env, "contractor_a")
+    refused = call(
+        http,
+        "contract_apply_reserved",
+        {"project_id": env.project_a, "summary": "x", "operations": []},
+    )["result"]
+    assert refused["isError"] is True
+    body = json.loads(refused["content"][0]["text"])
+    assert body["reason"] == Reason.FORBIDDEN.value
+    assert body["message"]
+    assert body["action"] == remedy(Reason.FORBIDDEN)
+    invalid = call(http, "delivery_status", {"project_id": env.project_a, "colour": "red"})
+    body = json.loads(invalid["result"]["content"][0]["text"])
+    assert (body["reason"], body["action"]) == ("invalid_request", remedy(Reason.INVALID_REQUEST))
+
+
 def test_a_contract_can_be_read_through_mcp_and_nothing_else_of_it(env: Env) -> None:
     http = client_for(env, "contractor_a")
     result = call(http, "contract_read")["result"]
@@ -200,7 +220,7 @@ def test_a_token_copied_to_another_context_is_refused_and_logged(env: Env) -> No
     assert record.reason is Reason.WRONG_SOURCE
     assert json.loads(record.parameters)["source"] == env.addresses["contractor_a"]
     # A host on the LAN and an instance of another project fare no better.
-    for address in ("192.168.1.50", env.addresses["owner_b"], env.addresses["contractor_b"]):
+    for address in ("192.168.7.50", env.addresses["owner_b"], env.addresses["contractor_b"]):
         assert rpc(client_for(env, "owner_a", address=address), "tools/list").status_code == 401
     # The positive control: each context with its own token.
     for who in ("owner_a", "contractor_a", "owner_b", "contractor_b"):

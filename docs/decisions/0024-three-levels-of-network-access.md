@@ -1,6 +1,7 @@
 # 0024. Three levels of network access for instances; regulated by default
 
-- Status: Proposed
+- Status: Accepted, 2026-10-14
+- Decided by the project owner on 2026-10-14.
 - Date: 2026-10-14
 - Supersedes: [0009](0009-network-access-policy.md)
 

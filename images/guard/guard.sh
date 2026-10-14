@@ -1,8 +1,9 @@
 #!/bin/sh
-# The network guard of a Zephyros instance (annex "Network topology of instances").
+# The network guard of a Zephyros instance (ADR 0015).
 #
 # It owns the network namespace that the agent container of the instance joins, loads the rules
-# of annex "Protected networks" into it, and then waits. It runs no listener and holds no secret.
+# that keep it out of the protected networks (EXG-03) into it, and then waits. It runs no
+# listener and holds no secret.
 # The agent container has no capability, so it cannot change these rules.
 #
 #   guard.sh run     load the rules, then wait (the entrypoint)

@@ -2,8 +2,8 @@
 and no other. No telemetry, no hidden update check.
 
 Every outbound destination is checked against the names the configuration carries: the model
-provider, the notification receiver, and the accepted repository sources (annex v1: GitHub
-over https). A redirect is a new destination: the hub does not follow one, and a redirect
+provider, the notification receiver, and the accepted repository sources (GitHub
+over https, EXG-44). A redirect is a new destination: the hub does not follow one, and a redirect
 pointing outside the configured hosts is refused and logged. A refusal never reaches the
 network.
 """
@@ -26,7 +26,7 @@ def normalise(host: str) -> str:
 
 
 GITHUB_HOST = "github.com"
-"""The one host of the accepted repository sources, annex v1 (EXG-44)."""
+"""The one host of the accepted repository sources (EXG-44)."""
 
 
 @dataclass(frozen=True, slots=True)
