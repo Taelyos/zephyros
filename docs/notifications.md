@@ -16,25 +16,36 @@ the instances go on.
 | `delivery.decided` | A delivery received its gate decision (PASS, CONCERNS or FAIL), or a new one after an inspection (ADR 0020); or it was refused before any test ran (REFUSED), or its verification could not run to an end (ERROR) | `project_id`, `delivery_id`, `branch`, `decision` |
 | `delivery.loop` | A streak of refused deliveries reached `continuity.rejections` without a pass in between (EXG-23) | `project_id`, `branch`, `rejections` |
 | `delivery.reviewed` | The Owner side recorded its verdict on a delivery (`accept`, `accept_with_reservations` or `reject`; ADR 0020): a `reject` is the main agent's to act on | `project_id`, `delivery_id`, `branch`, `decision`, `verdict`, `reasons` |
-| `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01) | `project_id`, `side`, `step`, `task`, `detail` |
+| `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01); or a change the Owner side proposed awaited a decision for `continuity.inactivity_seconds` (ADR 0023) | `project_id`, `side`, `step`, `task`, `detail` |
 | `continuity.alert_human` | The main agent did not unblock the task within `continuity.unblock_seconds` | `project_id`, `side`, `step`, `task`, `detail` |
 
 ## The continuity ladder
 
-The hub keeps one task for each side of a project. The Owner side's task is a decision, from the
-moment a change of the contract is proposed until a change is approved or rejected. The
-Contractor's task is a delivery, from the moment the base of its staging area is ready until a
-delivery is declared. Any call from the side counts as activity. A task without activity for
-`continuity.inactivity_seconds` walks the ladder: the hub wakes the instance with a turn that
-states the task, then restarts it, then sends `continuity.alert_main`, then
-`continuity.alert_human`.
+The hub keeps up to two tasks for each project, each carried by one side (`side` in the
+alerts). The Contractor's task is a delivery, from the moment the base of its staging area is
+ready until a delivery is declared. The other is a decision, while a change of the contract that
+could still be approved awaits one. Any call from the side that carries a task counts as
+activity. A task without activity for `continuity.inactivity_seconds` walks the ladder: the hub
+wakes the instance with a turn that states the task, then restarts it, then sends
+`continuity.alert_main`, then `continuity.alert_human`.
+
+The decision task is about the oldest change that could still be approved
+([ADR 0023](decisions/0023-a-decision-is-awaited-from-whoever-takes-it.md)). A later proposal
+leaves its ladder where it is: only a decision starts it again, on the next change if one is
+left. Whoever is to decide the change carries the task. For a change of the operator or the
+main agent, that is the Owner side (`owner`). For a change of the Owner side, which cannot
+approve its own, it is the main agent (`main-agent`): nothing is woken, the main agent is
+alerted after `continuity.inactivity_seconds`, then the human after `continuity.unblock_seconds`,
+whatever the Owner side does meanwhile.
 
 The Contractor's task waits for its contract
 ([ADR 0021](decisions/0021-the-ladder-waits-for-a-ready-contract.md)). Its ladder starts only
 once the version in force names at least one acceptance test, and while no change that could
 still be approved awaits a decision. Preparing the base first, so that the Owner side can read
 it, wakes no one. A change proposed while the Contractor works stops its ladder (a turn already
-running goes on). Once the contract is ready again, the ladder starts over from the wake.
+running goes on). Once the contract is ready again, the ladder starts over from the wake: the
+task could not be carried while it was held. A version that comes while the Contractor carries
+its task leaves its ladder where it is.
 
 The log says why a task waits, so that a held task is not mistaken for a ladder that stopped. A
 `continuity.step` record with the step `hold` gives the reason in `why`: `no_acceptance_test`,

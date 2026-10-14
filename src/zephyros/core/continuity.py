@@ -1,14 +1,16 @@
 """The continuity of work (US-E7-01; EXG-21, EXG-22, EXG-23, EXG-45, EXG-59).
 
-The hub keeps, per project side, the expectation of a task: a staging area is prepared and a
-delivery is expected from the Contractor; a change is proposed and a decision is expected from
-the Owner. An expectation is answered by the event it waits for (a delivery declared, a change
-decided), and any call from the side counts as activity.
+The hub keeps, per project, the expectation of a task of each kind: a staging area is prepared
+and a delivery is expected from the Contractor; a change of the contract awaits a decision,
+expected from whoever is to decide it (ADR 0023). An expectation is answered by the event it
+waits for (a delivery declared; no change left that could be approved), and any call from the
+side that carries it counts as activity.
 
 A side whose task stays without activity walks the configured ladder: wake the instance (a turn
 that states the task and what the hub keeps), restart it (the same, on a fresh instance), alert
 the main agent, then alert the human. Each step is due `continuity.inactivity_seconds` after the
 last activity or the previous step; the step after the restarts waits `continuity.unblock_seconds`.
+A decision the main agent is to take has no instance to wake: its ladder is the two alerts.
 
 A task the side cannot carry yet is held, for a reason the hub records: it walks no ladder
 until it is released, and then starts from the first step (ADR 0021). The Contractor's delivery
@@ -35,8 +37,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol
 
-from zephyros.core.contract import ContractVersion, PendingChange
+from zephyros.core.contract import ContractVersion, PendingChange, approvable
 from zephyros.core.gate import every_acceptance_test
+from zephyros.core.ports.agent_engine import Side
+from zephyros.core.principals import PrincipalKind
 
 WAKE = "wake"
 RESTART = "restart"
@@ -46,6 +50,8 @@ DELIVERY = "delivery"
 """The Contractor's task: a base was prepared, a delivery is expected."""
 DECISION = "decision"
 """A change of the contract awaits a decision."""
+MAIN_AGENT = PrincipalKind.MAIN_AGENT.value
+"""Who carries a decision on a change of the Owner side: the main agent (or the operator)."""
 HOLD = "hold"
 """Not a step of the ladder: how the log records that a task is held, and why."""
 RELEASE = "release"
@@ -89,11 +95,35 @@ def delivery_waits_for(version: ContractVersion, pending: Iterable[PendingChange
     Until then the Owner side is still writing what the Contractor is to build, and a turn on it
     would be spent on a draft. A change proposed on an older version can no longer be approved:
     it changes nothing. A decision comes first, as it may name the tests."""
-    if any(change.base_version == version.number for change in pending):
+    if approvable(version, pending):
         return PENDING_DECISION
     if not every_acceptance_test(version.objects):
         return NO_ACCEPTANCE_TEST
     return None
+
+
+def awaited_decision(
+    project_id: str, version: ContractVersion, pending: Iterable[PendingChange], at: datetime
+) -> TaskState | None:
+    """The decision the project awaits, as a task from `at`, or None when no change that could
+    still be approved awaits one (ADR 0023). It is the decision on the oldest such change: a
+    later proposal does not move it. The side that is to decide carries it: the Owner side for
+    a change of the operator or the main agent; the main agent for a change of the Owner side,
+    which cannot approve its own. Its detail names the change."""
+    changes = approvable(version, pending)
+    if not changes:
+        return None
+    change = changes[0]
+    detail = f"change {change.id} of version {change.base_version} awaits a decision"
+    if change.proposer.split(":", 1)[0] == PrincipalKind.OWNER.value:
+        return TaskState(
+            project_id,
+            MAIN_AGENT,
+            DECISION,
+            f"{detail}; the Owner side proposed it: the operator or the main agent decides",
+            at,
+        )
+    return TaskState(project_id, Side.OWNER.value, DECISION, detail, at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +211,20 @@ class Continuity:
             self._keep(replace(expectation, held=None, step=0, last=at))
             return True
 
+    def await_decision(self, project_id: str, state: TaskState | None) -> None:
+        """The decision the project awaits now (`awaited_decision`), or None when it awaits
+        none. The task of the same decision, carried by the same side, keeps its place on the
+        ladder: only a decision starts it again (ADR 0023)."""
+        with self._lock:
+            current = self._waiting.get((project_id, DECISION))
+            if state is None:
+                self.answered(project_id, DECISION)
+            elif current is None or (current.state.side, current.state.detail) != (
+                state.side,
+                state.detail,
+            ):
+                self.expect(state)
+
     def answered(self, project_id: str, kind: str) -> bool:
         """The event the task waited for arrived."""
         with self._lock:
@@ -202,18 +246,21 @@ class Continuity:
         with self._lock:
             return [expectation.state for expectation in self._waiting.values()]
 
-    def ladder(self) -> list[str]:
-        """The steps, in order: wake, the configured restarts, the main agent, the human."""
+    def ladder(self, side: str = Side.CONTRACTOR.value) -> list[str]:
+        """The steps, in order: wake, the configured restarts, the main agent, the human. A task
+        the main agent carries has no instance to wake: the main agent, then the human."""
+        if side == MAIN_AGENT:
+            return [ALERT_MAIN, ALERT_HUMAN]
         return [WAKE, *([RESTART] * self._timing.restarts), ALERT_MAIN, ALERT_HUMAN]
 
     def due(self, now: datetime) -> list[Step]:
         """The steps that are due, in ladder order; each waiting task is asked at most once.
         Reporting does not advance the ladder: `taken` does, once the step was carried out."""
         steps: list[Step] = []
-        ladder = self.ladder()
         with self._lock:
             for key in sorted(self._waiting):
                 expectation = self._waiting[key]
+                ladder = self.ladder(expectation.state.side)
                 if expectation.held is not None:
                     continue  # nothing to wake the side for yet
                 if expectation.step >= len(ladder):

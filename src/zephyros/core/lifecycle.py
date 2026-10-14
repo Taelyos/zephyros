@@ -467,19 +467,22 @@ class InstanceManager:
             return
         for step in self._continuity.due(self._clock.now()):
             project_id = step.expectation.project_id
-            side = Side(step.expectation.side)
+            # the side that carries the task: an instance's, or the main agent for a decision
+            # it is to take (ADR 0023), whose ladder wakes no instance
+            side = step.expectation.side
             state = {
                 "project_id": project_id,
-                "side": side.value,
+                "side": side,
                 "step": step.kind,
                 "task": step.expectation.kind,
                 "detail": step.expectation.detail,
             }
             record_state = {key: str(value) for key, value in state.items() if key != "project_id"}
             if step.kind in (WAKE, RESTART):
-                if not self.resume(project_id, side, step.prompt, restart=step.kind == RESTART):
+                restart = step.kind == RESTART
+                if not self.resume(project_id, Side(side), step.prompt, restart=restart):
                     # the instance is busy: an active instance is not without activity
-                    self._continuity.observe(project_id, side.value, self._clock.now())
+                    self._continuity.observe(project_id, side, self._clock.now())
                     continue
             elif self._notifier is not None:
                 # queued: the watchdog never waits for the receiver

@@ -640,6 +640,71 @@ def test_a_proposed_change_waits_for_the_owner_and_a_decision_ends_it(env: Env) 
     assert list(env.continuity.waiting()) == []
 
 
+# ----------------------------------------------------------------------------- ADR 0023
+def decision_steps(env: Env, after: int) -> list[tuple[str, str]]:
+    """The step of the project's decision ladder due `after` seconds from now: who, and what."""
+    assert env.continuity is not None
+    steps = env.continuity.due(env.clock.now() + timedelta(seconds=after))
+    return [(s.expectation.side, s.kind) for s in steps if s.expectation.kind == "decision"]
+
+
+def test_a_later_proposal_does_not_start_the_decision_ladder_again(env: Env) -> None:
+    """The ladder counts from the first change that awaits a decision; a proposal is not one."""
+    propose(env, "main", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(600)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=299) == []
+    assert decision_steps(env, after=300) == [("owner", "wake")]
+
+
+def test_a_change_of_the_owner_side_awaits_the_main_agent_whatever_the_owner_side_does(
+    env: Env,
+) -> None:
+    """The Owner side cannot approve its own change: waking it is no use, and its calls are no
+    sign that the decision is coming. The main agent is alerted, then the human."""
+    first = propose(env, "owner_a", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(800)
+    assert env.call("owner_a", "contract.read", project_id=env.project_a).ok
+    propose(env, "owner_a", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=99) == []
+    assert decision_steps(env, after=100) == [("main-agent", "alert_main")]
+    assert env.continuity is not None
+    (alert,) = env.continuity.due(env.clock.now() + timedelta(seconds=100))
+    assert first in alert.expectation.detail
+    assert "the operator or the main agent decides" in alert.expectation.detail
+    env.continuity.taken(alert, env.clock.now() + timedelta(seconds=100))
+    assert decision_steps(env, after=100 + 3599) == []
+    assert decision_steps(env, after=100 + 3600) == [("main-agent", "alert_human")]
+
+
+def test_a_decision_that_leaves_another_change_moves_the_task_to_it(env: Env) -> None:
+    """ADR 0021 left the decision task ended by any decision, even with another change still to
+    decide. The task now moves to the oldest change left, carried by whoever decides that one,
+    and counts from the decision."""
+    owners = propose(env, "owner_a", env.project_a, note(7, "EXG-01"))
+    env.clock.advance(60)
+    propose(env, "main", env.project_a, note(8, "EXG-01"))
+    assert decision_steps(env, after=840) == [("main-agent", "alert_main")]
+    env.clock.advance(600)
+    assert env.call("main", "contract.reject", project_id=env.project_a, change_id=owners).ok
+    assert decision_steps(env, after=899) == []
+    assert decision_steps(env, after=900) == [("owner", "wake")]
+
+
+def test_a_version_that_leaves_no_change_to_approve_ends_the_decision(env: Env) -> None:
+    """A change proposed on an older version can no longer be approved: no one is woken for
+    it, whoever wrote the new version."""
+    propose(env, "main", env.project_a, note(7, "EXG-01"))
+    assert env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="one more requirement",
+        operations=[wire(put(requirement(4)))],
+    ).ok
+    assert decision_steps(env, after=86_400) == []
+
+
 def criterion_with_test(
     story_id: str = "US-E1-02", test: str = "checks/sub.txt::test_sub"
 ) -> dict[str, str]:

@@ -28,12 +28,15 @@ external guard had to stop such turns from then on.
 - The log records each hold, with its reason (`why`: `no_acceptance_test` or
   `pending_decision`), and each release, as `continuity.step` records with the steps `hold`
   and `release`. The operator can tell a task held by its contract from a ladder that stopped.
-- The Owner side's decision task is unchanged.
+- The Owner side's decision task is unchanged. (Superseded by
+  [ADR 0023](0023-a-decision-is-awaited-from-whoever-takes-it.md): the decision task follows the
+  pending changes, and whoever is to decide carries it.)
 
 ## Consequences
 - Positive: the hub no longer spends a Contractor turn on a contract still being written,
   whatever order the operator follows.
-- Positive: while a change awaits a decision, only the Owner side's decision task escalates.
+- Positive: while a change awaits a decision, only the decision task escalates: to the Owner
+  side, or to the main agent for a change of the Owner side (ADR 0023).
 - Negative: for a contract that names no acceptance test, the Contractor's ladder does not start
   at all: no wake, no restart, no alert, even when the operator started the Contractor by hand
   and it stalls. That covers a contract verified by inspection alone, and one imported from
@@ -43,15 +46,16 @@ external guard had to stop such turns from then on.
   woken between two of them.
 - Negative: every proposal resets the Owner side's decision task and holds the Contractor's. An
   Owner side that proposes more often than `continuity.inactivity_seconds` (a model in a loop,
-  or a hostile instance) keeps both ladders silent. A later ticket on the decision task covers
-  this.
+  or a hostile instance) keeps both ladders silent. Settled by ADR 0023: a proposal no longer
+  starts the decision task again, and a change of the Owner side alerts the main agent.
 - The tasks, their reason to be held and the step of their ladder are kept in the hub's
   database, and the hub reads the contract and changes a task under one lock (T12). A restart
   of the hub keeps a held task held and a ladder on its step; an approval that lands while the
   delivery loop's thread creates the task waits for it, then releases it.
 - Negative: the Owner side's decision task still ends with any decision of the project. If
   another change that could still be approved remains, the Contractor's task stays held and no
-  ladder runs until that change is decided (`contract.pending` lists it).
+  ladder runs until that change is decided (`contract.pending` lists it). Settled by ADR 0023:
+  the decision task moves to the change left.
 
 ## Alternatives considered
 - Begin the task at the approval of a change rather than at the preparation of the base. An
