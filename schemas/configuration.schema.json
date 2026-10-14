@@ -45,6 +45,13 @@
           "x-zephyros-kind": "ip-address",
           "description": "Address the main-agent endpoint listens on; never an instance network",
           "default": "127.0.0.1"
+        },
+        "egress_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port of the egress proxy, the second hub destination open to a regulated instance: it relays a connection to an allowed host and logs every destination asked for (ADR 0024)",
+          "default": 8083
         }
       },
       "additionalProperties": false,
@@ -180,6 +187,32 @@
           "description": "Name resolvers the instances use; an address of a protected network is refused, because the network guard blocks it",
           "default": [
             "9.9.9.9"
+          ]
+        },
+        "egress": {
+          "type": "string",
+          "enum": [
+            "regulated",
+            "sealed",
+            "open"
+          ],
+          "description": "What an instance reaches besides the hub (ADR 0024): regulated, the allowed hosts through the egress proxy of the hub; sealed, nothing else; open, every public destination. No level reaches a protected network",
+          "default": "regulated"
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^(?:(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9])$"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "description": "Host names a regulated instance reaches on port 443 through the egress proxy; a name, never an address or a wildcard",
+          "default": [
+            "pypi.org",
+            "files.pythonhosted.org",
+            "registry.npmjs.org"
           ]
         }
       },
@@ -483,9 +516,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.13.0",
+  "x-zephyros-schema-version": "1.14.0",
   "x-zephyros-rules": [
-    "hub.agent_port, hub.operator_port and hub.main_agent_port are three different ports",
+    "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
     "network.instance_prefix is longer than the prefix of network.instance_pool",
     "network.resolvers holds no address of a protected network (the guard blocks them)",

@@ -26,7 +26,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.13.0"
+CONFIG_SCHEMA_VERSION = "1.14.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -39,6 +39,25 @@ The instances are IPv4 only, and the network guard blocks every address of a pro
 network, so the resolver has to be a public one. Quad9 (9.9.9.9) is chosen as the default:
 a public resolver that filters malicious domains and does not log the client address. The
 Owner chose it on 2026-10-12; see ADR 0018."""
+
+EGRESS_LEVELS: tuple[str, ...] = ("regulated", "sealed", "open")
+"""The network access levels of an instance (ADR 0024): `regulated` reaches the hub and the
+allowed hosts through the egress proxy of the hub; `sealed` reaches the hub alone; `open`
+reaches every public destination, as ADR 0009 had it. No level reaches a protected network."""
+
+DEFAULT_EGRESS = "regulated"
+
+DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+)
+"""The hosts a `regulated` instance reaches when the configuration names none: the package
+registries, for reading. GitHub is not one of them: an operator who wants it adds it."""
+
+HOST_NAME = r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]"
+"""A host name as the allow-list holds it: lower case, at least two labels, no trailing dot,
+no port, no wildcard, and a last label that is not a number (so an address is not a name)."""
 
 PROTECTED_V4: tuple[str, ...] = (
     "0.0.0.0/8",
@@ -93,6 +112,14 @@ def _hub() -> Table:
                 Text("ip-address"),
                 "Address the main-agent endpoint listens on; never an instance network",
                 default="127.0.0.1",
+            ),
+            Field(
+                "egress_port",
+                Integer(1024, 65535),
+                "Port of the egress proxy, the second hub destination open to a regulated "
+                "instance: it relays a connection to an allowed host and logs every destination "
+                "asked for (ADR 0024)",
+                default=8083,
             ),
         )
     )
@@ -204,6 +231,21 @@ def _network() -> Table:
                 "Name resolvers the instances use; an address of a protected network "
                 "is refused, because the network guard blocks it",
                 default=list(DEFAULT_RESOLVERS),
+            ),
+            Field(
+                "egress",
+                Choice(EGRESS_LEVELS),
+                "What an instance reaches besides the hub (ADR 0024): regulated, the allowed "
+                "hosts through the egress proxy of the hub; sealed, nothing else; open, every "
+                "public destination. No level reaches a protected network",
+                default=DEFAULT_EGRESS,
+            ),
+            Field(
+                "allowed_hosts",
+                Array(Text(max_length=253, pattern=HOST_NAME), min_items=1, max_items=64),
+                "Host names a regulated instance reaches on port 443 through the egress proxy; "
+                "a name, never an address or a wildcard",
+                default=list(DEFAULT_ALLOWED_HOSTS),
             ),
         )
     )
@@ -474,7 +516,7 @@ def _rule_ports(data: Mapping[str, object]) -> list[Problem]:
     hub = _section(data, "hub")
     seen: dict[int, str] = {}
     problems: list[Problem] = []
-    for key in ("agent_port", "operator_port", "main_agent_port"):
+    for key in ("agent_port", "operator_port", "main_agent_port", "egress_port"):
         port = _int(hub, key)
         if port in seen:
             problems.append(Problem(f"hub.{key}", f"uses the port of hub.{seen[port]}"))
@@ -663,7 +705,8 @@ SCHEMA = Schema(
     ),
     rules=(
         Rule(
-            "hub.agent_port, hub.operator_port and hub.main_agent_port are three different ports",
+            "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four "
+            "different ports",
             _rule_ports,
         ),
         Rule(
@@ -710,6 +753,7 @@ class HubConfig:
     main_agent_port: int
     operator_bind: str
     main_agent_bind: str
+    egress_port: int = 8083
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,6 +783,8 @@ class NetworkConfig:
     instance_pool: str
     instance_prefix: int
     resolvers: tuple[str, ...]
+    egress: str = DEFAULT_EGRESS
+    allowed_hosts: tuple[str, ...] = DEFAULT_ALLOWED_HOSTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -861,6 +907,7 @@ def parse_config(data: object) -> Config:
             main_agent_port=_int(hub, "main_agent_port"),
             operator_bind=cast("str", hub["operator_bind"]),
             main_agent_bind=cast("str", hub["main_agent_bind"]),
+            egress_port=_int(hub, "egress_port"),
         ),
         paths=PathsConfig(
             data_dir=cast("str", paths["data_dir"]),
@@ -881,6 +928,8 @@ def parse_config(data: object) -> Config:
             instance_pool=cast("str", network["instance_pool"]),
             instance_prefix=_int(network, "instance_prefix"),
             resolvers=tuple(cast("list[str]", network["resolvers"])),
+            egress=cast("str", network["egress"]),
+            allowed_hosts=tuple(cast("list[str]", network["allowed_hosts"])),
         ),
         limits=LimitsConfig(
             cpus=float(cast("float", limits["cpus"])),
