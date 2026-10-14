@@ -136,6 +136,9 @@ What to watch: `delivery.status` for the decision and the report, the log (`log.
 — the hub tells the main agent about decisions, loops and stalled tasks by itself (US-E7-01). The
 report counts the model calls of the project that went through the gateway, with their tokens;
 watch the spending at the provider as well, and start with a small project and a short task.
+The hub wakes the Contractor by itself only once the contract is ready for it, so preparing the base
+before the Owner side writes its tests is safe; while it waits, the log says why
+([the continuity ladder](notifications.md#the-continuity-ladder)).
 
 ## What the runs show, and what they do not
 

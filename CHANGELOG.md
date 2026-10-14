@@ -32,6 +32,10 @@ version. Each schema carries its own version number.
   names. It starts with the log, and the hub records its start, and any fault it finds when it
   opens the log, as `log.anchor` in its own stream. A deployment whose anchor is lost now sees its
   verification fail: the anchor goes with the database in a backup.
+- The continuity ladder wakes the Contractor only once its contract is ready: the version in
+  force names an acceptance test, and no change that could still be approved awaits a decision
+  (US-E7-01, ADR 0021). The log records when the task is held, and why, and when it is
+  released (#7).
 
 ## [0.1.0] - 2026-10-13
 
