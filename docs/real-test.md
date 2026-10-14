@@ -76,9 +76,7 @@ is delivered.
 
 What to watch: `delivery.status` for the decision, the log (`log.read`, `log.verify`) for
 every call and every refusal, and the notifications if `[notifications]` is set — the hub
-tells the main agent about decisions, loops and stalled tasks by itself (US-E7-01). It wakes
-the Contractor by itself only once the contract is ready for it, so preparing the base before
-the Owner side writes its tests is safe ([the continuity ladder](notifications.md#the-continuity-ladder)).
+tells the main agent about decisions, loops and stalled tasks by itself (US-E7-01).
 
 ## What is proven, and what is not
 
