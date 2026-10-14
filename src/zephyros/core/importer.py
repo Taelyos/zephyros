@@ -48,6 +48,14 @@ def _cells(line: str) -> list[str]:
     return [cell.strip().replace("\\|", "|") for cell in inner]
 
 
+def _is_requirement_header(cells: list[str]) -> bool:
+    """A requirement or constraint table is told by its header (`| ID | Requirement |
+    Verification | Priority | Rationale |`), not by its rows: a coverage table (`| ID | Stories |
+    Remark |`) also starts its rows with requirement identifiers, and stays prose."""
+    names = [cell.lower() for cell in cells]
+    return bool(names) and names[0] == "id" and "verification" in names and "priority" in names
+
+
 def _methods(ident: str, verification: str, problems: list[Problem]) -> list[str]:
     """The methods of a verification cell, read as tokens separated by spaces or `+ , / ; &`,
     a parenthesis being a comment: "T (attack catalog) + A" is a test and an analysis, and
@@ -72,13 +80,14 @@ def import_markdown(text: str) -> list[dict[str, object]]:
     constraints from the tables, then each story with its criteria and its links.
 
     Raises `ContractError` naming every fault when the document cannot be imported as written:
-    an identifier defined twice (nothing is replaced in silence), a row whose first cell is a
-    requirement or constraint identifier but which is not five cells wide (nothing is dropped in
-    silence), a method that is not T, I, A or D, and every problem the contract schema finds in
-    an object, under the object's identifier."""
+    an identifier defined twice (nothing is replaced in silence), a row of a requirement or
+    constraint table that is not five cells wide (nothing is dropped in silence), a method that
+    is not T, I, A or D, and every problem the contract schema finds in an object, under the
+    object's identifier."""
     objects: dict[str, dict[str, object]] = {}
     lines_of: dict[str, list[int]] = {}
     problems: list[Problem] = []
+    requirements: bool | None = None  # in a table: whether it is a requirement table
     story: dict[str, object] | None = None
     criteria = 0
 
@@ -93,7 +102,10 @@ def import_markdown(text: str) -> list[dict[str, object]]:
         stripped = line.strip()
         if stripped.startswith("|"):
             cells = _cells(stripped)
-            if cells and _ROW_ID.match(cells[0]):
+            if requirements is None:
+                requirements = _is_requirement_header(cells)
+                continue
+            if requirements and cells and _ROW_ID.match(cells[0]):
                 ident = cells[0]
                 if len(cells) != _ROW_CELLS:
                     problems.append(
@@ -116,11 +128,11 @@ def import_markdown(text: str) -> list[dict[str, object]]:
                     number,
                 )
             continue
+        requirements = None
         heading = _STORY.match(stripped)
         if heading:
             story = {"type": "story", "id": heading["id"], "epic": heading["epic"]}
-            if not define(heading["id"], story, number):
-                story = None  # its criteria would take the identifiers of the first one's
+            define(heading["id"], story, number)
             criteria = 0
             continue
         if stripped.startswith("#"):

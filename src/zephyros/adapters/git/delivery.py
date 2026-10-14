@@ -133,26 +133,11 @@ class GitDeliveryArea:
 
     def tree(self, project_id: str, ref: str) -> Tree:
         repository = self._repository(project_id)
-        commit = (
-            rev(repository, "refs/heads/base")
-            if ref == "base"
-            else str(self._entry(project_id, ref)["head"])
-        )
-        # The listing carries the size of each blob (`-l`): the limits are checked before a
-        # single byte of content is read, and the content comes from one git for the whole tree.
-        listing = git("ls-tree", "-r", "-z", "-l", "--full-tree", commit, cwd=repository).stdout
-        wanted: list[tuple[str, str, int]] = []
-        for entry in lines(listing, nul=True):
-            meta, _, path = entry.partition("\t")
-            mode, kind, sha, size = meta.split()
-            if kind == "blob" and mode in _REGULAR:
-                wanted.append((path, sha, int(size)))
-        if len(wanted) > MAX_FILES:
-            raise DeliveryError("the tree has too many files")
-        if sum(size for _, _, size in wanted) > MAX_TREE_BYTES:
-            raise DeliveryError("the tree is too large")
-        blobs = _read_blobs(repository, {sha: size for _, sha, size in wanted})
-        return Tree({path: blobs[sha] for path, sha, _ in wanted})
+        commit = None if ref == "base" else str(self._entry(project_id, ref)["head"])
+        try:
+            return _read_tree(repository, commit or rev(repository, "refs/heads/base"))
+        except GitError as error:
+            raise DeliveryError(str(error)) from None
 
     def package(self, project_id: str, delivery_id: str) -> bytes:
         repository = self._repository(project_id)
@@ -226,6 +211,24 @@ class GitDeliveryArea:
         if entry is None:
             raise DeliveryError("there is no such delivery")
         return entry
+
+
+def _read_tree(repository: Path, commit: str) -> Tree:
+    # The listing carries the size of each blob (`-l`): the limits are checked before a single
+    # byte of content is read, and the content comes from one git for the whole tree.
+    listing = git("ls-tree", "-r", "-z", "-l", "--full-tree", commit, cwd=repository).stdout
+    wanted: list[tuple[str, str, int]] = []
+    for entry in lines(listing, nul=True):
+        meta, _, path = entry.partition("\t")
+        mode, kind, sha, size = meta.split()
+        if kind == "blob" and mode in _REGULAR:
+            wanted.append((path, sha, int(size)))
+    if len(wanted) > MAX_FILES:
+        raise DeliveryError("the tree has too many files")
+    if sum(size for _, _, size in wanted) > MAX_TREE_BYTES:
+        raise DeliveryError("the tree is too large")
+    blobs = _read_blobs(repository, {sha: size for _, sha, size in wanted})
+    return Tree({path: blobs[sha] for path, sha, _ in wanted})
 
 
 def _read_blobs(repository: Path, sizes: Mapping[str, int]) -> dict[str, bytes]:

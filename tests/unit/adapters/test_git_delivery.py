@@ -337,8 +337,9 @@ def test_a_tree_too_large_is_refused_before_any_content_is_read(
         lambda output: output[:-100],
         lambda output: output + b"0" * 40 + b" blob 1\nx\n",
         lambda output: output.replace(b" blob ", b" tree ", 1),
+        lambda output: output[:-1] + b"X",
     ],
-    ids=["cut short", "one object too many", "not a blob"],
+    ids=["cut short", "one object too many", "not a blob", "not closed by a newline"],
 )
 def test_a_batch_output_that_is_not_what_was_asked_is_refused(
     area: GitDeliveryArea,
@@ -362,6 +363,23 @@ def test_a_batch_output_that_is_not_what_was_asked_is_refused(
 
 
 MANY = 2_000
+
+
+def test_a_git_that_fails_while_reading_a_tree_is_a_refusal_that_says_why(
+    area: GitDeliveryArea, awkward: Delivery, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verification records the message of a DeliveryError; a bare GitError reached it as
+    its class name only."""
+    real = subprocess.run
+
+    def hanging(command: list[str], **options: Any) -> subprocess.CompletedProcess[bytes]:
+        if "cat-file" in command:
+            raise subprocess.TimeoutExpired(command, 1)
+        return real(command, **options)
+
+    monkeypatch.setattr(subprocess, "run", hanging)
+    with pytest.raises(DeliveryError, match=r"^git cat-file took too long$"):
+        area.tree(PROJECT, awkward.delivery_id)
 
 
 @pytest.fixture

@@ -189,7 +189,7 @@ def test_a_requirement_defined_twice_is_refused_and_named_with_its_lines() -> No
     assert refusal_of(document) == "EXG-01: defined more than once, lines 3 and 5"
 
 
-def test_a_story_defined_twice_is_refused_and_its_criteria_are_not_mixed() -> None:
+def test_a_story_defined_twice_is_refused_and_named_with_its_lines() -> None:
     story = (
         "#### US-E01-01 · Epic E01\n\n"
         "As a **user**, I want **to {want}**, so that **it works**.\n\n"
@@ -312,6 +312,35 @@ def test_a_row_without_its_closing_pipe_or_with_an_escaped_pipe_is_read() -> Non
             "methods": ["test"],
         }
     ]
+
+
+def test_a_coverage_table_of_requirements_stays_prose() -> None:
+    """A table whose rows start with requirement identifiers is not a requirement table: the
+    contract's own documents carry one (`| ID | Stories | Remark |`). Only the header says which
+    is which."""
+    document = (
+        "| ID | Stories | Remark |\n| --- | --- | --- |\n"
+        "| EXG-01 | US-E1-01 | |\n| CTR-02 | US-E1-02, US-E1-03 | Partly |\n\n"
+        + HEADER
+        + row("EXG-01")
+    )
+    assert [item["id"] for item in import_markdown(document)] == ["EXG-01"]
+
+
+def test_a_constraint_table_is_a_requirement_table() -> None:
+    document = (
+        "| ID | Constraint | Verification | Priority | Rationale |\n"
+        "|----|----|----|----|----|\n" + row("CTR-01", "I")
+    )
+    assert import_markdown(document)[0]["methods"] == ["inspection"]
+
+
+def test_a_requirement_table_without_its_rationale_is_refused_not_dropped() -> None:
+    document = (
+        "| ID | Requirement | Verification | Priority |\n| --- | --- | --- | --- |\n"
+        "| EXG-01 | The system shall say. | T | P1 |\n"
+    )
+    assert refusal_of(document).startswith("line 3: EXG-01 has 4 cells")
 
 
 def test_a_table_that_is_not_a_requirement_table_stays_prose() -> None:
