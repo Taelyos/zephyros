@@ -30,16 +30,14 @@ def test_a_record_keeps_its_contract_version_inspections_review_and_flags() -> N
         },
         review={"verdict": "accept", "reasons": "fine", "by": "o", "at": "t"},
         flagged_paths=("CONTRACT.md",),
-        gate_report="# Evidence report\n",
+        report="# Evidence report\n\n## Inspections recorded after the gate\n",
+        gate_report="# Evidence report\n",  # T11: kept apart from the addendum
         contractor_gate_report="# Evidence report, no output\n",
         addendum="## Inspections recorded after the gate\n",
     )
     written = store.put_record(record)
     assert written == replace(record, revision=1)
     assert store.get_record("p_store001", "d1") == written
-    assert written.report == (
-        "# Evidence report\n\n## Inspections recorded after the gate\n"
-    )  # T11: the report of the gate, then the addendum
     assert written.contractor_report == (
         "# Evidence report, no output\n\n## Inspections recorded after the gate\n"
     )  # T07: the Contractor's, with the same addendum

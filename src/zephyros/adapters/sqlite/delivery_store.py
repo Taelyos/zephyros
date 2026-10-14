@@ -39,6 +39,7 @@ def _record_body(record: DeliveryRecord) -> str:
             "changed_paths": list(record.changed_paths),
             "decision": record.decision,
             "outcomes": dict(record.outcomes),
+            "report": record.report,
             "gate_report": record.gate_report,
             "contractor_gate_report": record.contractor_gate_report,
             "addendum": record.addendum,
@@ -73,6 +74,7 @@ def _record(row: sqlite3.Row) -> DeliveryRecord:
         changed_paths=tuple(body["changed_paths"]),
         decision=body["decision"],
         outcomes=body["outcomes"],
+        report=body.get("report"),
         # A record kept before had its report whole, the addendum inside: it reads as the report of
         # the gate, and a new inspection writes its addendum after it.
         gate_report=body["gate_report"] if "gate_report" in body else body.get("report"),
