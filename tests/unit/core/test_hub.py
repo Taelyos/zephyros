@@ -1127,3 +1127,45 @@ def test_acceptance_put_warns_when_the_story_of_the_criterion_covers_nothing(env
     assert response.data is not None
     assert response.data["named_by"] == []
     assert response.data["warning"] == _NOT_RUN
+
+
+def test_acceptance_put_counts_a_pending_change_that_names_the_file(env: Env) -> None:
+    """The third run: the Owner side proposed the criteria that name its tests, and put the
+    tests before the approval. A file named by a change awaiting a decision is not one the gate
+    never runs (audit of A2, C49 point 4)."""
+    attach_deliveries(env)
+    change_id = propose(env, "owner_a", env.project_a, criterion_with_test())
+    response = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert response.ok, response.failure
+    assert response.data is not None
+    assert response.data["named_by"] == []
+    assert response.data["named_by_pending"] == {change_id: ["US-E1-02.2"]}
+    warning = str(response.data["warning"])
+    assert "does not run it" not in warning
+    assert f"once change {change_id} is approved" in warning
+    # approved, the change is the contract: the file is named, nothing to warn of
+    assert env.call(
+        "operator", "contract.approve", project_id=env.project_a, change_id=change_id
+    ).ok
+    again = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert again.data is not None
+    assert (again.data["named_by"], again.data["named_by_pending"]) == (["US-E1-02.2"], {})
+    assert "warning" not in again.data
+
+
+def test_acceptance_put_ignores_a_change_that_can_no_longer_be_approved(env: Env) -> None:
+    """A change proposed on an older version cannot be approved: it names nothing that will
+    run."""
+    attach_deliveries(env)
+    propose(env, "owner_a", env.project_a, criterion_with_test())
+    assert env.call(
+        "operator",
+        "contract.apply_reserved",
+        project_id=env.project_a,
+        summary="one more requirement",
+        operations=[wire(put(requirement(4)))],
+    ).ok
+    response = env.call("owner_a", "acceptance.put", path="checks/sub.txt", content="t: pass\n")
+    assert response.data is not None
+    assert response.data["named_by_pending"] == {}
+    assert response.data["warning"] == _NOT_RUN

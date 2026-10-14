@@ -43,7 +43,10 @@ from zephyros.core.contract import (
     Change,
     ContractError,
     ContractService,
+    Objects,
     Operation,
+    apply_operations,
+    approvable,
     parse_change,
     validate_object,
 )
@@ -442,6 +445,18 @@ def _operation_data(operation: Operation) -> dict[str, object]:
     if operation.op == "put" and operation.object is not None:
         return {"op": "put", "object": dict(operation.object)}
     return {"op": "delete", "id": operation.id}
+
+
+def _criteria_naming(objects: Objects, path: str) -> list[str]:
+    """The criteria the gate runs that name a test of the file `path`, by identifier."""
+    run = set(every_acceptance_test(objects))
+    return sorted(
+        key
+        for key, item in objects.items()
+        if item.get("type") == "criterion"
+        and str(item.get("test") or "") in run
+        and str(item.get("test") or "").startswith(path + "::")
+    )
 
 
 def _flagged_terms(change: Change) -> dict[str, list[str]]:
@@ -947,16 +962,19 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         path = str(arguments["path"])
         # The gate runs a file only through the criteria it runs, those of a story that covers a
-        # requirement or a constraint: say which of them name this file, if any.
+        # requirement or a constraint: say which of them name this file, in the version in force
+        # and in each change that could still be approved, if any.
         version = self._contracts.read(caller.principal, project_id)
-        run = set(every_acceptance_test(version.objects))
-        named_by = sorted(
-            key
-            for key, item in version.objects.items()
-            if item.get("type") == "criterion"
-            and str(item.get("test") or "") in run
-            and str(item.get("test") or "").startswith(path + "::")
-        )
+        named_by = _criteria_naming(version.objects, path)
+        named_by_pending: dict[str, list[str]] = {}
+        for change in approvable(version, self._contracts.pending(caller.principal, project_id)):
+            try:
+                after = apply_operations(version.objects, change.operations)
+            except ContractError:
+                continue  # it no longer applies: it cannot be approved either
+            named = _criteria_naming(after, path)
+            if named:
+                named_by_pending[change.id] = named
         digest = self._delivery_service().put_acceptance(
             project_id, path, str(arguments["content"])
         )
@@ -965,8 +983,14 @@ class Hub:
             "path": path,
             "sha256": digest,
             "named_by": named_by,
+            "named_by_pending": named_by_pending,
         }
-        if not named_by:
+        if not named_by and named_by_pending:
+            data["warning"] = (
+                "no criterion of the current contract names this file yet: the gate runs it "
+                f"once change {', or change '.join(named_by_pending)} is approved"
+            )
+        elif not named_by:
             data["warning"] = (
                 "no criterion of the current contract names this file in a story that covers a "
                 "requirement or a constraint: the gate does not run it"
