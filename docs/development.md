@@ -18,7 +18,7 @@ scripts/check.sh
 
 This is the exact sequence the CI runs (`.github/workflows/ci.yml`): lock up to date, pins by hash, type-checker suppressions, core purity, import contracts, lint, format, strict types, tests with 85 % branch coverage, vulnerable dependencies, secrets. It needs network access for the vulnerability audit.
 
-The tests of the replay player (`tests/unit/tools/test_replay_player.py`) run it in headless Chromium or Chrome, found on the `PATH` or named by `CHROMIUM`; on a machine with neither they are skipped as not applicable.
+The tests of the replay player (`tests/unit/tools/test_replay_player.py`) run it in headless Chromium or Chrome, found on the `PATH` or named by `CHROMIUM`; on a machine with neither they are skipped as not applicable, except on a CI (`CI` set), where they fail.
 
 ## Run the runtime suite
 

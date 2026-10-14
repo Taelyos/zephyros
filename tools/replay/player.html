@@ -809,12 +809,15 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     const data = isObject(e.data) ? e.data : {};
     const state = isObject(e.hub_state) ? e.hub_state : {};   // from the hub's tables, not the chain
     const lane = laneOf(e, data);
+    // A refusal or an error counts for the side that was refused or failed, never for a side the
+    // hub names: an alert the hub could not send about the Owner is not an error of the Owner.
+    const own = LANES.includes(e.actor) ? e.actor : null;
 
     feedAdd(e, cat);
-    if (lane && LANES.includes(e.actor)) setActivity(lane, e.summary);
+    if (own) setActivity(own, e.summary);
 
-    if (cat === 'refusal' || e.outcome === 'refused') { onRefusal(e, data, lane); markMentions(e, data, state); return; }
-    if (e.outcome === 'error') onError(e, data, lane);
+    if (cat === 'refusal' || e.outcome === 'refused') { onRefusal(e, data, own); markMentions(e, data, state); return; }
+    if (e.outcome === 'error') onError(e, data, own);
     if (cat === 'turn') onTurn(e, lane);
     if (cat === 'model' && e.outcome === 'ok') addModel(lane, data);
     if (cat === 'message') addBubble(lane, data);

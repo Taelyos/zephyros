@@ -5,13 +5,16 @@ in it. Each test opens it in Chromium and drives it through `window.replay`, the
 recorder uses. Any uncaught exception of the page, and any error it logs, fails the test: the player
 logs an event it cannot show and goes on, so a test that only watched the playback would miss it.
 
-A machine with neither Chromium nor Chrome skips these tests; `CHROMIUM` names the browser to use.
+A machine with neither Chromium nor Chrome skips these tests, except on a CI (`CI` set), where they
+fail: there, a missing browser must not pass for a passing player. `CHROMIUM` names the browser.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +22,13 @@ import pytest
 from tools.replay import export
 
 from tests.unit.tools.headless_chromium import Chromium, find_chromium
-from tests.unit.tools.replay_example import EXAMPLE
+from tests.unit.tools.replay_example import EXAMPLE, FIRST, SECOND
+from tests.unit.tools.replay_hub import HubFile
+from zephyros.core.audit import Action, Outcome
+from zephyros.core.deliveries import DeliveryRecord, DeliveryState
+from zephyros.core.projects import Project
 
 BROWSER = find_chromium()
-pytestmark = pytest.mark.skipif(
-    BROWSER is None, reason="not applicable here: no Chromium or Chrome found (set CHROMIUM)"
-)
 
 TIMES = "\N{MULTIPLICATION SIGN}"
 STATE = "window.replay.state()"
@@ -33,7 +37,10 @@ DONE = "window.replay.state().done"
 
 @pytest.fixture(scope="module")
 def browser() -> Iterator[Chromium]:
-    assert BROWSER is not None
+    if BROWSER is None:
+        if os.environ.get("CI"):
+            pytest.fail("no Chromium or Chrome on this CI: the player tests must run here")
+        pytest.skip("not applicable here: no Chromium or Chrome found (set CHROMIUM)")
     with Chromium(BROWSER) as running:
         yield running
 
@@ -177,13 +184,92 @@ def test_the_contract_panel_follows_the_versions(chromium: Chromium, tmp_path: P
     assert chromium.errors == []
 
 
-def test_an_inspection_marks_its_object_across_versions(chromium: Chromium, tmp_path: Path) -> None:
-    document = example()
+PROJECT = "p_0f1e2d3c"
+OWNER = f"owner:{PROJECT}"
+OBSERVATION = "standard library only"
+MARK = "document.querySelector('#contract-list .citem[data-id=\"CTR-01\"] .mk')"
+
+
+def inspected_then_amended(directory: Path) -> dict[str, Any]:
+    """A run where the Owner inspects CTR-01 before a new version of the contract; then the hub
+    cannot send an alert about the Owner, and a model call of the Owner fails."""
+    path = directory / "hub.db"
+    start = datetime(2026, 9, 21, 14, 0, tzinfo=UTC)
+    hub = HubFile(path, Project(PROJECT, "status-svc", None, start, "operator"))
+    first = hub.version(1, FIRST, "operator")
+    hub.log(0, "operator", Action.CONTRACT_IMPORT, {"version_id": first, "objects": len(FIRST)})
+    inspected = hub.log(
+        5,
+        OWNER,
+        Action.INSPECTION_RECORD,
+        {"delivery_id": "d1", "object_id": "CTR-01", "verdict": "conforms", "decision": "PASS"},
+    )
+    hub.clock.advance(5)
+    second = hub.version(2, SECOND, "main-agent")
+    hub.log(
+        0,
+        "main-agent",
+        Action.CONTRACT_APPROVE,
+        {"change_id": "c_0a1b2c3d", "approver": "main-agent", "version_id": second},
+    )
+    alert = {"side": "owner", "step": "alert_human", "task": "decision", "error": "status 500"}
+    hub.log(5, "hub", Action.NOTIFICATION, alert, Outcome.ERROR)
+    hub.log(5, OWNER, Action.GATEWAY_CALL, {"model": "m", "detail": "HTTP 503"}, Outcome.ERROR)
+    stored = {"verdict": "conforms", "observation": OBSERVATION, "by": OWNER, "at": inspected}
+    hub.delivery(
+        DeliveryRecord(
+            PROJECT,
+            "d1",
+            "feature",
+            DeliveryState.PROPOSED,
+            inspected,
+            decision="PASS",
+            contract_version=1,
+            inspections={"CTR-01": stored},
+        )
+    )
+    hub.close()
+    options = export.Options(db=path, project=PROJECT, kind="synthetic")
+    return export.replay_document(options, exported_at="2026-09-21T15:00:00.000000Z")
+
+
+def test_an_inspection_mark_outlives_a_new_version_of_the_contract(
+    chromium: Chromium, tmp_path: Path
+) -> None:
+    document = inspected_then_amended(tmp_path)
+    [inspection] = ids_of(document, type="inspection.record")
+    first, second = ids_of(document, type="contract.version")
+    assert first < inspection < second
+    chromium.open(page_of(tmp_path, document))
+
+    chromium.evaluate(f"window.replay.seek({inspection})")
+    assert chromium.evaluate(f"{MARK}.textContent") == "✓ conforms"
+
+    chromium.evaluate(f"window.replay.seek({second})")
+    assert text(chromium, "#contract-version") == "v2"
+    assert chromium.evaluate(f"{MARK}.hidden") is False
+    assert chromium.evaluate(f"{MARK}.textContent") == "✓ conforms"
+    assert chromium.evaluate(f"{MARK}.title") == OBSERVATION
+
+    chromium.evaluate(f"window.replay.seek({first})")
+    assert chromium.evaluate(f"{MARK}.hidden") is True
+    assert chromium.errors == []
+
+
+def test_an_error_counts_for_the_side_that_failed_only(chromium: Chromium, tmp_path: Path) -> None:
+    """The hub names the Owner in an alert it could not send: that is no error of the Owner."""
+    document = inspected_then_amended(tmp_path)
+    failed = [event for event in document["events"] if event["outcome"] == "error"]
+    assert [(event["actor"], event["data"].get("side")) for event in failed] == [
+        ("hub", "owner"),
+        ("owner", "owner"),
+    ]
     chromium.open(page_of(tmp_path, document))
     play_to_the_end(chromium)
-    mark = "document.querySelector('#contract-list .citem[data-id=\"CTR-01\"] .mk')"
-    assert chromium.evaluate(f"{mark}.textContent") == "✓ conforms"
-    assert chromium.evaluate(f"{mark}.title").startswith("Read the delivered branch")
+    assert texts(chromium, "#feed .fs.error") == [event["summary"] for event in failed]
+    assert f"errors {TIMES}1" in text(chromium, "#cnt-owner")
+    assert texts(chromium, "#bub-owner .bubble.error .btag") == ["error · gateway.call"]
+    assert chromium.errors == []
 
 
 # ----------------------------------------------------------------------------- what can go wrong
