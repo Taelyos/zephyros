@@ -123,6 +123,7 @@ def service(
     events: Callable[[str, Mapping[str, object]], None] | None = None,
     log_store: InMemoryLogStore | None = None,
     secrets: Callable[[], list[str]] | None = None,
+    rejections_alert: int | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
@@ -155,6 +156,7 @@ def service(
         kit="assertions",
         events=events,
         secrets=secrets,
+        rejections_alert=rejections_alert,
     )
     return made, project, audit, store
 
@@ -979,8 +981,10 @@ class RefusalUnlogged(InMemoryLogStore):
         super().append(record)
 
 
-def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused() -> None:
-    """The job fails after the refusal is kept: the delivery stays refused, never ERROR."""
+@pytest.mark.xfail(strict=True, reason="EXG-23: the refusal is silent until the fix")
+def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused_and_told() -> None:
+    """The job fails after the refusal is kept: the delivery stays refused, never ERROR, and the
+    main agent hears of it once, like any refusal."""
     events: list[tuple[str, Mapping[str, object]]] = []
     made, project, audit, _store = service(
         events=lambda event, payload: events.append((event, payload)),
@@ -991,7 +995,8 @@ def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused() -> No
     record = made.status(project, delivery)
     assert record.state is DeliveryState.REFUSED
     assert audit.read(project, 0, 1000)[-1].action is Action.VERIFICATION_RUN  # the error, logged
-    assert [payload for event, payload in events if event == "delivery.decided"] == []
+    told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
+    assert told == ["REFUSED"]
 
 
 class Contended(InMemoryDeliveryStore):
@@ -1086,3 +1091,25 @@ def test_a_secret_the_hub_learns_after_the_push_stays_off_the_forge_and_the_even
     opened = asyncio.run(forge.get_pull_request(RepositoryRef("example/calc"), 1))
     assert (opened.title, opened.head) == ("work-[masked] (delivery d1, PASS)", "zephyros/d1")
     assert [payload["branch"] for payload in told] == ["work-[masked]"]
+
+
+@pytest.mark.xfail(strict=True, reason="EXG-23: the alert is skipped until the fix")
+def test_a_decision_that_cannot_be_told_still_raises_the_alert_of_a_loop() -> None:
+    """EXG-23: telling a FAIL fails (a receiver that is down); the streak of failed deliveries
+    still reaches the main agent, and the worker hears of the failure."""
+    loops: list[Mapping[str, object]] = []
+
+    def receiver(event: str, payload: Mapping[str, object]) -> None:
+        if event == "delivery.decided":
+            raise ConnectionError("the receiver is down")
+        if event == "delivery.loop":
+            loops.append(payload)
+
+    made, project, _audit, _store = service(runner=Failing(), events=receiver, rejections_alert=1)
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "w")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(ConnectionError):
+        made.step()
+    assert made.status(project, pushed.delivery_id).decision == "FAIL"
+    assert loops == [{"project_id": project, "branch": "w", "rejections": 1}]
