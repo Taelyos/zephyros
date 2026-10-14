@@ -284,9 +284,10 @@ def test_a_link_made_during_the_run_does_not_get_a_delivered_module_in() -> None
 def test_a_bytecode_cache_shipped_with_the_delivery_does_not_replace_the_source() -> None:
     """ATK-22: the judge compiles the asked test files, and would run a cache the delivery put
     next to one in place of its source when the time and size recorded in it match: the tree is
-    extracted with a fixed time, and the size of a file is a guess away. The kit removes the
-    caches of the tree before it collects anything, so the source is what runs. (The cache is
-    named after the Python and the pytest of the host, the same as the image's.)"""
+    extracted with a fixed time, and the size of a file is a guess away. The kit never reads a
+    cache from the tree (it points the import machinery at a directory that does not exist),
+    so the source is what runs. (The cache is named after the Python and the pytest of the
+    host, the same as the image's.)"""
     source = b"def test_owner():\n    assert False\n"
     forged = FORGERS["rewrites_the_kit_state"] + "\n\ndef test_owner():\n    assert False\n"
     code = compile(forged, "/work/test_owner.py", "exec")

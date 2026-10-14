@@ -122,7 +122,8 @@ def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tu
     The kit prints a run line carrying a nonce (which only ever lands in the container's log —
     write-only from the inside) and one outcome line signed with it. The signed payload is
     `{"outcomes": {name: outcome}, "deselected": [name, ...]}`, so the HMAC covers both. An
-    honest kit prints the pair once; anything else — a missing run line, a second line, a
+    honest kit prints the pair once, the run line first of the whole log; anything else — a
+    missing run line, a log that begins with something else (it lost its head), a second line, a
     signature that does not match — means the log was written by someone else too (a black-box
     test's subprocess can reach it, ATK-22), and nothing is believed: every test reads `error`
     and nothing is reported deselected, so the run verifies nothing. A run that printed no
