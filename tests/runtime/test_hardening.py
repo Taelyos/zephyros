@@ -233,3 +233,26 @@ def test_atk_35_an_instance_of_project_b_sees_no_volume_of_project_a(runtime: Ru
         code, out = runtime.sh(b.turn, attempt)
         assert code != 0, f"{attempt}: {out}"
     assert runtime.sh(a.turn, "cat /work/secret")[1] == "secret-of-a"  # control
+
+
+# ----------------------------------------------------------------------------- ADR 0027
+def test_adr_0027_the_guard_runs_without_root_and_only_its_nft_holds_net_admin(
+    runtime: Runtime, turn: Instance
+) -> None:
+    """Every process of the guard runs as its user with no capability; NET_ADMIN, the one
+    capability of its bounding set, reaches nft alone, through a file capability."""
+    code, out = runtime.sh(
+        turn.guard,
+        "for f in /proc/[0-9]*/status; do "
+        "awk '/^Uid:/{u=$2} /^CapEff:/{e=$2} /^CapBnd:/{b=$2} END{print u, e, b}' $f; done",
+    )
+    assert code == 0, out
+    processes = {tuple(line.split()) for line in out.splitlines() if line.strip()}
+    assert processes == {("10002", "0000000000000000", "0000000000001000")}, out
+    # nft loads and lists the rules; any other program of the guard is refused NET_ADMIN.
+    assert runtime.sh(turn.guard, "nft list table inet zeph >/dev/null")[0] == 0
+    code, out = runtime.sh(turn.guard, "ip link add zs0 type dummy")
+    assert code != 0
+    assert "not permitted" in out
+    # No program of the image gains a privilege on exec: no setuid, no setgid.
+    assert runtime.sh(turn.guard, "find / -xdev -perm /6000 -type f 2>/dev/null")[1] == ""

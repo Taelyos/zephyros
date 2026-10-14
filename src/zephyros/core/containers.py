@@ -34,6 +34,13 @@ LABEL_EGRESS = "org.zephyros.egress"
 """On a guard: the level its rules were loaded at (ADR 0024). The hub stops a guard whose level
 is not the configured one, so a change of level never leaves an instance on the old rules."""
 INSTANCE_USER = "10000:10000"
+GUARD_USER = "10002:10002"
+"""The user of a network guard: not root (ADR 0027). Its image gives nft, and nft alone, the file
+capability NET_ADMIN, and lets only this group run it."""
+GUARD_SECURITY = ["no-new-privileges:false"]
+"""The one container without no-new-privileges, said in so many words so that a runtime whose
+default is on does not take the guard's file capability away (ADR 0027): its bounding set is
+NET_ADMIN alone, and its image holds no setuid program, so an exec gains nothing more."""
 HOME_PATH = "/opt/data"
 WORK_PATH = "/work"
 MAX_PROMPT = 4000
@@ -258,14 +265,15 @@ def guard_spec(
     policy: Policy, project_id: str, side: Side, subnet: ipaddress.IPv4Network, hub_address: str
 ) -> dict[str, Any]:
     """The network guard: the capability NET_ADMIN only, a fixed address, no listener and no
-    secret. It runs as root inside its container because an unprivileged user holds no
-    effective capability there, so it could not load its rules."""
+    secret. It runs as an unprivileged user; NET_ADMIN reaches it through the file capability of
+    nft alone, which is why no-new-privileges is off here and nowhere else (ADR 0027)."""
     inside(subnet, hub_address)
     network = network_name(project_id, side)
     host = _hardening(policy.guard_memory_mib, 64, 0.5)
     host.update(
         {
             "CapAdd": ["NET_ADMIN"],
+            "SecurityOpt": list(GUARD_SECURITY),
             "NetworkMode": network,
             "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=1m"},  # noqa: S108  # reason: a container path
         }
@@ -277,7 +285,7 @@ def guard_spec(
         host["Dns"] = list(policy.resolvers)
     return {
         "Image": policy.guard_image,
-        "User": "0:0",
+        "User": GUARD_USER,
         "Env": [
             f"HUB_IP={hub_address}",
             f"HUB_PORT={policy.hub_port}",
@@ -502,7 +510,12 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
         raise SpecError("capabilities other than the guard's NET_ADMIN are not permitted")
     if host.get("ReadonlyRootfs") is not True:
         raise SpecError("the root file system is read-only")
-    if host.get("SecurityOpt") != ["no-new-privileges"]:
+    if role is Role.GUARD:
+        if spec.get("User") != GUARD_USER:
+            raise SpecError("a guard runs as its unprivileged user, never as root")
+        if host.get("SecurityOpt") != GUARD_SECURITY:
+            raise SpecError("a guard has exactly the security options of its template")
+    elif host.get("SecurityOpt") != ["no-new-privileges"]:
         raise SpecError("no-new-privileges, and no other security option, is required")
     if host.get("IpcMode") != "none":
         raise SpecError("the IPC mode is none")
