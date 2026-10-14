@@ -50,7 +50,7 @@ from zephyros.core.contract import (
     parse_change,
     validate_object,
 )
-from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict
+from zephyros.core.deliveries import DeliveryRecord, DeliveryService, Verdict, report_for
 from zephyros.core.errors import Refusal, remedy
 from zephyros.core.gate import Inspected, every_acceptance_test
 from zephyros.core.importer import import_markdown
@@ -338,7 +338,8 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
         _spec(
             "delivery.status",
             Action.DELIVERY_STATUS,
-            "Describe a delivery: its state, the decision, the evidence report, the pull request.",
+            "Describe a delivery: its state, the decision, the evidence report, the pull request. "
+            "The Contractor reads the report without the output of the run.",
             _PROJECT,
             Field("delivery_id", Text(pattern=r"d[0-9]{1,6}"), "The delivery", required=True),
             scoped=True,
@@ -1027,7 +1028,8 @@ class Hub:
             "changed_paths": list(record.changed_paths),
             "pull_request": record.pull_request,
             "detail": record.detail,
-            "report": record.report,
+            # the Contractor reads the outcome of each test, not the output of the run (T07)
+            "report": report_for(record, caller.principal),
             "contract_version": record.contract_version,
             "inspections": {key: dict(value) for key, value in record.inspections.items()},
             "review": dict(record.review) if record.review is not None else None,
