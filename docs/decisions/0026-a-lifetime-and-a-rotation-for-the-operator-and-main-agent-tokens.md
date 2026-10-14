@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0013 gave every token a server-side record with an expiry, and project tokens expire (EXG-57). The operator token and the main-agent token did not: they were issued once, at the first start of the hub, never expired, were bound to no address, and could only be replaced by deleting the file and restarting the hub. Yet they hold every right of their channel: the operator writes the reserved data of every project, the main agent creates projects and speaks for the human. A copy of either, left in a backup, a shell history or the memory of an agent, stayed useful forever. The glossary of the specification already says that the lifetime of the main-agent token is set in the configuration.
+ADR 0013 gave every token a server-side record with an expiry, and project tokens expire (EXG-57). The operator token and the main-agent token did not: they were issued once, at the first start of the hub, never expired, were bound to no address, and could only be replaced by deleting the file and restarting the hub. Yet they hold every right of their channel: the operator writes the reserved data of every project, the main agent creates projects and speaks for the human. A copy of either, left in a backup, a shell history or the memory of an agent, stayed useful forever.
 
 The project owner decided on 2026-10-14 that both expire after a configurable lifetime, are refused clearly once expired, and can be rotated by a documented command, without breaking a deployment that is updated.
 

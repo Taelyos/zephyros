@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests.support.sockets import socket_path
 from zephyros.adapters.http.operator import build_operator_app
 from zephyros.adapters.memory.clock import FakeClock
 from zephyros.adapters.memory.instance_control import FakeInstanceControl
@@ -256,6 +257,22 @@ def test_the_command_line_says_when_no_hub_answers(
 ) -> None:
     assert cli_main(["hub", "rotate-token", "operator", "--socket", str(tmp_path / "x")]) == 1
     assert "did not answer on its control socket" in capsys.readouterr().err
+
+
+def test_the_command_line_finds_the_socket_in_the_configuration(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    socket = Path(socket_path(tmp_path, "elsewhere.sock"))
+    config = tmp_path / "zephyros.toml"
+    config.write_text(
+        f'schema_version = "1.15.0"\n[images]\ninstance = "sha256:{"a" * 64}"\n'
+        f'guard = "sha256:{"a" * 64}"\n[paths]\ncontrol_socket = "{socket}"\n',
+        encoding="utf-8",
+    )
+    assert cli_main(["hub", "rotate-token", "operator", "--config", str(config)]) == 1
+    assert str(socket) in capsys.readouterr().err  # it tried the configured socket
+    assert cli_main(["hub", "rotate-token", "operator", "--config", str(tmp_path / "x")]) == 2
+    assert "cannot read the configuration" in capsys.readouterr().err
 
 
 # ----------------------------------------------------------------------------- the refusal

@@ -23,13 +23,15 @@ version. Each schema carries its own version number.
   configuration schema refuses a wildcard address and an address of the instance pool for
   `hub.operator_bind` and `hub.main_agent_bind`; a hub in a container writes `"core"`, as
   `scripts/deploy.sh` now does. The core network of a deployment is now named
-  `zephyros-core-<project>`: after the update, the former `<project>_core` network is left
-  behind and can be removed.
+  `zephyros-core-<project>`: after the update, the former network is left behind; remove it
+  with `docker network rm zephyros_core` (the default project; `<project>_core` otherwise).
 - The operator and main-agent tokens expire
   ([ADR 0026](docs/decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md)),
   90 days after they are issued by default (`tokens.channel_lifetime_days`). A token issued
-  before the update gets that lifetime from the first start of the hub after it; by then, the
-  main agent needs a new token (`scripts/deploy.sh rotate-token main-agent`).
+  before the update gets that lifetime from the first start of the hub after the update, and
+  stops working when it ends (90 days after that start by default). Before that day, rotate it
+  (`scripts/deploy.sh rotate-token main-agent`) and give the main agent the new token; the
+  operator token needs nothing, `scripts/deploy.sh call` reads the new one from its file.
 
 ### Changed
 - The configuration schema, version 1.13.0: the models the gateway may serve come from the

@@ -586,6 +586,8 @@ def _rule_binds(data: Mapping[str, object]) -> list[Problem]:
         if value == CORE_ADDRESS:
             continue
         address = ipaddress.ip_address(value)
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped  # ::ffff:10.200.4.3 is 10.200.4.3
         if address.version == pool.version and address in pool:
             problems.append(
                 Problem(f"hub.{key}", "is an address of network.instance_pool, an instance network")

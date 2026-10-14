@@ -9,12 +9,22 @@ it from reaching the two listeners is therefore not a guard's rule. From the mac
 published ports still answer, so the publication stayed on the core network after the hub joined
 an instance network. Everything is checked again after a restart of the hub, which then starts
 with the instance network already attached.
+
+The hub's core address must be out of reach from the instance network: on Linux, the runtime's
+isolation between bridge networks drops that traffic, and this test expects it. Not measured on
+macOS: a runtime that routes between its networks would fail that check, and the hub's refusal of
+a peer of the instance pool would be the barrier; if such a runtime also hid the source address,
+the guard would be the only one.
+
+A control shows that the probe sees the defect this test is about: a listener on the wildcard
+address in the hub's own network namespace is found open from the instance network.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import json
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -198,3 +208,37 @@ def test_atk_13_no_guard_still_closed_after_a_restart_of_the_hub(
     """The hub starts again attached to the instance network, and still keeps off it."""
     deployment.restart_hub()
     check_the_listeners(deployment, instance_network)
+
+
+LISTENERS = """
+import socket, sys, time
+
+opened = []
+for host, port in (("0.0.0.0", 18081), (sys.argv[1], 18082)):
+    server = socket.socket()
+    server.bind((host, port))
+    server.listen()
+    opened.append(server)
+time.sleep(600)
+"""
+
+
+def test_atk_13_control_the_probe_sees_a_wildcard_listener_of_the_hub(
+    deployment: Deployment, instance_network: str
+) -> None:
+    """The defect this module is about, made on purpose: in the hub's own network namespace, a
+    listener on the wildcard address (what both listeners used to be) is open from the instance
+    network, and one on the core address, as the hub's now are, is not. The schema refuses the
+    wildcard for the hub's own listeners, so the control uses two spare ports beside them; with
+    the former wildcard on 8081 and 8082 themselves, the first test found both open."""
+    core = core_address(deployment)
+    docker("exec", "-d", deployment.hub, "/opt/zephyros/bin/python", "-c", LISTENERS, core)
+    on_instance = str(hub_address(SUBNET))
+    targets = [("wildcard", on_instance, 18081), ("core only", on_instance, 18082)]
+    found: dict[str, str] = {}
+    for _attempt in range(10):
+        found = probe(deployment, instance_network, targets)
+        if found["wildcard"] == "open":
+            break
+        time.sleep(1)
+    assert found == {"wildcard": "open", "core only": "refused"}, found

@@ -1,5 +1,5 @@
-"""ATK-87 for the operator and main-agent tokens: they expire, are refused once expired with the
-next step named, and a rotation replaces them without a restart (ADR 0026).
+"""ADR 0026: the operator and main-agent tokens expire, are refused once expired with the next
+step named, and a rotation replaces them without a restart.
 
 The world starts with the two tokens as a hub before the update issued them, without an expiry.
 Oracles: O-REFUSE (the answers), O-LOG (the refusals, the issue, the revocation), and the
@@ -53,7 +53,7 @@ def actions(world: World, action: Action) -> list[dict[str, Any]]:
     ]
 
 
-def test_atk_87_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path: Path) -> None:
+def test_adr_0026_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path: Path) -> None:
     files = {
         TokenKind.OPERATOR: tmp_path / "operator.token",
         TokenKind.MAIN_AGENT: tmp_path / "main-agent.token",
@@ -62,7 +62,7 @@ def test_atk_87_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path
         files[kind].write_text(world[actor].secret + "\n", encoding="ascii")
     operator, main = world["operator"].secret, world["main"].secret
 
-    world.step("ATK-87.a the update gives the tokens it finds a lifetime, and breaks nothing")
+    world.step("ADR-0026.a the update gives the tokens it finds a lifetime, and breaks nothing")
     channel_of(world, files).prepare()
     assert read(files[TokenKind.OPERATOR]) == operator
     assert {r["kind"] for r in actions(world, Action.TOKEN_LIFETIME)} == {"operator", "main-agent"}
@@ -70,7 +70,7 @@ def test_atk_87_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path
     assert operator_answer(world, operator).status_code == 200
     assert main_answer(world, main).status_code == 200
 
-    world.step("ATK-87.b past the lifetime, each is refused, logged, and told what to do")
+    world.step("ADR-0026.b past the lifetime, each is refused, logged, and told what to do")
     world.clock.advance(1)
     for answer, command in (
         (operator_answer(world, operator), "rotate-token operator"),
@@ -87,7 +87,7 @@ def test_atk_87_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path
     ]
     assert len(expired) == 2
 
-    world.step("ATK-87.c the rotation writes new tokens; the old ones stay refused")
+    world.step("ADR-0026.c the rotation writes new tokens; the old ones stay refused")
     control = TestClient(build_control_app(channel_of(world, files)))
     for name in ("operator", "main-agent"):
         answer = control.post("/tokens/rotate", json={"kind": name})
@@ -101,7 +101,7 @@ def test_atk_87_the_channel_tokens_expire_and_are_rotated(world: World, tmp_path
     rotations = [r["kind"] for r in actions(world, Action.TOKEN_ISSUE) if r["why"] == "rotation"]
     assert rotations == ["operator", "main-agent"]
 
-    world.step("ATK-87.d after a restart of the hub, the rotated tokens still work")
+    world.step("ADR-0026.d after a restart of the hub, the rotated tokens still work")
     world.restart_hub()
     channel_of(world, files).prepare()
     assert (read(files[TokenKind.OPERATOR]), read(files[TokenKind.MAIN_AGENT])) == (

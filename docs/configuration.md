@@ -7,7 +7,7 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.15.0. A file declares the version it was written for in `schema_version`; the hub accepts any 1.x file and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.15.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
@@ -87,6 +87,17 @@ The proxy opens a tunnel to an allowed host whatever the request inside: it does
 **Changing the level.** A guard loads its rules when it starts and carries its level as a label. When the hub starts, and each time it looks at an instance, it takes down a guard whose level is not the configured one (an instance made before 1.14.0 included) and logs it (`instance.egress`, `why: level_changed`). The turn under way stops; the volumes stay, and the next start of the instance brings it up at the new level.
 
 With `scripts/deploy.sh`, `ZEPHYROS_EGRESS` sets the level and `ZEPHYROS_ALLOWED_HOSTS` the list (comma-separated).
+
+## Where the operator channel and the main-agent endpoint listen
+
+With `"core"` (what `scripts/deploy.sh` writes), the hub reads the IPv4 addresses of its container when it starts, and listens on the one that is neither a loopback nor inside `network.instance_pool` (its address on the core network), and on its own loopback ([ADR 0025](decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). When there is not exactly one such address, it refuses to start, before anything opens, and names what it found:
+
+```
+refused to start: "core" needs exactly one address of the hub outside the instance pool 10.200.0.0/16 and the loopback; found none
+```
+
+- **found none**: the instance pool covers the core network too, for example a `ZEPHYROS_POOL` of `172.16.0.0/12` where the runtime gives the core network an address in `172.18.0.0/16`. Choose a pool that no other network of the machine uses (the default, `10.200.0.0/16`, or another range of `10.0.0.0/8`), then `scripts/deploy.sh up` again.
+- **found two or more**: the hub is still attached to instance networks taken from a former pool, outside the current one. `scripts/deploy.sh down` removes every instance network (the instances keep their volumes), and `scripts/deploy.sh up` starts the hub again; the hub creates the networks again from the current pool when it starts the instances.
 
 ## The operator and main-agent tokens
 

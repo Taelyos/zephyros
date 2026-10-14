@@ -225,8 +225,13 @@ def test_rules_across_keys() -> None:
         assert key in [problem.key for problem in caught.value.problems], key
 
 
+WILDCARD = "0.0.0.0"  # noqa: S104  # reason: a value under test, not a bind
+
+
 @pytest.mark.parametrize("key", ["hub.operator_bind", "hub.main_agent_bind"])
-@pytest.mark.parametrize("value", ["0.0.0.0", "::", "10.200.4.3", "anywhere"])  # noqa: S104  # reason: values under test, not a bind
+@pytest.mark.parametrize(
+    "value", [WILDCARD, "::", "::ffff:0.0.0.0", "10.200.4.3", "::ffff:10.200.4.3", "anywhere"]
+)
 def test_the_operator_and_main_agent_never_listen_on_an_instance_network(
     key: str, value: str
 ) -> None:

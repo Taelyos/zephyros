@@ -174,7 +174,8 @@ call() {
 }
 
 rotate_token() {
-  docker exec "$ZEPHYROS_HUB_NAME" /opt/zephyros/bin/zephyros hub rotate-token "$1"
+  docker exec "$ZEPHYROS_HUB_NAME" /opt/zephyros/bin/zephyros hub rotate-token "$1" \
+    --config /etc/zephyros/zephyros.toml
 }
 
 case "${1:-}" in

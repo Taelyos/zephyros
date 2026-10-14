@@ -40,3 +40,5 @@ scripts/deploy.sh rotate-token main-agent    # then give the main agent the new 
 ```
 
 The running hub writes the new token to the file and revokes the old one; the turns under way go on ([ADR 0026](decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md), [configuration](configuration.md#the-operator-and-main-agent-tokens)).
+
+A deployment made before the core network was named `zephyros-core-<project>` (ADR 0025) keeps its former network after `scripts/deploy.sh up`; remove it with `docker network rm zephyros_core` (`<project>_core` for another `ZEPHYROS_PROJECT`). If the hub then refuses to start with `"core" needs exactly one address`, see [configuration](configuration.md#where-the-operator-channel-and-the-main-agent-endpoint-listen).

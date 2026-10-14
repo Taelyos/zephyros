@@ -52,17 +52,26 @@ SECONDS_PER_DAY: Final = 86_400
 
 def write_token_file(path: Path, secret: str) -> None:
     """Replace `path` with a file holding `secret`, mode 0600 from its creation: a reader sees
-    the old token or the new one, never a part of either."""
+    the old token or the new one, never a part of either. The new file is on disk before it
+    takes the name, and the name before this returns: after a power cut, the file holds a whole
+    token, the old one or the new, never an empty file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(descriptor, "w", encoding="ascii") as handle:
             handle.write(secret + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 @dataclass(frozen=True, slots=True)
