@@ -22,18 +22,32 @@ external guard had to stop such turns from then on.
   can no longer be approved, so it does not count.
 - The hub checks again each time a version or a pending change comes or goes
   (`contract.propose`, `contract.approve`, `contract.reject`, `contract.apply_reserved`,
-  `contract.import`). A released task starts its ladder from the wake, counted from the release,
-  because what the Contractor is to build has changed. A turn already running is not stopped.
+  `contract.import`). A released task starts its ladder from the wake, counted from the
+  release. A version that comes while the task is not held leaves its ladder where it is. A turn
+  already running is not stopped.
+- The log records each hold, with its reason (`why`: `no_acceptance_test` or
+  `pending_decision`), and each release, as `continuity.step` records with the steps `hold`
+  and `release`. The operator can tell a task held by its contract from a ladder that stopped.
 - The Owner side's decision task is unchanged.
 
 ## Consequences
 - Positive: the hub no longer spends a Contractor turn on a contract still being written,
   whatever order the operator follows.
-- Positive: while a change awaits a decision, only the Owner side's decision task escalates, and
-  that is the side the work waits on.
-- Negative: a contract that names no acceptance test never wakes the Contractor. That covers a
-  contract verified by inspection alone, and one imported from Markdown, whose criteria name no
-  test. The main agent or the operator starts the Contractor then.
+- Positive: while a change awaits a decision, only the Owner side's decision task escalates.
+- Negative: for a contract that names no acceptance test, the Contractor's ladder does not start
+  at all: no wake, no restart, no alert, even when the operator started the Contractor by hand
+  and it stalls. That covers a contract verified by inspection alone, and one imported from
+  Markdown, whose criteria name no test. The log shows the task held, with its reason.
+- Negative: one named test is enough. When the Owner side writes the contract in several
+  proposals, approved more than `continuity.inactivity_seconds` apart, the Contractor can be
+  woken between two of them.
+- Negative: every proposal resets the Owner side's decision task and holds the Contractor's. An
+  Owner side that proposes more often than `continuity.inactivity_seconds` (a model in a loop,
+  or a hostile instance) keeps both ladders silent. A later ticket on the decision task covers
+  this.
+- Negative: the delivery loop's thread reads the contract, then creates the task. An approval
+  between the two releases a task that does not exist yet, which stays held until the next
+  change of the contract. The window is a few milliseconds; a lock is planned (T12).
 - Negative: the ladder still lives in the hub's memory only. After a restart of the hub, the
   Contractor's task begins again with the next preparation of its base.
 - Negative: the Owner side's decision task still ends with any decision of the project. If
