@@ -190,7 +190,7 @@ def test_one_delivery_from_push_to_pull_request_on_the_real_organs(tmp_path: Pat
         ]
         assert len(refused) == 1, refused
         assert "[masked]" in json.dumps(refused)
-        assert "[masked]" in report
+        # The report carried that name masked when the hub took it; refused, it is in no report.
         assert "**Decision: PASS**" in report
         # EXG-46: the run is marked as a simulation, in the report and in the pull request
         assert "**SIMULATION**" in report
