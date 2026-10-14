@@ -16,6 +16,22 @@ COPY --chmod=0755 entrypoint.sh /opt/zephyros/entrypoint.sh
 # The work volume. A new named volume mounted here takes this owner, so the turn can write it.
 RUN mkdir -p /work && chown 10000:10000 /work
 
+# The test runner of the work (ADR 0024): a sealed instance installs nothing, so pytest and its
+# wheels are here, with the versions and hashes of the "tests" kit, installed by hash only. They
+# go to the standalone Python the image ships (/usr/local/bin/python3, 3.14), never into the
+# virtual environment of Hermes, whose pins stay its own. /opt/zephyros/bin comes first on the
+# PATH, so `python3`, `python` and `pytest` of a turn are that Python; Hermes runs from its own
+# absolute path and does not change.
+COPY --chmod=0644 requirements-tests.txt /opt/zephyros/requirements-tests.txt
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir --no-deps --only-binary :all: \
+        --require-hashes --disable-pip-version-check -r /opt/zephyros/requirements-tests.txt \
+    && mkdir -p /opt/zephyros/bin \
+    && ln -s /usr/local/bin/python3 /opt/zephyros/bin/python3 \
+    && ln -s /usr/local/bin/python3 /opt/zephyros/bin/python \
+    && ln -s "$(dirname "$(readlink -f /usr/local/bin/python3)")/pytest" /opt/zephyros/bin/pytest \
+    && /opt/zephyros/bin/pytest --version
+ENV PATH=/opt/zephyros/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 USER 10000:10000
 WORKDIR /work
 ENTRYPOINT ["/opt/zephyros/entrypoint.sh"]
