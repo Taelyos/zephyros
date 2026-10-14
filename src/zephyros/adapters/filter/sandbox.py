@@ -100,16 +100,17 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
     return manifest, clean.getvalue()
 
 
-def parse_outcomes(log: str, tests: tuple[str, ...]) -> dict[str, str]:
-    """One outcome per test asked for, from the signed outcome line of the kit.
+def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The outcome of each test asked for and the tests the kit deselected, from its signed line.
 
     The kit prints a run line carrying a nonce (which only ever lands in the container's log —
-    write-only from the inside) and one outcome line signed with it. An honest kit prints the
-    pair once; anything else — a missing run line, a second line, a signature that does not
-    match — means the log was written by someone else too (the delivered code can reach it,
-    ATK-22), and nothing is believed: every test reads `error`, so the run verifies nothing.
-    A run that printed no outcome line at all (it died before its end) claims nothing: its
-    tests read `not_run`."""
+    write-only from the inside) and one outcome line signed with it. The signed payload is
+    `{"outcomes": {name: outcome}, "deselected": [name, ...]}`, so the HMAC covers both. An
+    honest kit prints the pair once; anything else — a missing run line, a second line, a
+    signature that does not match — means the log was written by someone else too (the
+    delivered code can reach it, ATK-22), and nothing is believed: every test reads `error`
+    and nothing is reported deselected, so the run verifies nothing. A run that printed no
+    outcome line at all (it died before its end) claims nothing: its tests read `not_run`."""
     runs: list[str] = []
     lines: list[str] = []
     for line in log.splitlines():
@@ -118,24 +119,31 @@ def parse_outcomes(log: str, tests: tuple[str, ...]) -> dict[str, str]:
         elif line.startswith(OUTCOME_MARK):
             lines.append(line[len(OUTCOME_MARK) :])
     if not runs and not lines:
-        return dict.fromkeys(tests, "not_run")
+        return dict.fromkeys(tests, "not_run"), ()
     if len(runs) == 1 and not lines:
-        return dict.fromkeys(tests, "not_run")
+        return dict.fromkeys(tests, "not_run"), ()
     if len(runs) != 1 or len(lines) != 1:
-        return dict.fromkeys(tests, "error")
+        return dict.fromkeys(tests, "error"), ()
     payload, _, mac = lines[0].rpartition(" ")
     if not payload or not mac:
-        return dict.fromkeys(tests, "error")
+        return dict.fromkeys(tests, "error"), ()
     expected = hmac.new(runs[0].encode(), payload.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, mac):
-        return dict.fromkeys(tests, "error")
+        return dict.fromkeys(tests, "error"), ()
     try:
         found = json.loads(payload)
     except ValueError:
-        return dict.fromkeys(tests, "error")
-    if not isinstance(found, dict):
-        return dict.fromkeys(tests, "error")
-    return {test: str(found[test]) if found.get(test) in OUTCOMES else "not_run" for test in tests}
+        return dict.fromkeys(tests, "error"), ()
+    if not isinstance(found, dict) or not isinstance(found.get("outcomes"), dict):
+        return dict.fromkeys(tests, "error"), ()
+    reported = found["outcomes"]
+    outcomes = {
+        test: str(reported[test]) if reported.get(test) in OUTCOMES else "not_run" for test in tests
+    }
+    raw = found.get("deselected", [])
+    items = raw if isinstance(raw, list) else []
+    deselected = tuple(item for item in items if isinstance(item, str))
+    return outcomes, deselected
 
 
 def run_sandbox(
@@ -174,10 +182,11 @@ def run_sandbox(
     finally:
         _destroy(api, name)
     duration = monotonic() - started
-    outcomes = parse_outcomes(log, manifest.tests)
+    outcomes, deselected = parse_outcomes(log, manifest.tests)
     journal.record("done", "sandbox.run", "ok", project_id=manifest.project_id, run=run)
     return {
         "outcomes": outcomes,
+        "deselected": list(deselected),
         "log": log[-LOG_LIMIT:],
         "exit_code": exit_code,
         "timed_out": exit_code is None,

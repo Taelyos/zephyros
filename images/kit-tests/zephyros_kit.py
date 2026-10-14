@@ -4,7 +4,8 @@ It reads the acceptance tests asked for (`path::name`) from /work/zephyros-reque
 only their files, runs only them, and prints their outcomes on one signed line at the end:
 
     ZEPHYROS-RUN <nonce>
-    ZEPHYROS-OUTCOMES {"path::name": "passed" | "failed" | "error" | "not_run"} <hmac>
+    ZEPHYROS-OUTCOMES {"outcomes": {"path::name": "passed|failed|error|not_run"},
+                       "deselected": ["path::name", ...]} <hmac>
 
 The nonce is invented here, at the first hook, and only ever written to the container's log —
 which is write-only from the inside (a container cannot read back its own stdout). The outcomes
@@ -47,6 +48,7 @@ def _asked() -> list[str]:
 
 ASKED = _asked()
 OUTCOMES: dict[str, str] = dict.fromkeys(ASKED, "not_run")
+DESELECTED: list[str] = []
 BROKEN_FILES: set[str] = set()
 
 
@@ -78,11 +80,14 @@ def pytest_collectreport(report: pytest.CollectReport) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # Only the tests a criterion named run; the other tests collected from the asked files are
+    # deselected and reported as such, so the hub can say which acceptance tests never ran (A2).
     wanted = set(ASKED)
     kept = [item for item in items if item.nodeid in wanted]
     dropped = [item for item in items if item.nodeid not in wanted]
     if dropped:
         config.hook.pytest_deselected(items=dropped)
+        DESELECTED[:] = sorted({item.nodeid for item in dropped})
     items[:] = kept
 
 
@@ -103,7 +108,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     for test in ASKED:
         if OUTCOMES[test] == "not_run" and test.split("::", 1)[0] in BROKEN_FILES:
             OUTCOMES[test] = "error"
-    payload = json.dumps(OUTCOMES, sort_keys=True)
+    payload = json.dumps({"outcomes": OUTCOMES, "deselected": DESELECTED}, sort_keys=True)
     mac = hmac.new(_NONCE.encode(), payload.encode(), hashlib.sha256).hexdigest()
     # the leading newline keeps the line whole: it may follow pytest's own last write
     print("\n" + MARK + payload + " " + mac, file=REAL_OUT, flush=True)

@@ -214,9 +214,12 @@ def test_the_size_limits_are_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
 NONCE = "test-nonce"
 
 
-def signed(outcomes: dict[str, str], nonce: str = NONCE) -> str:
-    """The two lines of an honest kit: the run line, then the signed outcome line."""
-    payload = json.dumps(outcomes, sort_keys=True)
+def signed(
+    outcomes: dict[str, str], nonce: str = NONCE, deselected: list[str] | None = None
+) -> str:
+    """The two lines of an honest kit: the run line, then the signed outcome line. The signed
+    payload carries both the outcomes and the deselected tests (interface 0.2.0)."""
+    payload = json.dumps({"outcomes": outcomes, "deselected": deselected or []}, sort_keys=True)
     mac = hmac.new(nonce.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"ZEPHYROS-RUN {nonce}\nZEPHYROS-OUTCOMES {payload} {mac}"
 
@@ -225,24 +228,51 @@ def test_the_signed_pair_is_believed_and_everything_else_is_not_run() -> None:
     log = "\n".join(
         [
             "noise",
-            signed({"test_a.py::test_a": "failed", "test_b.py::test_b": "weird"}),
+            signed(
+                {"test_a.py::test_a": "failed", "test_b.py::test_b": "weird"},
+                deselected=["test_a.py::test_other"],
+            ),
         ]
     )
-    assert parse_outcomes(log, TESTS) == {
-        "test_a.py::test_a": "failed",
-        "test_b.py::test_b": "not_run",
-    }
+    assert parse_outcomes(log, TESTS) == (
+        {"test_a.py::test_a": "failed", "test_b.py::test_b": "not_run"},
+        ("test_a.py::test_other",),
+    )
+
+
+def test_deselected_tests_are_inside_the_signed_payload() -> None:
+    """The deselected list is part of the signed payload (0.2.0), so it is authenticated like the
+    outcomes: tampering with it after signing breaks the pair and nothing is believed."""
+    good = signed({"test_a.py::test_a": "passed"}, deselected=["test_a.py::test_extra"])
+    assert parse_outcomes(good, TESTS)[1] == ("test_a.py::test_extra",)
+    payload, _, mac = good.rpartition(" ")
+    tampered = payload.replace("test_extra", "test_hidden")
+    assert parse_outcomes(f"{tampered} {mac}", TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_non_string_in_the_deselected_list_is_dropped() -> None:
+    """A validly signed payload whose deselected list holds anything but a test identifier keeps
+    only the identifiers: the filter never passes on a stray value."""
+    body = json.dumps(
+        {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": ["x::y", 7, None]},
+        sort_keys=True,
+    )
+    mac = hmac.new(NONCE.encode(), body.encode(), hashlib.sha256).hexdigest()
+    log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {body} {mac}"
+    outcomes, deselected = parse_outcomes(log, ("test_a.py::test_a",))
+    assert outcomes == {"test_a.py::test_a": "passed"}
+    assert deselected == ("x::y",)
 
 
 def test_a_line_without_a_run_line_is_not_believed() -> None:
     """ATK-22: a line with no run line of the kit is someone else's."""
     log = 'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"} 00ff'
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_a_forged_line_next_to_the_real_one_is_not_believed() -> None:
-    """ATK-22: the delivered code can reach the log and write a pair of its own — with the
-    kit's own run line already there, anything but the kit's single signed line is refused."""
+    """ATK-22: a black-box test's subprocess can reach the log and write a pair of its own — with
+    the kit's own run line already there, anything but the kit's single signed line is refused."""
     log = "\n".join(
         [
             f"ZEPHYROS-RUN {NONCE}",
@@ -250,29 +280,38 @@ def test_a_forged_line_next_to_the_real_one_is_not_believed() -> None:
             signed({"test_a.py::test_a": "passed"}),
         ]
     )
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_a_signature_that_does_not_match_is_not_believed() -> None:
-    payload = '{"test_a.py::test_a": "passed"}'
+    payload = '{"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}'
     log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {payload} {'0' * 64}"
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_a_second_outcome_line_is_not_believed() -> None:
-    """ATK-22: an honest kit prints its results once; a delivered test can reach the log and
-    print a line of its own — more than one line means nothing is believed."""
+    """ATK-22: an honest kit prints its results once; a black-box test's subprocess can reach the
+    log and print a line of its own — more than one line means nothing is believed."""
     log = "\n".join(
         [
-            'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"}',
-            'ZEPHYROS-OUTCOMES {"test_a.py::test_a": "passed"}',
+            'ZEPHYROS-OUTCOMES {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}',
+            'ZEPHYROS-OUTCOMES {"outcomes": {"test_a.py::test_a": "passed"}, "deselected": []}',
         ]
     )
-    assert parse_outcomes(log, TESTS) == dict.fromkeys(TESTS, "error")
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_payload_without_an_outcomes_object_is_not_believed() -> None:
+    """0.2.0: the signed payload is an object with an `outcomes` mapping; the old flat shape, or
+    anything else, is refused rather than guessed at — even when its own signature is valid."""
+    legacy = '{"test_a.py::test_a": "passed"}'
+    mac = hmac.new(NONCE.encode(), legacy.encode(), hashlib.sha256).hexdigest()
+    log = f"ZEPHYROS-RUN {NONCE}\nZEPHYROS-OUTCOMES {legacy} {mac}"
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
 
 
 def test_without_an_outcome_line_every_test_is_not_run() -> None:
-    assert parse_outcomes("nothing to see", TESTS) == dict.fromkeys(TESTS, "not_run")
+    assert parse_outcomes("nothing to see", TESTS) == (dict.fromkeys(TESTS, "not_run"), ())
 
 
 # ----------------------------------------------------------------------------- one run

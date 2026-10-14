@@ -110,6 +110,7 @@ class SandboxRunner:
             else Outcome.NOT_RUN
             for test in asked.tests
         }
+        deselected = tuple(t for t in answer.get("deselected", []) if isinstance(t, str))
         log = str(answer.get("log", ""))
         timed_out = bool(answer.get("timed_out"))
         if timed_out:
@@ -117,7 +118,10 @@ class SandboxRunner:
             # ATK-22: a run stopped at its limit proves nothing — nothing was verified, and a
             # results line printed before the kill is not believed either.
             outcomes = dict.fromkeys(asked.tests, Outcome.NOT_RUN)
+            deselected = ()
         else:
             _check_canaries(canaries, outcomes)
         mine = {test: outcomes[test] for test in request.tests}
-        return VerificationResult(mine, log, {}, float(answer.get("duration_seconds", 0.0)))
+        return VerificationResult(
+            mine, log, {}, float(answer.get("duration_seconds", 0.0)), deselected
+        )

@@ -252,3 +252,25 @@ def test_a_file_of_the_tree_cannot_shadow_the_kit_plugin() -> None:
     )
     result = runner.run(request)
     assert result.outcomes["test_ok.py::test_ok"] is Outcome.PASSED
+
+
+def test_a_black_box_test_passes_and_the_kit_reports_the_tests_it_did_not_run() -> None:
+    """The deselected list (interface 0.2.0, audit A2), end to end. A test in the asked file is
+    not named by a criterion: the kit does not run it, and reports it as deselected."""
+    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
+        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
+    client = FilterClient.over_socket(str(the_filter().socket))
+    runner = SandboxRunner(client, ["tests"])
+    test_file = (
+        "def test_add():\n    assert 1 + 2 == 3\n\n\ndef test_not_named():\n    assert False\n"
+    )
+    request = VerificationRequest(
+        "p_rtdeselect",
+        "tests",
+        {"test_calc.py": test_file.encode()},
+        ("test_calc.py::test_add",),
+        timeout_seconds=60,
+    )
+    result = runner.run(request)
+    assert result.outcomes["test_calc.py::test_add"] is Outcome.PASSED
+    assert result.deselected == ("test_calc.py::test_not_named",)

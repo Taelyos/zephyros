@@ -110,9 +110,9 @@ Dummy: `InMemoryDeliveryArea`, trees in a dictionary and packages in a small JSO
 
 ## VerificationRunner
 
-Version: `0.1.0`
+Version: `0.2.0`
 
-What starts the project under verification and observes it, for one verification kit (ADR 0017). Given the files to verify and the acceptance tests to run, it returns one outcome per test (`passed`, `failed`, `error`, `not_run`) with bounded evidence: a log cut to 20 000 characters, and files such as screenshots. It renders no decision; the gate does.
+What starts the project under verification and observes it, for one verification kit (ADR 0017). Given the files to verify and the acceptance tests to run, it returns one outcome per test (`passed`, `failed`, `error`, `not_run`) with bounded evidence: a log cut to 20 000 characters, and files such as screenshots. It also returns `deselected`: the tests the kit found in the asked files but did not run because no acceptance criterion named them, so the report can say which acceptance tests never ran. It renders no decision; the gate does.
 
 Every run also carries **canary tests of the hub** (two, named at random) that must fail (ATK-22): the delivery shares the sandbox with the kit, so a conftest that marks every test passed, an early exit or a monkeypatched framework could otherwise forge the result. A run whose canary did not come back failed is not believed: the verification fails with an error. The kit runs with the working directory off `sys.path` (`python -P`), so a file of the delivery cannot shadow the kit plugin it is judged by.
 
@@ -122,6 +122,8 @@ Every run also carries **canary tests of the hub** (two, named at random) that m
 | `kits` | The kits this runner can run |
 | `run(VerificationRequest) -> VerificationResult` | Run the acceptance tests of the request with its kit; `VerificationError` for a kit the runner does not run |
 
-What the suite checks: the major version; the runner names the kit it runs; a passing test passes and a failing one fails; a broken test never passes; every test asked for gets exactly one outcome and no other test gets one, and an absent test does not pass; the same request gives the same outcomes twice; an unknown kit is refused.
+`VerificationResult` carries `outcomes` (one per test asked for), `log`, `evidence`, `duration_seconds` and `deselected` (tests seen in the asked files but not named by a criterion; none is a test asked for).
+
+What the suite checks: the major version; the runner names the kit it runs; a passing test passes and a failing one fails; a broken test never passes; every test asked for gets exactly one outcome and no other test gets one, an absent test does not pass, and the deselected tests are well-formed and never shadow a test asked for; the same request gives the same outcomes twice; an unknown kit is refused.
 
 Dummy: `AssertionRunner`, whose one kit ("assertions") runs no code: a test `path::name` passes when the file holds the line `name: pass`.

@@ -4,7 +4,9 @@ A runner runs one verification kit (ADR 0017): how to start the project and how 
 It is given the files to verify and the acceptance tests to run, and returns one outcome per
 test with bounded evidence. It renders no decision: the gate does (ADR 0005).
 
-Version 0.x.
+Version 0.x. 0.2.0 adds `VerificationResult.deselected`: the tests the kit found in the asked
+files but did not run because no acceptance criterion named them, so the report can say which
+acceptance tests never ran (audit A2).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
-INTERFACE_VERSION = "0.1.0"
+INTERFACE_VERSION = "0.2.0"
 MAX_LOG = 20_000
 
 
@@ -60,11 +62,15 @@ class VerificationResult:
     evidence: Mapping[str, bytes] = field(default_factory=dict)
     """Files the kit produced as evidence (screenshots), by name."""
     duration_seconds: float = 0.0
+    deselected: tuple[str, ...] = ()
+    """Tests the kit found in the asked files but did not run, because no criterion named them
+    (`path::name`). None of them is a test asked for. The report lists them as never run."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "outcomes", MappingProxyType(dict(self.outcomes)))
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
         object.__setattr__(self, "log", self.log[:MAX_LOG])
+        object.__setattr__(self, "deselected", tuple(self.deselected))
 
 
 class VerificationRunner(Protocol):
@@ -78,6 +84,7 @@ class VerificationRunner(Protocol):
 
     def run(self, request: VerificationRequest) -> VerificationResult:
         """Run the acceptance tests of the request with its kit. Every test asked for gets
-        exactly one outcome, and no other test gets one. Raises VerificationError for a kit it
-        does not run."""
+        exactly one outcome, and no other test gets one. `deselected` names tests the kit saw in
+        the asked files but did not run for want of a criterion; none of them is a test asked
+        for. Raises VerificationError for a kit it does not run."""
         ...
