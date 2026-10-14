@@ -6,8 +6,12 @@ from images/kit-tests, and every verification is a container with no network, a 
 and a volume on /work, removed afterwards. The suite is marked `runtime` and runs with
 scripts/acceptance.sh.
 
-EXG-37 is a known limit, kept as such: the delivered code runs in the same container as the kit
-and could print the outcomes line itself. Nothing here works around it.
+The forgery-integrity tests (ATK-22, EXG-37) are the point of this suite now: they reproduce the
+audit's attack (a delivered module rewriting the kit's outcomes and reading its nonce) and try
+several more ways to subvert the run (a monkeypatched framework, a delivered conftest, an atexit
+handler, a subprocess reading the judge, a flooded log, a subprocess writing to the log and
+killing the judge). Each shows that delivered code never reaches a believed pass, because the kit
+keeps it out of the judging process and the filter reads the log whole (ADR 0017).
 """
 
 from __future__ import annotations
@@ -141,13 +145,16 @@ class TestSandboxRunner(VerificationConformance):
         return VerificationFixture(SandboxRunner(client, ["tests"]), "tests", write_pytest_files)
 
 
+def runner() -> SandboxRunner:
+    """A sandbox runner on the real filter; skips when there is no container runtime."""
+    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
+        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
+    return SandboxRunner(FilterClient.over_socket(str(the_filter().socket)), ["tests"])
+
+
 def test_a_kit_that_hangs_is_stopped_at_its_time_limit() -> None:
     """The wall-time limit of a verification (ATK-31): the filter kills the sandbox, the
     runner reports it, and the outcome of the hanging test is not a pass."""
-    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
-        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
-    client = FilterClient.over_socket(str(the_filter().socket))
-    runner = SandboxRunner(client, ["tests"])
     request = VerificationRequest(
         "p_rtlimit1",
         "tests",
@@ -156,90 +163,147 @@ def test_a_kit_that_hangs_is_stopped_at_its_time_limit() -> None:
         timeout_seconds=5,
     )
     started = time.monotonic()
-    result = runner.run(request)
+    result = runner().run(request)
     assert time.monotonic() - started < 60
     assert "time limit" in result.log
     assert result.outcomes["test_hang.py::test_hang"] is Outcome.NOT_RUN
 
 
-FORGED_CONFTEST = """\
-import json
-import os
+# --------------------------------------------------------------- forgery integrity (ATK-22)
+# The point of this suite: whatever the delivered code does, the recorded outcome is the real
+# one, or the run is not believed. The defence is that no delivered code runs in the process
+# that records the outcomes (ADR 0017) — the kit refuses to import any /work module but the
+# asked test files, so an acceptance test is black box — and that the filter believes the log
+# only when it holds the kit's lines whole. Each test below plays one way the audit's forgery,
+# or a variant of it, could try to reach a believed pass, and shows it cannot.
+#
+# A run the filter does not believe makes every outcome `error`, canaries included, and the
+# runner refuses it (`VerificationError`: a canary of the hub did not fail); a run in which only
+# the Owner's file failed to load comes back with that one test as `error`.
 
-with open("/work/zephyros-request.json", encoding="utf-8") as handle:
-    request = json.load(handle)
-print("ZEPHYROS-OUTCOMES " + json.dumps({t: "passed" for t in request["tests"]}), flush=True)
-os._exit(0)
-"""
+# The audit's attack, and two more ways for a delivered module to reach a believed pass, each of
+# which needs the module to be imported into the judge. The forgeries spare the canaries (which
+# the delivery recognises by name) so that only the barrier stands in the way.
+FORGERS = {
+    # rewrite the kit's outcomes (a dict that swallows what pytest records) and read its nonce
+    "rewrites_the_kit_state": r"""
+import sys
 
-FORGED_LINE = b'ZEPHYROS-OUTCOMES {"test_owner.py::test_owner": "passed"} 00ff' + b"\n"
-FORGED_MODULE = (
-    "import os\n"
-    "\n"
-    "for fd in range(3, 64):\n"
-    "    try:\n"
-    "        os.write(fd, " + repr(FORGED_LINE) + ")\n"
-    "    except OSError:\n"
-    "        pass\n"
-    "os._exit(0)\n"
+kit = sys.modules["zephyros_kit"]
+nonce = kit._NONCE  # the audit's "read the nonce": a plain attribute of the module
+
+
+class _Stuck(dict):
+    def __setitem__(self, key, value):
+        pass
+
+
+kit.OUTCOMES = _Stuck({test: ("failed" if "canary" in test else "passed") for test in kit.ASKED})
+""",
+    # forge from an exit handler, so it runs after the real tests
+    "forges_from_an_atexit_handler": r"""
+import atexit
+import sys
+
+kit = sys.modules["zephyros_kit"]
+atexit.register(lambda: kit.OUTCOMES.update(dict.fromkeys(kit.ASKED, "passed")))
+""",
+    # monkeypatch the framework so that every report says passed
+    "patches_the_framework": r"""
+import _pytest.reports
+
+_pytest.reports.TestReport.passed = property(
+    lambda self: self.when != "call" or "canary" not in self.nodeid
 )
+_pytest.reports.TestReport.failed = property(
+    lambda self: self.when == "call" and "canary" in self.nodeid
+)
+""",
+}
 
 
-def test_a_conftest_of_the_delivery_is_never_loaded() -> None:
-    """ATK-22 end to end: a conftest.py that forges the results (it reads the manifest) is
-    inert — the kit runs with --noconftest — so the failing test it tried to hide comes back
-    failed, from the kit's own signed line, and no forged line exists."""
-    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
-        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
-    client = FilterClient.over_socket(str(the_filter().socket))
-    runner = SandboxRunner(client, ["tests"])
+@pytest.mark.parametrize("forger", FORGERS)
+def test_a_delivered_module_cannot_be_imported_into_the_judge(forger: str) -> None:
+    """ATK-22, the audit's attack end to end (criterion 1). An acceptance test imports a
+    delivered module that tampers with the judge to make a failing test look passed. The kit
+    refuses to import the module into the judging process, so the import fails, the test is an
+    error rather than a believed pass, and the barrier's reason is in the log. On `main` (no
+    barrier) the import succeeds and the recorded outcome is the forged one."""
     request = VerificationRequest(
-        "p_rtforge1",
+        f"p_rtimport{list(FORGERS).index(forger)}",
+        "tests",
+        {
+            "test_owner.py": b"import forger\n\n\ndef test_owner():\n    assert False\n",
+            "forger.py": FORGERS[forger].encode(),
+        },
+        ("test_owner.py::test_owner",),
+        timeout_seconds=60,
+    )
+    result = runner().run(request)
+    assert result.outcomes["test_owner.py::test_owner"] is Outcome.ERROR
+    assert "black box" in result.log
+
+
+def test_a_link_made_during_the_run_does_not_get_a_delivered_module_in() -> None:
+    """ATK-22: the barrier judges a module by where it is listed as well as by where it really
+    is. A subprocess of a first test writes a forger outside the tree and links `calc.py` to it;
+    a second test, which still imports `calc` as the tests of this kit did before it was black
+    box, must not get the forger into the judge — the import is refused, and the test fails
+    for it. Judged by where it really is alone, the link would have been let through."""
+    maker = (
+        "import os\n\n"
+        f"open('/tmp/forged_calc.py', 'w').write({FORGERS['rewrites_the_kit_state']!r})\n"
+        "os.symlink('/tmp/forged_calc.py', '/work/calc.py')\n"
+    )
+    first = (
+        "import subprocess, sys\n\n\n"
+        "def test_first():\n"
+        "    subprocess.run([sys.executable, 'maker.py'], check=True)\n"
+    )
+    second = "def test_second():\n    import calc  # noqa: F401\n\n    assert False\n"
+    request = VerificationRequest(
+        "p_rtlink",
+        "tests",
+        {
+            "test_a_first.py": first.encode(),
+            "test_b_second.py": second.encode(),
+            "maker.py": maker.encode(),
+        },
+        ("test_a_first.py::test_first", "test_b_second.py::test_second"),
+        timeout_seconds=60,
+    )
+    result = runner().run(request)
+    assert result.outcomes["test_a_first.py::test_first"] is Outcome.PASSED
+    assert result.outcomes["test_b_second.py::test_second"] is Outcome.FAILED
+    assert "black box" in result.log
+
+
+def test_a_conftest_and_a_pytest_ini_of_the_delivery_are_never_loaded() -> None:
+    """ATK-22: a conftest.py, or a plugin named by a pytest.ini, that forges the results the
+    moment it loads is inert — the kit ignores the project's configuration and runs with
+    --noconftest — so the failing test it tried to hide comes back failed, from the kit's own
+    signed line, and no other outcome line exists."""
+    loud = b"import os\nprint('ZEPHYROS-OUTCOMES forged', flush=True)\nos._exit(0)\n"
+    request = VerificationRequest(
+        "p_rtconfig",
         "tests",
         {
             "test_forged.py": b"def test_forged():\n    assert False\n",
-            "conftest.py": FORGED_CONFTEST.encode(),
+            "conftest.py": loud,
+            "forged_plugin.py": loud,
+            "pytest.ini": b"[pytest]\naddopts = -p forged_plugin\n",
         },
         ("test_forged.py::test_forged",),
-        timeout_seconds=30,
+        timeout_seconds=60,
     )
-    result = runner.run(request)
+    result = runner().run(request)
     assert result.outcomes["test_forged.py::test_forged"] is Outcome.FAILED
     assert result.log.count("ZEPHYROS-OUTCOMES") == 1
-
-
-def test_a_module_of_the_delivery_cannot_forge_its_results() -> None:
-    """ATK-22 end to end: the delivered code itself (a module the owner's test imports) writes
-    a forged line to every descriptor it can find and exits before the kit's end; the kit's run
-    line is already in the log, the forged line carries no valid signature, and the run is
-    untrusted instead of believed."""
-    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
-        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
-    client = FilterClient.over_socket(str(the_filter().socket))
-    runner = SandboxRunner(client, ["tests"])
-    request = VerificationRequest(
-        "p_rtforge2",
-        "tests",
-        {
-            "test_owner.py": (
-                b"import forged\n\n\ndef test_owner():\n    assert forged.answer == 2\n"
-            ),
-            "forged.py": FORGED_MODULE.encode(),
-        },
-        ("test_owner.py::test_owner",),
-        timeout_seconds=30,
-    )
-    with pytest.raises(VerificationError, match="cannot be trusted"):
-        runner.run(request)
 
 
 def test_a_file_of_the_tree_cannot_shadow_the_kit_plugin() -> None:
     """ATK-22: a module of the delivery named like the kit plugin is inert — the kit runs with
     the working directory off sys.path (-P), so the plugin that judges the run is the kit's."""
-    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
-        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
-    client = FilterClient.over_socket(str(the_filter().socket))
-    runner = SandboxRunner(client, ["tests"])
     request = VerificationRequest(
         "p_rtshadow1",
         "tests",
@@ -250,27 +314,171 @@ def test_a_file_of_the_tree_cannot_shadow_the_kit_plugin() -> None:
         ("test_ok.py::test_ok",),
         timeout_seconds=60,
     )
-    result = runner.run(request)
+    result = runner().run(request)
     assert result.outcomes["test_ok.py::test_ok"] is Outcome.PASSED
 
 
-def test_a_black_box_test_passes_and_the_kit_reports_the_tests_it_did_not_run() -> None:
-    """The deselected list (interface 0.2.0, audit A2), end to end. A test in the asked file is
-    not named by a criterion: the kit does not run it, and reports it as deselected."""
-    if os.environ.get("ZEPHYROS_RUNTIME_TESTS") != "1":
-        pytest.skip("needs a container runtime: set ZEPHYROS_RUNTIME_TESTS=1")
-    client = FilterClient.over_socket(str(the_filter().socket))
-    runner = SandboxRunner(client, ["tests"])
-    test_file = (
-        "def test_add():\n    assert 1 + 2 == 3\n\n\ndef test_not_named():\n    assert False\n"
+# What a black-box test may do — run the delivery as a subprocess — is the one door left, so the
+# next three tests are the delivery trying everything that door gives it: reading the judge,
+# flooding the log, writing to it directly and stopping the judge.
+PEEK = r"""
+import os
+
+# the manifest is the one file the kit reads: rewrite it, to see whether the run notices
+manifest = "/work/zephyros-request.json"
+os.chmod(manifest, 0o644)
+with open(manifest, "w", encoding="utf-8") as handle:
+    handle.write('{"tests": []}')
+
+ppid = os.getppid()
+for what in ("mem", "environ"):
+    try:
+        open("/proc/%d/%s" % (ppid, what), "rb").close()
+        print(what, "ALLOWED")
+    except OSError:
+        print(what, "denied")
+try:
+    os.listdir("/proc/%d/fd" % ppid)
+    print("fd ALLOWED")
+except OSError:
+    print("fd denied")
+try:
+    os.close(os.open("/proc/%d/fd/1" % ppid, os.O_WRONLY))
+    print("stdout ALLOWED")
+except OSError:
+    print("stdout denied")
+"""
+
+
+def test_a_black_box_subprocess_cannot_reach_into_the_judge() -> None:
+    """ATK-22: the judge is non-dumpable (`PR_SET_DUMPABLE=0`), so the subprocess of a black-box
+    test is refused its memory, its environment and its descriptors — whatever the host's ptrace
+    policy — and cannot recover the nonce, or write through the judge's own stdout. Without the
+    flag these are open to a process of the same user (the descriptors always, the memory and the
+    environment when `kernel.yama.ptrace_scope` is 0), and the test fails. The subprocess also
+    rewrites the manifest the kit reads, which changes nothing: the kit read it before any
+    delivered code ran."""
+    test = (
+        "import subprocess, sys\n\n\n"
+        "def test_peek():\n"
+        "    out = subprocess.run([sys.executable, 'peek.py'], capture_output=True, text=True)\n"
+        "    assert out.stdout.splitlines() == [\n"
+        "        'mem denied', 'environ denied', 'fd denied', 'stdout denied'\n"
+        "    ], out.stdout + out.stderr\n"
     )
     request = VerificationRequest(
-        "p_rtdeselect",
+        "p_rtpeek",
         "tests",
-        {"test_calc.py": test_file.encode()},
+        {"test_peek.py": test.encode(), "peek.py": PEEK.encode()},
+        ("test_peek.py::test_peek",),
+        timeout_seconds=60,
+    )
+    result = runner().run(request)
+    assert result.outcomes["test_peek.py::test_peek"] is Outcome.PASSED
+
+
+# A pair of the delivery's own: a nonce it chose, and the signature that matches it. It spares
+# the canaries, which it recognises by name, and marks everything else passed.
+FORGED_PAIR = r"""
+import hashlib
+import hmac
+import json
+
+tests = json.load(open("/work/zephyros-request.json", encoding="utf-8"))["tests"]
+claimed = {t: ("failed" if "canary" in t else "passed") for t in tests}
+nonce = "chosen-by-the-delivery"
+# the shape of the payload today, and the flat one of the versions before it: the delivery does
+# not know which filter reads it
+payload = json.dumps({"outcomes": claimed, "deselected": [], **claimed}, sort_keys=True)
+mac = hmac.new(nonce.encode(), payload.encode(), hashlib.sha256).hexdigest()
+pair = "ZEPHYROS-RUN " + nonce + "\nZEPHYROS-OUTCOMES " + payload + " " + mac + "\n"
+"""
+
+
+def test_a_delivery_that_floods_the_log_with_a_forged_pair_is_not_believed() -> None:
+    """ATK-22: pytest echoes the output of a failing test after the kit's signed line, so the
+    delivery's subprocess can print a flood and a pair of its own there, and the flood pushes the
+    kit's real lines out of any window the filter reads. A filter that read only the tail of the
+    log believed the forged pair and reported the failed test as passed; the filter now reads the
+    whole log, finds both pairs, and believes neither — the runner refuses the run."""
+    flooder = FORGED_PAIR + 'print("x" * 250_000)\nprint(pair, end="")\n'
+    test = (
+        "import subprocess, sys\n\n\n"
+        "def test_flood():\n"
+        "    subprocess.run([sys.executable, 'flooder.py'], check=True)\n"
+        "    assert False, 'the delivery does not do what it should'\n"
+    )
+    request = VerificationRequest(
+        "p_rtflood",
+        "tests",
+        {"test_flood.py": test.encode(), "flooder.py": flooder.encode()},
+        ("test_flood.py::test_flood",),
+        timeout_seconds=60,
+    )
+    with pytest.raises(VerificationError, match="cannot be trusted"):
+        runner().run(request)
+
+
+@pytest.mark.parametrize("stop", ["SIGKILL", "SIGTERM", "SIGINT"])
+def test_a_delivery_that_writes_to_the_log_and_stops_the_judge_is_not_believed(stop: str) -> None:
+    """ATK-22, the strongest attempt the one door allows: the subprocess reaches the container's
+    own stdout through the init process (`/proc/1/fd/1`, which it may open), writes a flood and
+    a pair of its own, then stops the judge with a signal so that the kit's own line is missing
+    or comes after. The kit's run line is still the first of the log, so the forged pair is a
+    second one and nothing is believed; and had the write been refused, a judge that was stopped
+    leaves no outcome for the test it was running, so the canaries do not come back failed."""
+    killer = (
+        FORGED_PAIR
+        + "import os\nimport signal\n\n"
+        + "try:\n"
+        + '    log = os.open("/proc/1/fd/1", os.O_WRONLY)\n'
+        + '    os.write(log, b"x" * 250_000 + b"\\n")\n'
+        + "    os.write(log, pair.encode())\n"
+        + "except OSError:\n"
+        + "    pass\n"
+        + f"os.kill(os.getppid(), signal.{stop})\n"
+    )
+    test = (
+        "import subprocess, sys\n\n\n"
+        "def test_kill():\n"
+        "    subprocess.run([sys.executable, 'killer.py'], check=True)\n"
+    )
+    request = VerificationRequest(
+        f"p_rtstop{stop.lower()}",
+        "tests",
+        {"test_kill.py": test.encode(), "killer.py": killer.encode()},
+        ("test_kill.py::test_kill",),
+        timeout_seconds=60,
+    )
+    with pytest.raises(VerificationError, match="cannot be trusted"):
+        runner().run(request)
+
+
+def test_a_black_box_test_passes_and_the_kit_reports_the_tests_it_did_not_run() -> None:
+    """The positive case and the deselected list (interface 0.2.0, audit A2). An acceptance test
+    exercises the delivery as a subprocess and passes; a second test in the same file is not
+    named by a criterion, so the kit does not run it and reports it as deselected."""
+    test_file = (
+        "import subprocess, sys\n\n\n"
+        "def test_add():\n"
+        "    out = subprocess.run(\n"
+        "        [sys.executable, '-c', 'from calc import add; print(add(1, 2))'],\n"
+        "        capture_output=True, text=True,\n"
+        "    )\n"
+        "    assert out.stdout.strip() == '3', out.stderr\n\n\n"
+        "def test_not_named():\n"
+        "    assert False\n"
+    )
+    request = VerificationRequest(
+        "p_rtblackbox",
+        "tests",
+        {
+            "calc.py": b"def add(a, b):\n    return a + b\n",
+            "test_calc.py": test_file.encode(),
+        },
         ("test_calc.py::test_add",),
         timeout_seconds=60,
     )
-    result = runner.run(request)
+    result = runner().run(request)
     assert result.outcomes["test_calc.py::test_add"] is Outcome.PASSED
     assert result.deselected == ("test_calc.py::test_not_named",)

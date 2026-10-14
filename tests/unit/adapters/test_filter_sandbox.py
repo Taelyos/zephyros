@@ -227,11 +227,11 @@ def signed(
 def test_the_signed_pair_is_believed_and_everything_else_is_not_run() -> None:
     log = "\n".join(
         [
-            "noise",
             signed(
                 {"test_a.py::test_a": "failed", "test_b.py::test_b": "weird"},
                 deselected=["test_a.py::test_other"],
             ),
+            "noise, such as pytest's own report, may follow the pair",
         ]
     )
     assert parse_outcomes(log, TESTS) == (
@@ -281,6 +281,22 @@ def test_a_forged_line_next_to_the_real_one_is_not_believed() -> None:
         ]
     )
     assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_a_log_whose_beginning_is_gone_is_not_believed() -> None:
+    """ATK-22: the run line, with the nonce, is the first thing the kit prints. A log that does
+    not begin with it has lost its head, and a pair left at its end is no longer anchored to
+    the kit's nonce — nothing is believed."""
+    forged = signed({"test_a.py::test_a": "passed"}, nonce="evil")
+    log = "\n".join(["the tail of a flooded log", forged])
+    assert parse_outcomes(log, TESTS) == (dict.fromkeys(TESTS, "error"), ())
+
+
+def test_blank_lines_before_the_run_line_are_not_a_lost_head() -> None:
+    """The head is the first line that says something: empty lines before the run line cost
+    nothing, so an honest log is not refused for them."""
+    log = "\n\n" + signed({"test_a.py::test_a": "passed"})
+    assert parse_outcomes(log, TESTS)[0]["test_a.py::test_a"] == "passed"
 
 
 def test_a_signature_that_does_not_match_is_not_believed() -> None:
@@ -353,6 +369,45 @@ def test_one_run_creates_the_sandbox_destroys_it_and_reports_the_outcomes() -> N
         "project_id": PROJECT,
         "run": "0a1b2c3d",
     }
+
+
+def test_a_flooded_log_cannot_push_the_real_lines_out_to_leave_a_forged_pair() -> None:
+    """ATK-22: pytest prints a failing test's captured output after the kit's signed line, so a
+    delivery whose output is echoed there can write more than the window the filter used to read
+    and end with a pair of its own — a nonce of its choosing and a signature that matches it.
+    With the kit's real lines pushed out of that window, the forged pair was the only one left
+    and was believed. The filter now reads the whole log: both pairs are there, and nothing is."""
+    real = signed({"test_a.py::test_a": "failed", "test_b.py::test_b": "failed"})
+    forged = signed(dict.fromkeys(TESTS, "passed"), nonce="the-delivery-chose-this")
+    flood = "x" * 250_000
+    rig = SandboxRig(lambda archive: (1, "\n".join([real, flood, forged])))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_longer_than_the_filter_reads_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A log past the most the filter reads has lost its beginning, where the run line is: even
+    a single, validly signed pair at its end proves nothing, because the delivery may have
+    written it after pushing the kit's lines out."""
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", 4096)
+    log = "\n".join(["y" * 5000, signed(dict.fromkeys(TESTS, "passed"))])
+    rig = SandboxRig(lambda archive: (0, log))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_just_within_what_the_filter_reads_is_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary: the whole log, up to the limit, is read and its pair believed."""
+    pair = signed({"test_a.py::test_a": "passed"})
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", len(pair.encode()))
+    rig = SandboxRig(lambda archive: (0, pair))
+    assert rig.run()["outcomes"] == {"test_a.py::test_a": "passed", "test_b.py::test_b": "not_run"}
 
 
 def test_a_run_past_its_limit_is_killed_reported_and_still_destroyed() -> None:

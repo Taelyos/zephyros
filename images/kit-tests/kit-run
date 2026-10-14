@@ -3,8 +3,10 @@
 # configuration is ignored (-c /dev/null) so that it cannot change which tests run or how,
 # --noconftest keeps a conftest.py of the delivery from ever loading, and -P keeps the working
 # directory off sys.path, so a file of the delivery cannot shadow the kit plugin it is being
-# judged by (ATK-22). The plugin prints a run line and a signed outcomes line; the filter
-# checks the pair before believing the results.
+# judged by (ATK-22). On top of these, the plugin installs an import barrier that refuses to
+# import any delivered module into the judge (acceptance tests are black-box) and makes the
+# process non-dumpable; it then prints a run line and a signed outcomes line, and the filter
+# checks the pair before believing the results (ADR 0017).
 set -u
 cd /work || exit 2
 exec python -P -m pytest -c /dev/null --noconftest --rootdir /work -p no:cacheprovider \

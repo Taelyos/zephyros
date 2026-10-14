@@ -24,9 +24,23 @@ pytestmark = [pytest.mark.runtime, pytest.mark.acceptance, pytest.mark.slow]
 
 CONTRACTOR = Side.CONTRACTOR
 REPOSITORY = "example/calc"
+# The acceptance test is black box (ADR 0017, ATK-22): the kit does not import the delivered
+# code, so it runs `calc` as a subprocess and reads its output.
+ADD_TEST = """import subprocess
+import sys
+
+
+def test_add():
+    out = subprocess.run(
+        [sys.executable, "-c", "from calc import add; print(add(1, 2))"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "3", out.stderr
+"""
 BASE = {
     "calc.py": b"def add(a, b):\n    return a + b\n",
-    "test_calc.py": b"from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+    "test_calc.py": ADD_TEST.encode(),
 }
 
 # The shortest ladder the configuration accepts: a 60 s wait per step.
