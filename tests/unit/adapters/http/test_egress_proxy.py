@@ -38,6 +38,8 @@ class World:
     policy: InstanceEgressPolicy
     opened: list[tuple[str, int]] = field(default_factory=list)
     unreachable: bool = False
+    refused: set[str] = field(default_factory=set)
+    """Addresses whose connection is refused."""
 
     def egress(self) -> list[AuditRecord]:
         return [r for r in self.env.records() if r.action is Action.INSTANCE_EGRESS]
@@ -51,15 +53,25 @@ def make_world(level: EgressLevel = EgressLevel.REGULATED, hosts: tuple[str, ...
     return World(env, token, InstanceEgressPolicy(level, allowed))
 
 
-def run(world: World, client: Callable[[int], Awaitable[bytes]]) -> bytes:
-    async def scenario() -> bytes:
-        async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            while data := await reader.read(1024):
-                writer.write(data)
-                await writer.drain()
-            writer.close()
+Handler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
-        upstream = await asyncio.start_server(echo, "127.0.0.1", 0)
+
+async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    while data := await reader.read(1024):
+        writer.write(data)
+        await writer.drain()
+    writer.close()
+
+
+def run(
+    world: World,
+    client: Callable[[int], Awaitable[bytes]],
+    *,
+    upstream_handler: Handler = echo,
+    idle_seconds: float = 300.0,
+) -> bytes:
+    async def scenario() -> bytes:
+        upstream = await asyncio.start_server(upstream_handler, "127.0.0.1", 0)
         upstream_port = upstream.sockets[0].getsockname()[1]
 
         async def resolve(host: str, _port: int) -> list[str]:
@@ -69,7 +81,7 @@ def run(world: World, client: Callable[[int], Awaitable[bytes]]) -> bytes:
             address: str, port: int
         ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
             world.opened.append((address, port))
-            if world.unreachable:
+            if world.unreachable or address in world.refused:
                 raise ConnectionRefusedError
             return await asyncio.open_connection("127.0.0.1", upstream_port)
 
@@ -79,6 +91,7 @@ def run(world: World, client: Callable[[int], Awaitable[bytes]]) -> bytes:
             world.policy,
             resolve=resolve,
             open_connection=open_connection,
+            idle_seconds=idle_seconds,
         )
         server = await proxy.start("127.0.0.1", 0)
         try:
@@ -230,3 +243,81 @@ def test_a_token_bound_to_another_address_is_refused() -> None:
     assert world.opened == []
     refusals = [r for r in world.env.records() if r.action is Action.AUTHENTICATION]
     assert [r.reason for r in refusals] == [Reason.WRONG_SOURCE]
+
+
+def test_an_allowed_host_is_reached_on_its_next_address_when_the_first_refuses() -> None:
+    world = make_world()
+    world.refused = {"151.101.0.223"}
+    answer = run(world, ask("CONNECT pypi.org:443 HTTP/1.1", basic(world.token), PAYLOAD))
+    assert answer.endswith(PAYLOAD)
+    assert world.opened == [("151.101.0.223", 443), ("151.101.64.223", 443)]
+    assert [r.outcome for r in world.egress()] == [Outcome.OK]
+
+
+def tunnel(world: World, send: bytes, *, half_close: bool) -> Callable[[int], Awaitable[bytes]]:
+    """A client that opens a tunnel, sends `send` (maybe then half-closes), and reads to EOF."""
+
+    async def client(port: int) -> bytes:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        head = f"CONNECT pypi.org:443 HTTP/1.1\r\nProxy-Authorization: {basic(world.token)}\r\n"
+        writer.write((head + "\r\n").encode())
+        await writer.drain()
+        await reader.readuntil(b"\r\n\r\n")
+        if send:
+            writer.write(send)
+            await writer.drain()
+        if half_close:
+            writer.write_eof()
+        received = await reader.read()  # to EOF
+        writer.close()
+        return received
+
+    return client
+
+
+def test_a_download_to_a_silent_client_is_not_cut_while_bytes_flow() -> None:
+    """The client says nothing after its request (a long download): the tunnel lives as long
+    as either direction carries bytes, even past the idle delay of one direction."""
+
+    async def slow_download(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        for _ in range(8):
+            writer.write(b"chunk;")
+            await writer.drain()
+            await asyncio.sleep(0.05)
+        writer.close()
+
+    world = make_world()
+    received = run(
+        world,
+        tunnel(world, b"", half_close=False),
+        upstream_handler=slow_download,
+        idle_seconds=0.15,
+    )
+    assert received == b"chunk;" * 8
+
+
+def test_a_client_that_half_closes_still_gets_the_answer() -> None:
+    """An EOF from one side closes that direction only: the answer still comes back."""
+
+    async def late_answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        asked = await reader.read()  # to the client's EOF
+        await asyncio.sleep(0.05)
+        writer.write(b"answer to " + asked)
+        await writer.drain()
+        writer.close()
+
+    world = make_world()
+    received = run(world, tunnel(world, b"question", half_close=True), upstream_handler=late_answer)
+    assert received == b"answer to question"
+
+
+def test_a_tunnel_silent_both_ways_is_closed_after_the_idle_delay() -> None:
+    async def mute(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await asyncio.sleep(5)
+        writer.close()
+
+    world = make_world()
+    received = run(
+        world, tunnel(world, b"", half_close=False), upstream_handler=mute, idle_seconds=0.2
+    )
+    assert received == b""

@@ -515,6 +515,9 @@ class InstanceManager:
         if guard is None or guard.state != "running" or guard.health == "unhealthy":
             self._guard_lost(live)
             return
+        if not self._level_holds(project_id, side, guard):
+            self._guard_lost(live, "egress_changed")
+            return
         if live.phase is not InstanceState.TURN:
             return
         turn = self._broker.inspect(Role.TURN, project_id, side)
@@ -555,17 +558,18 @@ class InstanceManager:
             result=result,
         )
 
-    def _guard_lost(self, live: _Live) -> None:
-        """Fail-closed: a guard that is not there means the instance is not either."""
+    def _guard_lost(self, live: _Live, result: str = "guard_lost") -> None:
+        """Fail-closed: a guard that is not there, or that holds the rules of another level,
+        means the instance is not either."""
         with self._lock:
             live.phase = InstanceState.STOPPING
-            live.outcome = "guard_lost"
+            live.outcome = result
         self._record(
             live.project_id,
             Action.TURN_END,
             Outcome.ERROR,
             side=live.side.value,
-            result="guard_lost",
+            result=result,
         )
         self._take_down(live)
 
@@ -613,7 +617,12 @@ class InstanceManager:
                     result="hub_restart",
                 )
             guard = here.get("guard")
-            if guard is None or guard.state != "running" or guard.health == "unhealthy":
+            if (
+                guard is None
+                or guard.state != "running"
+                or guard.health == "unhealthy"
+                or not self._level_holds(key[0], key[1], guard)
+            ):
                 live.phase = InstanceState.STOPPING
             else:
                 # The hub may be a new container since the last run: attach it again, at the
@@ -652,6 +661,24 @@ class InstanceManager:
     def _live_of(self, key: Key) -> _Live | None:
         with self._lock:
             return self._live.get(key)
+
+    def _level_holds(self, project_id: str, side: Side, guard: ContainerInfo) -> bool:
+        """Whether a guard holds the rules of the configured level (ADR 0024). Its rules are
+        loaded once, when it starts: one of another level (made before a change of the
+        configuration, or before the levels existed and so with no label) is logged and must
+        be taken down, so that the next start brings it up at the configured level."""
+        if guard.egress == self._timing.egress:
+            return True
+        self._record(
+            project_id,
+            Action.INSTANCE_EGRESS,
+            Outcome.ERROR,
+            side=side.value,
+            why="level_changed",
+            guard=guard.egress or "none",
+            configured=self._timing.egress,
+        )
+        return False
 
     @staticmethod
     def _guard_address(record: InstanceRecord) -> ipaddress.IPv4Address:

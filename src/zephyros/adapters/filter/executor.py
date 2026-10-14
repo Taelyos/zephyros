@@ -27,6 +27,7 @@ from zephyros.core.broker import (
     info_to_json,
 )
 from zephyros.core.containers import (
+    LABEL_EGRESS,
     LABEL_MANAGED,
     LABEL_PROJECT,
     LABEL_ROLE,
@@ -359,6 +360,7 @@ class Executor:
             address=None if address is None else str(address),
             started_at=state.get("StartedAt"),
             finished_at=state.get("FinishedAt"),
+            egress=found.get(LABEL_EGRESS) if found.get(LABEL_ROLE) == Role.GUARD.value else None,
         )
 
     def _inspect(self, request: Request) -> dict[str, Any]:

@@ -885,3 +885,57 @@ def test_a_regulated_or_sealed_instance_starts_without_a_warning(rig: Rig, level
     rig.manager.reconcile()
     rig.start()
     assert not [r for r in rig.records() if r.action is Action.INSTANCE_EGRESS]
+
+
+def _set_guard_level(rig: Rig, level: str | None) -> None:
+    labels = rig.docker.containers[guard_name(PROJECT, CONTRACTOR)]["Config"]["Labels"]
+    if level is None:
+        labels.pop("org.zephyros.egress", None)  # a guard made before ADR 0024
+    else:
+        labels["org.zephyros.egress"] = level
+
+
+def _level_records(rig: Rig) -> list[AuditRecord]:
+    return [
+        r
+        for r in rig.records()
+        if r.action is Action.INSTANCE_EGRESS and '"why":"level_changed"' in r.parameters
+    ]
+
+
+@pytest.mark.parametrize("old", ["open", None])
+def test_after_a_restart_a_guard_of_another_level_is_taken_down(rig: Rig, old: str | None) -> None:
+    """A guard keeps the rules it was started with: one of another level (an instance of 1.13,
+    or a level changed in the configuration) is never adopted again (ADR 0024)."""
+    rig.start()
+    rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
+    rig.manager.tick()
+    _set_guard_level(rig, old)
+    rig.manager = rig.make_manager()
+    rig.manager.reconcile()
+    rig.run_jobs()
+    rig.manager.tick()
+    assert rig.state() is State.ABSENT
+    assert rig.nothing_left()
+    [record] = _level_records(rig)
+    assert record.outcome is Outcome.ERROR
+    assert f'"guard":"{old or "none"}"' in record.parameters
+    assert '"configured":"regulated"' in record.parameters
+
+
+def test_after_a_restart_a_guard_of_the_configured_level_is_kept(rig: Rig) -> None:
+    rig.start()
+    rig.manager = rig.make_manager()
+    rig.manager.reconcile()
+    assert guard_name(PROJECT, CONTRACTOR) in rig.docker.containers
+    assert _level_records(rig) == []
+
+
+def test_a_guard_found_with_another_level_while_watched_is_taken_down(rig: Rig) -> None:
+    rig.start()
+    _set_guard_level(rig, "open")
+    rig.manager.tick()
+    info = rig.manager.status(PROJECT, CONTRACTOR)
+    assert (info.state, info.last_turn) == (State.ABSENT, "egress_changed")
+    assert rig.nothing_left()
+    assert len(_level_records(rig)) == 1

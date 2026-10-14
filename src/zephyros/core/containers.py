@@ -30,6 +30,9 @@ LABEL_MANAGED = "org.zephyros.managed"
 LABEL_PROJECT = "org.zephyros.project"
 LABEL_SIDE = "org.zephyros.side"
 LABEL_ROLE = "org.zephyros.role"
+LABEL_EGRESS = "org.zephyros.egress"
+"""On a guard: the level its rules were loaded at (ADR 0024). The hub stops a guard whose level
+is not the configured one, so a change of level never leaves an instance on the old rules."""
 INSTANCE_USER = "10000:10000"
 HOME_PATH = "/opt/data"
 WORK_PATH = "/work"
@@ -281,7 +284,7 @@ def guard_spec(
             f"EGRESS={policy.egress}",
             f"PROXY_PORT={policy.egress_port}",
         ],
-        "Labels": labels(Role.GUARD, project_id, side),
+        "Labels": {**labels(Role.GUARD, project_id, side), LABEL_EGRESS: policy.egress},
         "Healthcheck": {
             "Test": ["CMD", "/usr/local/bin/guard.sh", "check"],
             "Interval": 1_000_000_000,
@@ -513,8 +516,14 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
         raise SpecError("a guard joins its instance network")
     if role is Role.SANDBOX and mode != "none":
         raise SpecError("a sandbox has no network")
-    if role is Role.GUARD and f"EGRESS={policy.egress}" not in list(spec.get("Env", [])):
-        raise SpecError("the guard loads the egress level of the configuration")
+    if role is Role.GUARD and (
+        f"EGRESS={policy.egress}" not in list(spec.get("Env", []))
+        or not isinstance(spec.get("Labels"), Mapping)
+        or spec["Labels"].get(LABEL_EGRESS) != policy.egress
+    ):
+        raise SpecError(
+            "the guard loads, and is labelled with, the egress level of the configuration"
+        )
     dns = host.get("Dns")
     if role is Role.GUARD:
         if list(dns or []) != list(policy.resolvers):

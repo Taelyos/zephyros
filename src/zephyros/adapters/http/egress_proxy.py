@@ -167,14 +167,12 @@ class EgressProxy:
             self._log(caller, destination, refused)
             await self._answer(writer, 403)
             return
-        try:
-            upstream_reader, upstream_writer = await asyncio.wait_for(
-                self._open(addresses[0], destination.port), CONNECT_SECONDS
-            )
-        except (OSError, TimeoutError):
+        upstream = await self._connect(addresses, destination.port)
+        if upstream is None:
             self._log(caller, destination, None, reached=False)
             await self._answer(writer, 502)
             return
+        upstream_reader, upstream_writer = upstream
         self._log(caller, destination, None)
         await self._answer(writer, 200)
         try:
@@ -184,6 +182,18 @@ class EgressProxy:
             with contextlib.suppress(OSError):
                 await upstream_writer.wait_closed()
 
+    async def _connect(
+        self, addresses: list[str], port: int
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+        """The first of the checked addresses that answers, in order; None when none does.
+        Only addresses the policy has checked are tried: the proxy never resolves again."""
+        for address in addresses:
+            try:
+                return await asyncio.wait_for(self._open(address, port), CONNECT_SECONDS)
+            except (OSError, TimeoutError):
+                continue
+        return None
+
     async def _relay(
         self,
         reader: asyncio.StreamReader,
@@ -191,19 +201,35 @@ class EgressProxy:
         upstream_reader: asyncio.StreamReader,
         upstream_writer: asyncio.StreamWriter,
     ) -> None:
-        """Copy both ways until one side closes or both stay idle too long."""
+        """Copy both ways until both sides have closed, an error ends either, or no byte has
+        moved in either direction for the idle delay. The clock of activity is shared: a long
+        download to a client that says nothing lives as long as bytes flow. An EOF closes one
+        direction only (a half-close passed on to the other side), so an answer still comes
+        back after the client has finished sending."""
+        loop = asyncio.get_running_loop()
+        last = [loop.time()]
 
         async def pipe(source: asyncio.StreamReader, target: asyncio.StreamWriter) -> None:
-            while chunk := await asyncio.wait_for(source.read(CHUNK), self._idle):
+            while chunk := await source.read(CHUNK):
+                last[0] = loop.time()
                 target.write(chunk)
                 await target.drain()
+            if target.can_write_eof():
+                target.write_eof()
 
-        tasks = [
+        tasks = {
             asyncio.ensure_future(pipe(reader, upstream_writer)),
             asyncio.ensure_future(pipe(upstream_reader, writer)),
-        ]
+        }
+        pending = set(tasks)
         try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            while pending:
+                remaining = self._idle - (loop.time() - last[0])
+                if remaining <= 0:
+                    return
+                done, pending = await asyncio.wait(pending, timeout=remaining)
+                if any(task.exception() is not None for task in done):
+                    return
         finally:
             for task in tasks:
                 task.cancel()

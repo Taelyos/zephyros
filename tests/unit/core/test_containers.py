@@ -444,3 +444,11 @@ def test_every_specification_the_templates_can_produce_passes_the_allow_list(
     check_spec(guard_spec(POLICY, project, side, subnet, hub), Role.GUARD, POLICY)
     spec = turn_spec(POLICY, HermesEngine(), project, side, hub, "zph_o_" + body, prompt)
     check_spec(spec, Role.TURN, POLICY)
+
+
+def test_the_guard_is_labelled_with_its_level_and_check_spec_holds_it() -> None:
+    spec = guard()
+    assert spec["Labels"]["org.zephyros.egress"] == "regulated"
+    spec["Labels"]["org.zephyros.egress"] = "open"
+    with pytest.raises(SpecError, match="labelled"):
+        check_spec(spec, Role.GUARD, POLICY)
