@@ -410,17 +410,20 @@ async def run(
             config.hub.operator_port,
         ),
     ]
-    egress = await start_egress_proxy(config, hub, runtime.audit, agent_bind)  # ADR 0024
     loop = asyncio.get_running_loop()
-    if stop is None:
-        for number in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(number, stop_all, servers)
-    else:
-        waiter = loop.create_task(_stop_when_set(stop, servers))
+    egress: asyncio.Server | None = None
+    waiter: asyncio.Task[None] | None = None
     try:
+        # Inside the try: a port already taken stops the hub with everything closed (ADR 0024).
+        egress = await start_egress_proxy(config, hub, runtime.audit, agent_bind)
+        if stop is None:
+            for number in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(number, stop_all, servers)
+        else:
+            waiter = loop.create_task(_stop_when_set(stop, servers))
         await serve_all(servers)
     finally:
-        if stop is not None:
+        if waiter is not None:
             waiter.cancel()
         if egress is not None:
             egress.close()

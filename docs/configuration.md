@@ -29,7 +29,7 @@ On one machine, `scripts/deploy.sh up` writes the file (`deploy/state/zephyros.t
 | `[paths]` | The data directory, the Unix socket of the container filter, and the files that hold the operator and main-agent tokens |
 | `[runtime]` | The name of the core network and of the hub container; how long the hub waits for a network guard to report healthy, and how often it looks at its instances |
 | `[images]` | The instance image and the network guard image, by registry digest (`name@sha256:…`) or by local identifier (`sha256:…`) (required) |
-| `[network]` | The range the subnets of the instance networks are taken from, their prefix length, and the name resolvers the instances use (one to four public addresses; the default is `9.9.9.9`, Quad9). A resolver inside a protected network is refused at startup, because the network guard blocks it ([ADR 0018](decisions/0018-instance-name-resolution.md)). What an instance reaches besides the hub (`egress`, see below) and the hosts a `regulated` instance reaches (`allowed_hosts`) |
+| `[network]` | The range the subnets of the instance networks are taken from, their prefix length, and the name resolvers an `open` instance uses (one to four public addresses; the default is `9.9.9.9`, Quad9; a `regulated` or `sealed` instance sends no query: the egress proxy resolves for it). A resolver inside a protected network is refused at startup, because the network guard blocks it ([ADR 0018](decisions/0018-instance-name-resolution.md)). What an instance reaches besides the hub (`egress`, see below) and the hosts a `regulated` instance reaches (`allowed_hosts`) |
 | `[limits]` | CPUs, memory and process count of an agent container, memory of a guard, the longest duration of a turn, how long a turn may go without calling the hub before it is stopped, and how many refused actions of one instance in a minute make the hub answer without doing the work (`refusals_per_minute`, ATK-71) |
 | `[tokens]` | The lifetime of a project token and how long before its expiry a new turn gets a new one |
 | `[forge]` | Where pull requests are opened: `none`, `directory` (bare git repositories in a directory, for the development deployment and the tests), or `github` (the repositories of the person, through the API and git over https, with the file of its token in `token_file`; read at each call) |
@@ -72,7 +72,7 @@ The policy holds only as long as nobody else edits the table: keep it in a file 
 | `sealed` | The hub alone. What the work needs is in the instance image (Python with pytest, see [the tools of an instance](instance-tools.md)) | A benchmark, a sensitive project |
 | `open` | Every public destination, as before 1.14.0 | An explicit exception: the hub logs a warning (`instance.egress`) each time it starts an instance |
 
-The default list holds the package registries, for reading: `pypi.org`, `files.pythonhosted.org` and `registry.npmjs.org`. GitHub is not in it. To add a host, write the whole list:
+The default list holds the package registries: `pypi.org`, `files.pythonhosted.org` and `registry.npmjs.org`. GitHub is not in it. To add a host, write the whole list:
 
 ```toml
 [network]
@@ -81,6 +81,10 @@ allowed_hosts = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "gi
 ```
 
 A host is a name, in lower case, with no port and no wildcard; each subdomain is named on its own line. An address is refused: the proxy allows a name, then refuses it when it resolves into a protected network. For no host at all, choose `sealed`. A regulated instance gets the proxy in `HTTPS_PROXY`, which `pip`, `npm`, `uv`, `curl` and most HTTP clients follow; a client that ignores it reaches nothing.
+
+The proxy opens a tunnel to an allowed host whatever the request inside: it does not make a registry read-only (ADR 0024, consequences).
+
+**Changing the level.** A guard loads its rules when it starts and carries its level as a label. When the hub starts, and each time it looks at an instance, it takes down a guard whose level is not the configured one (an instance made before 1.14.0 included) and logs it (`instance.egress`, `why: level_changed`). The turn under way stops; the volumes stay, and the next start of the instance brings it up at the new level.
 
 With `scripts/deploy.sh`, `ZEPHYROS_EGRESS` sets the level and `ZEPHYROS_ALLOWED_HOSTS` the list (comma-separated).
 
@@ -123,7 +127,7 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `images.guard` | required | an image, by digest or local identifier |
 | `network.instance_pool` | `"10.200.0.0/16"` | an IPv4 network |
 | `network.instance_prefix` | `28` | 24 to 30 |
-| `network.resolvers` | `["9.9.9.9"]` | one to four IPv4 addresses, none in a protected network |
+| `network.resolvers` | `["9.9.9.9"]` | one to four IPv4 addresses, none in a protected network; used by `open` |
 | `network.egress` | `"regulated"` | `regulated`, `sealed` or `open` |
 | `network.allowed_hosts` | `["pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]` | one to 64 host names, lower case, no address and no wildcard; used by `regulated` |
 | `limits.cpus` | `2.0` | 0.1 to 16.0 |

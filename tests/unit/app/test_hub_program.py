@@ -180,3 +180,12 @@ def test_no_egress_proxy_listens_outside_the_regulated_level(tmp_path: Path, lev
     finally:
         loop.call_soon_threadsafe(stop.set)
         thread.join(timeout=15)
+
+
+def test_an_egress_port_already_taken_stops_the_hub_with_an_error(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", config.hub.egress_port))
+        taken.listen()
+        with pytest.raises(OSError, match="address already in use"):
+            asyncio.run(run(config, agent_bind="127.0.0.1", stop=asyncio.Event()))

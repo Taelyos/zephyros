@@ -163,24 +163,37 @@ def test_an_open_turn_reaches_a_public_destination(
 
 
 @pytest.mark.parametrize("level", ["regulated", "sealed"])
-def test_the_guard_is_unhealthy_once_its_final_drop_is_gone(
-    worlds: dict[str, tuple[Runtime, Instance, str]], level: str
+@pytest.mark.parametrize("rule", ["reject with tcp reset", "bytes [0-9]* reject"])
+def test_the_guard_is_unhealthy_once_a_final_refusal_is_gone(
+    worlds: dict[str, tuple[Runtime, Instance, str]], level: str, rule: str
 ) -> None:
-    """The health check states the level: without its last drop a regulated or sealed guard
-    is an open one, and the hub stops an instance whose guard is unhealthy (ADR 0015)."""
+    """The health check states the level: without its final refusals a regulated or sealed
+    guard is an open one, and the hub stops an instance whose guard is unhealthy (ADR 0015)."""
     world, one, _lan = worlds[level]
     remove = (
-        "h=$(nft -a list chain inet zeph output | grep -E '^\\s*counter packets .* drop # handle'"
+        f"h=$(nft -a list chain inet zeph output | grep -E '{rule} # handle'"
         " | sed 's/.*handle //'); nft delete rule inet zeph output handle $h"
     )
     assert world.sh(one.guard, remove)[0] == 0
     try:
         code, out = world.sh(one.guard, "/usr/local/bin/guard.sh check")
         assert code != 0
-        assert "does not end with a drop" in out
+        assert "does not end with a refusal" in out
     finally:
         world.rules_on(one)
     assert world.sh(one.guard, "/usr/local/bin/guard.sh check")[0] == 0
+
+
+@pytest.mark.parametrize("level", ["regulated", "sealed"])
+def test_a_refused_destination_fails_at_once(
+    worlds: dict[str, tuple[Runtime, Instance, str]], level: str
+) -> None:
+    """A TCP reset, not a silent drop: a client that goes around the proxy (or any client at
+    sealed) fails at once and says why, instead of waiting for its timeout."""
+    world, one, _lan = worlds[level]
+    found = world.connect(one.turn, [{"proto": "tcp", "host": "203.0.113.9", "port": 443}])[0]
+    assert found["result"] == "blocked", found
+    assert found["error"] == "ConnectionRefusedError", found
 
 
 @pytest.mark.parametrize("level", LEVELS)

@@ -228,7 +228,8 @@ def _network() -> Table:
             Field(
                 "resolvers",
                 Array(Text("ipv4-address"), min_items=1, max_items=4),
-                "Name resolvers the instances use; an address of a protected network "
+                "Name resolvers an open instance uses (a regulated or sealed one sends no "
+                "query; the egress proxy resolves for it); an address of a protected network "
                 "is refused, because the network guard blocks it",
                 default=list(DEFAULT_RESOLVERS),
             ),

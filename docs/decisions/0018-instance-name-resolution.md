@@ -30,6 +30,7 @@ Consequences for the suites on such a host: the ATK-44 positive control ("a publ
 - Positive: instances resolve names on every supported platform, homelab resolvers included; the behavior no longer depends on where the host's resolver sits; the misconfiguration that cannot work (a protected resolver) stops the start instead of failing at the first model call.
 - Negative: by default, the lookups of an instance go to a third party (Quad9) rather than to the user's own resolver. A user who wants no third party must either deploy a resolver reachable without a protected address, or wait for the amendment sketched in the alternatives.
 - Neutral: the failure that motivated this ADR was found by the runtime suite on Linux; the contract and the threat model are untouched.
+- Later: since [ADR 0024](0024-three-levels-of-network-access.md), only an `open` instance resolves names itself; a `regulated` or `sealed` instance sends no query at all (the egress proxy of the hub resolves the allowed hosts). `network.resolvers` stays required and serves the `open` level.
 
 ## Alternatives considered (all measured on the same host)
 

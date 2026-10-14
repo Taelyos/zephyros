@@ -184,7 +184,7 @@
           },
           "maxItems": 4,
           "minItems": 1,
-          "description": "Name resolvers the instances use; an address of a protected network is refused, because the network guard blocks it",
+          "description": "Name resolvers an open instance uses (a regulated or sealed one sends no query; the egress proxy resolves for it); an address of a protected network is refused, because the network guard blocks it",
           "default": [
             "9.9.9.9"
           ]
