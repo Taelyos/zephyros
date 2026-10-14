@@ -1003,18 +1003,25 @@ def transcript_events(
     window: tuple[datetime, datetime] | None,
     message_chars: int,
 ) -> list[Event]:
-    """The answers of one instance: an assistant message that says something, inside the run."""
+    """The answers of one instance: an assistant message that says something, inside the run.
+
+    A state database can hold the same message in more than one session (a real run did): a
+    message is kept once, by its role, its content and its time, as it reads in the first session
+    that holds it.
+    """
     if window is None:
         return []
     by_session: dict[str, list[tuple[str, str, str, float]]] = {}
     for session, role, text, timestamp in messages:
         by_session.setdefault(session, []).append((session, role, text, timestamp))
     events: list[Event] = []
+    kept_messages: set[tuple[str, str, float]] = set()
     for session in sorted(by_session):
         conversation = by_session[session]
         for index, (_, role, text, timestamp) in enumerate(conversation):
-            if role != "assistant" or not text.strip():
+            if role != "assistant" or not text.strip() or (role, text, timestamp) in kept_messages:
                 continue
+            kept_messages.add((role, text, timestamp))
             moment = datetime.fromtimestamp(timestamp, UTC)
             if not window[0] <= moment <= window[1]:
                 continue

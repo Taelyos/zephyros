@@ -141,7 +141,7 @@ shows its new version, even when that version's own time falls at the edge of th
 | `gate` | `gate.decision` | `delivery_id`, `decision` (`PASS`, `CONCERNS`, `FAIL`), `contract_version`; after an inspection, `after` and `previous` (the decision before). | `outcomes` (test id to result). |
 | `judgment` | `inspection.record`, `delivery.review` | `delivery_id`, `object_id`, `verdict`, `decision` (the gate's decision after the record). | `observation` or `reasons`. |
 | `flag` | `delivery.check`, `delivery.flag` | `delivery.check` (source `hub-log`): the hub flagged a delivery that changes protected paths, `delivery_id`, `flagged` (a count). `delivery.flag` (source `hub-state`): a run older than that rule, where the exporter found the protected paths among the delivered ones, `delivery_id`, `paths`, `rule` (`protected-path`), `by` (`exporter`). | `paths` on `delivery.check`. |
-| `message` | `agent.message` | `side`, `text` (possibly shortened, see `truncated`), `truncated`, `role` (`final` for the last answer of a turn, `note` otherwise). | |
+| `message` | `agent.message` | `side`, `text` (possibly shortened, see `truncated`), `truncated`, `role` (`final` for the last answer of a turn, `note` otherwise). A message the state database holds in several sessions appears once. | |
 | `other` | `project.create`, `token.issue`, `token.revoke`, `notification.sent`, `continuity.step`, ... | The record's parameters. | |
 
 Every event of category `refusal` keeps the refused action in `data.action`: its `type` is the

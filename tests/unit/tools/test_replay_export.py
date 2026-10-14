@@ -1180,6 +1180,32 @@ def test_a_long_message_is_cut_and_marked(hub: Path, transcript: Path) -> None:
     assert (final["data"]["truncated"], final["data"]["text"]) == (False, FINAL)
 
 
+def test_a_message_that_two_sessions_hold_is_kept_once(hub: Path, tmp_path: Path) -> None:
+    """A state database can hold the same message in two sessions; a real run showed it, and
+    its replay told those answers twice."""
+    first = [
+        ("s1", "user", "make the delivery", unix(0)),
+        ("s1", "assistant", NOTE, unix(2)),
+        ("s1", "tool", "ok", unix(3)),
+        ("s1", "assistant", FINAL, unix(5)),
+    ]
+    again = [("s2", role, text, moment) for _, role, text, moment in first]
+    later = [
+        ("s2", "user", "and now?", unix(7)),
+        ("s2", "assistant", "OK.", unix(8)),
+        ("s2", "user", "again?", unix(9)),
+        ("s2", "assistant", "OK.", unix(10)),
+    ]
+    transcript = write_transcript(tmp_path / "state.db", first + again + later)
+    messages = of_type(replay(hub, transcripts=(("owner", transcript),)), "agent.message")
+    assert [(event["data"]["text"], event["data"]["role"]) for event in messages] == [
+        (NOTE.replace(address(10, 9, 8, 7), export.REDACTED), "note"),
+        (FINAL, "final"),
+        ("OK.", "final"),
+        ("OK.", "final"),
+    ]
+
+
 def test_both_sides_can_be_exported(hub: Path, tmp_path: Path) -> None:
     owner = build_transcript(tmp_path / "owner.db")
     build_transcript(tmp_path / "contractor.db")
