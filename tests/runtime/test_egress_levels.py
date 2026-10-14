@@ -131,7 +131,11 @@ def test_a_regulated_or_sealed_turn_reaches_no_public_destination_directly(
     assert world.reach(one.turn, "udp", "9.9.9.9", 53) == "blocked"
     code, out = world.sh(one.turn, "getent hosts pypi.org")
     assert code != 0, out
-    _code, out = world.sh(one.turn, "probe fetch https://pypi.org/simple/pip/")
+    # around the proxy, which a regulated turn is given (and a sealed one is not)
+    _code, env = world.sh(one.turn, "env")
+    assert ("https_proxy=http://instance:" in env) is (level == "regulated"), env
+    direct = "no_proxy='*' NO_PROXY='*' probe fetch https://pypi.org/simple/pip/"
+    _code, out = world.sh(one.turn, direct)
     assert '"blocked"' in out, out
 
 

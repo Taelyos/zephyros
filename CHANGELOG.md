@@ -16,6 +16,12 @@ version. Each schema carries its own version number.
   provider is not in the list, the refusal names the key that sets it, `gateway.upstream_model`,
   or `gateway.model` when the file has no `gateway.upstream_model`, and lists the models it
   allows. A file accepted by 1.12.0 is accepted by 1.13.0.
+- The configuration schema, version 1.14.0: three levels of network access for the instances,
+  `network.egress` (ADR 0024, superseding ADR 0009). The default, `regulated`, reaches the hub
+  and the hosts of `network.allowed_hosts` (the package registries) through the egress proxy of
+  the hub (`hub.egress_port`), which logs every destination as `instance.egress`; `sealed`
+  reaches the hub alone; `open` is the former behavior, with a warning in the log. **An
+  instance no longer reaches the whole Internet by default.** The instance image carries pytest.
 
 ### Fixed
 - The masking of secrets (EXG-49) no longer changes ordinary words. Words end with `sk-`
