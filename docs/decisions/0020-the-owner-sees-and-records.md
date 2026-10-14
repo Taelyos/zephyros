@@ -1,6 +1,6 @@
 # 0020. The Owner side sees what it judges, and its verdict is recorded
 
-- Status: Accepted (implemented in C36 to C43)
+- Status: Accepted (implemented in C36 to C43); the amendment below is Proposed
 - Date: 2026-10-13
 
 ## Context
@@ -33,3 +33,30 @@ Two resource limits were also reached: a real Contractor turn peaked at 1 019 Mi
 - Attacks ATK-90 to ATK-93 (threat model 0.8, section 5.16) test the new surface: the Contractor never judges its own delivery, a rewritten `CONTRACT.md` changes no decision and is flagged, a P0 constraint without its inspection never passes, an Owner of another project neither reads nor judges.
 - `scripts/deploy.sh down` now removes the guards, turns and sandboxes the filter created outside compose (the second run left four guards), and keeps the instances' volumes.
 - To decide later (Z5): whether a `reject` should also forbid opening the pull request, and whether the Contractor may answer a review (change requests between sides).
+
+## Amendment (Proposed, 2026-10-14): never PASS without a test that ran
+
+The decision above lets a recorded inspection verify the object it judges. It leaves open whether
+a delivery that the hub never ran a test on can reach PASS. The default chosen, which the
+program lead confirms or reverses, is that it cannot:
+
+- **PASS needs evidence that the hub produced itself:** at least one acceptance test of the
+  judged objects ran and passed.
+- **Nothing to judge.** A contract with no requirement or constraint (an empty one, or a delivery
+  declared before the contract) holds the reservation "nothing was judged".
+- **No test passed.** A delivery where no acceptance test passed holds "nothing was judged by test"
+  when none ran, and "no acceptance test passed" when some ran and none passed. This includes a
+  contract judged by inspection alone, every inspection conforming.
+- **Effect.** Either delivery is CONCERNS at best, and its pull request still opens. A test that
+  ran and failed never does better than one that did not run.
+
+Consequences:
+
+- Positive: the hub never says PASS on judgments alone, its own or the Owner side's, nor on a
+  contract that asks nothing.
+- Negative: a project judged only by inspection, analysis or demonstration never sees PASS. Its
+  pull requests carry the reservation, and the human merges on the inspections recorded.
+- Reversible: the rule is one function of the gate (`_vacuous` in `core/gate.py`). Letting
+  conforming inspections stand in for a test means returning no reservation when every judged
+  object is verified. `tests/unit/core/test_gate.py` names the cases that would change.
+
