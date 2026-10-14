@@ -19,9 +19,12 @@ subprocess has neither the nonce (it never leaves the judge's memory) nor a way 
 The log is the one channel the delivered code does reach: pytest echoes the output of a failing
 test after the kit's signed line, so a delivery can write as much as it likes there. The run line
 is what anchors the signature, and it is the first thing the kit prints; so the filter reads the
-log whole (up to `LOG_READ_LIMIT`) and believes nothing in a log that was cut or that does not
-begin with it — otherwise a flood could push the kit's lines out of the window and leave a pair
-of the delivery's own as the only one.
+log from its beginning, as a stream (up to `LOG_READ_LIMIT`), and believes nothing in a log that
+was cut or that does not begin with it — otherwise a flood could push the kit's lines out of
+the window and leave a pair of the delivery's own as the only one.
+
+The kit's manifest carries the SHA-256 of each file a test is asked from, measured here on the
+archive, so the kit can hold the files it runs to what was sent.
 
 Residual limit: the acceptance-test files themselves run in the judge, so the hub must hold them;
 a delivery that supplied a file at a named test path would run in the judge and could forge.
@@ -63,9 +66,9 @@ RUN_MARK = "ZEPHYROS-RUN "
 OUTCOMES = ("passed", "failed", "error", "not_run")
 LOG_LIMIT = 20_000
 LOG_READ_LIMIT = 16 * 1024 * 1024
-"""The most of a sandbox's log the filter reads to find the kit's lines. The run line that
-anchors the signature is the first thing the kit prints, so a log longer than this has lost it
-and nothing in it is believed (ATK-22); `LOG_LIMIT` is only what is kept as evidence."""
+"""The most of a sandbox's log the filter reads to find the kit's lines, from its beginning, as a
+stream: a log longer than this is not believed (ATK-22), and a flood does not reach the memory of
+the filter. `LOG_LIMIT` is only what is kept as evidence."""
 _PATH = re.compile(r"^(?!\.{1,2}$)(?!.*\.\.)(?!/)[A-Za-z0-9_.][A-Za-z0-9_./ +@=-]{0,250}$")
 _UID, _GID = (int(part) for part in INSTANCE_USER.split(":"))
 
@@ -195,7 +198,7 @@ def run_sandbox(
         exit_code = api.wait(name, manifest.timeout_seconds)
         if exit_code is None:
             api.kill(name)
-        log = api.logs(name, limit=LOG_READ_LIMIT + 1)
+        log, cut = api.logs_head(name, LOG_READ_LIMIT)
     except DockerError as error:
         journal.record("failed", "sandbox.run", "runtime_error", project_id=manifest.project_id)
         raise BrokerError("runtime_error", f"the sandbox could not run: {error}") from None
@@ -204,7 +207,7 @@ def run_sandbox(
     duration = monotonic() - started
     outcomes: dict[str, str]
     deselected: tuple[str, ...]
-    if len(log.encode()) > LOG_READ_LIMIT:
+    if cut:
         # Code that floods the log can push the kit's lines out of any window and leave a pair
         # of its own at the end; a log that was cut proves nothing, so the run verifies nothing.
         outcomes, deselected = dict.fromkeys(manifest.tests, "error"), ()

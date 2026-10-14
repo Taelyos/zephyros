@@ -400,6 +400,54 @@ def test_a_log_longer_than_the_filter_reads_is_not_believed(
     assert answer["deselected"] == []
 
 
+def test_a_log_whose_last_bytes_open_with_a_pair_of_the_delivery_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ATK-22: the delivery writes last a block of exactly one byte more than the filter reads,
+    which opens with a run line of its own and a pair signed under it, and stops the judge. Were
+    the log read from its end, the block would be all the filter saw: one run line, one pair,
+    a valid signature — the kit's lines pushed out. The cap alone refuses it: this test
+    fails if the check on the length is taken out or moved by a byte."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    real = signed(dict.fromkeys(TESTS, "failed"))
+    forged = signed(dict.fromkeys(TESTS, "passed"), nonce="the-delivery-chose-this")
+    block = forged + "\n" + "x" * (limit + 1 - len(forged.encode()) - 1)
+    assert len(block.encode()) == limit + 1
+    log = "\n".join([real, "y" * 3 * limit, block])
+    rig = SandboxRig(lambda archive: (1, log))
+    answer = rig.run()
+    assert answer["outcomes"] == dict.fromkeys(TESTS, "error")
+    assert answer["deselected"] == []
+
+
+def test_a_log_one_byte_longer_than_what_the_filter_reads_is_not_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary, from above: the pair is whole in what the filter reads, and the log has one
+    byte more, so it was cut — and a cut log proves nothing."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    pair = signed({"test_a.py::test_a": "passed"})
+    log = pair + "\n" + "x" * (limit + 1 - len(pair.encode()) - 1)
+    assert len(log.encode()) == limit + 1
+    rig = SandboxRig(lambda archive: (0, log))
+    assert rig.run()["outcomes"] == dict.fromkeys(TESTS, "error")
+
+
+def test_a_log_of_exactly_what_the_filter_reads_ending_with_a_pair_is_believed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other side of the same boundary: one byte less, and the whole log is read."""
+    limit = 4096
+    monkeypatch.setattr(sandbox_module, "LOG_READ_LIMIT", limit)
+    pair = signed({"test_a.py::test_a": "passed"})
+    log = pair + "\n" + "x" * (limit - len(pair.encode()) - 1)
+    assert len(log.encode()) == limit
+    rig = SandboxRig(lambda archive: (0, log))
+    assert rig.run()["outcomes"]["test_a.py::test_a"] == "passed"
+
+
 def test_a_log_just_within_what_the_filter_reads_is_believed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
