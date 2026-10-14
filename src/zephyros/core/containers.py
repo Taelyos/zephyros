@@ -14,6 +14,7 @@ to the runtime, and the tests run it on every specification the templates can pr
 
 from __future__ import annotations
 
+import copy
 import ipaddress
 import re
 from collections.abc import Mapping
@@ -286,6 +287,16 @@ def guard_spec(
     }
 
 
+SANDBOX_LOG: dict[str, Any] = {
+    "Type": "json-file",
+    "Config": {"max-size": "1t", "max-file": "1"},
+}
+"""The log of a sandbox is never rotated (ATK-22, ADR 0017). The filter believes what the kit
+prints only in a log that begins with its run line; a runtime that rotates the log could drop that
+head. The driver and a size no sandbox reaches are fixed here, since a log configuration that names
+no size gets the daemon's own, which may rotate."""
+
+
 def sandbox_spec(policy: Policy, project_id: str, run: str, kit: str) -> dict[str, Any]:
     """A sandbox (glossary): one verification, no network, no secret, the limits of an agent
     container, the files to verify in a volume of its own on /work, destroyed afterwards."""
@@ -296,6 +307,7 @@ def sandbox_spec(policy: Policy, project_id: str, run: str, kit: str) -> dict[st
             "NetworkMode": "none",
             "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=64m"},  # noqa: S108  # reason: a container path
             "Mounts": [{"Type": "volume", "Source": name, "Target": WORK_PATH, "ReadOnly": False}],
+            "LogConfig": copy.deepcopy(SANDBOX_LOG),
         }
     )
     return {
@@ -498,6 +510,8 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
             raise SpecError("a sandbox mounts its own volume on the work path, and nothing else")
         if set(host.get("Tmpfs", {})) != {"/tmp"}:  # noqa: S108  # reason: a container path
             raise SpecError("the temporary file system is /tmp")
+        if host.get("LogConfig") != SANDBOX_LOG:
+            raise SpecError("the log of a sandbox is never rotated")
     if role is Role.TURN:
         if spec.get("User") != INSTANCE_USER:
             raise SpecError("a turn runs as the unprivileged user")
