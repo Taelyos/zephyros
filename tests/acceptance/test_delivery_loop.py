@@ -566,7 +566,6 @@ def test_the_report_names_the_tests_that_never_ran_and_no_file_the_tests_use(
 BRANCH_CANARY = "ghp_abcdefghijklmnopqrstuvwxyz012345"  # pragma: allowlist secret (ATK-84)
 
 
-@pytest.mark.xfail(strict=True, reason="ATK-84: the branch name is not checked until the fix")
 def test_atk_84_a_branch_named_after_a_secret_is_refused_and_reaches_no_forge(
     world: World, forge_root: Path
 ) -> None:

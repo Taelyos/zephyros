@@ -122,6 +122,7 @@ def service(
     store: InMemoryDeliveryStore | None = None,
     events: Callable[[str, Mapping[str, object]], None] | None = None,
     log_store: InMemoryLogStore | None = None,
+    secrets: Callable[[], list[str]] | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
@@ -153,6 +154,7 @@ def service(
         clock,
         kit="assertions",
         events=events,
+        secrets=secrets,
     )
     return made, project, audit, store
 
@@ -1046,3 +1048,41 @@ def test_the_worker_titles_the_pull_request_with_the_decision_when_the_job_runs(
     while made.step():
         pass
     assert forge.titles == [f"work (delivery {delivery}, FAIL)"] * 2
+
+
+# ----------------------------------------------------------------------------- ATK-84, EXG-49
+def test_a_branch_name_that_holds_a_secret_is_refused_before_the_area_keeps_it() -> None:
+    made, project, _audit, store = service(secrets=lambda: ["s3cretvalue"])
+    ready(made, project)
+    package = make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE))
+    with pytest.raises(Refusal, match=r"the branch name work-\[masked\] holds a secret") as caught:
+        made.push(project, package, "work-s3cretvalue")
+    assert caught.value.reason is Reason.INVALID_REQUEST
+    assert "s3cretvalue" not in str(caught.value)
+    assert store.records(project) == []
+    assert made.push(project, package, "work").delivery_id == "d1"  # the area kept nothing
+
+
+def test_a_secret_the_hub_learns_after_the_push_stays_off_the_forge_and_the_events() -> None:
+    """A record kept before the name of its branch was checked, or a secret the hub learned
+    since: the title is masked, the branch pushed to the forge leaves the name out, and the
+    events mask it."""
+    known: list[str] = []
+    told: list[Mapping[str, object]] = []
+    forge = calc_forge()
+    made, project, _audit, _store = service(
+        forge=forge,
+        secrets=lambda: list(known),
+        events=lambda event, payload: told.append(payload) if event == "delivery.decided" else None,
+    )
+    ready(made, project)
+    pushed = made.push(
+        project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "work-s3cretvalue"
+    )
+    known.append("s3cretvalue")
+    made.declare(project, pushed.delivery_id)
+    while made.step():
+        pass
+    opened = asyncio.run(forge.get_pull_request(RepositoryRef("example/calc"), 1))
+    assert (opened.title, opened.head) == ("work-[masked] (delivery d1, PASS)", "zephyros/d1")
+    assert [payload["branch"] for payload in told] == ["work-[masked]"]

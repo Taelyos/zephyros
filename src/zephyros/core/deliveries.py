@@ -321,6 +321,15 @@ class DeliveryService:
             raise Refusal(Reason.NOT_FOUND, str(error)) from None
 
     def push(self, project_id: str, package: bytes, branch: str) -> DeliveryRecord:
+        masked = mask(branch, self._secrets())
+        if masked != branch:
+            # ATK-84: the name of the branch goes to the forge and into the title of the pull
+            # request; one that holds a secret, or anything shaped like one, never comes in.
+            raise Refusal(
+                Reason.INVALID_REQUEST,
+                f"the branch name {masked} holds a secret, or what looks like one: "
+                "name the branch after the work",
+            )
         try:
             delivery = self._area.receive(project_id, package, branch)
         except DeliveryError as error:
@@ -454,7 +463,7 @@ class DeliveryService:
             {
                 "project_id": project_id,
                 "delivery_id": delivery_id,
-                "branch": updated.branch,
+                "branch": mask(updated.branch, self._secrets()),
                 "decision": updated.decision,
                 "verdict": verdict.value,
                 "reasons": mask(reasons, self._secrets()),
@@ -655,7 +664,7 @@ class DeliveryService:
                     "delivery.loop",
                     {
                         "project_id": project_id,
-                        "branch": checked.branch,
+                        "branch": mask(checked.branch, self._secrets()),
                         "rejections": streak,
                     },
                 )
@@ -799,7 +808,12 @@ class DeliveryService:
             return
         forge = self._forge
         repository = RepositoryRef(source.repository)
-        head = f"zephyros/{record.delivery_id}-{record.branch}"
+        secrets = self._secrets()
+        # A record kept before the name of its branch was checked, or a secret the hub learned
+        # since, keeps the name off the forge.
+        head = f"zephyros/{record.delivery_id}" + (
+            f"-{record.branch}" if mask(record.branch, secrets) == record.branch else ""
+        )
         try:
             package = self._area.package(record.project_id, delivery.delivery_id)
             self._run_async(forge.push(repository, head, package))
@@ -809,7 +823,7 @@ class DeliveryService:
                         repository,
                         head,
                         source.branch,
-                        pull_request_title(record),
+                        mask(pull_request_title(record), secrets),
                         record.report or "",
                     )
                 )
@@ -862,7 +876,7 @@ class DeliveryService:
             {
                 "project_id": record.project_id,
                 "delivery_id": record.delivery_id,
-                "branch": record.branch,
+                "branch": mask(record.branch, self._secrets()),
                 "decision": decision,
             },
         )
