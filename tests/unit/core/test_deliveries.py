@@ -1015,3 +1015,34 @@ def test_a_change_that_is_never_written_fails_after_a_bounded_number_of_attempts
         made.record_review("operator", project, delivery, Verdict.ACCEPT, "fine")
     assert store.attempts == WRITE_ATTEMPTS
     assert made.status(project, delivery).review is None
+
+
+class TitleRecordingForge(InMemoryForge):
+    """Keeps every title the worker sets, in order."""
+
+    titles: list[str]
+
+    async def update_title(self, repository: RepositoryRef, number: int, title: str) -> None:
+        self.titles.append(title)
+        await super().update_title(repository, number, title)
+
+
+def test_the_worker_titles_the_pull_request_with_the_decision_when_the_job_runs() -> None:
+    """C50: two inspections change the decision before the worker runs; each retitle job sets
+    the title of the decision in force when it runs, never the one of when it was queued."""
+    forge = TitleRecordingForge(
+        {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+    )
+    forge.titles = []
+    made, project, _audit, _store = service(forge=forge)
+    with_constraint(made, project)
+    ready(made, project)
+    delivery = delivered(made, project)
+    made.record_inspection("operator", project, delivery, "CTR-01", Inspected.CONFORMS, "ok")
+    made.record_inspection(
+        "operator", project, delivery, "CTR-01", Inspected.DOES_NOT_CONFORM, "imports yaml"
+    )
+    assert forge.titles == []  # the worker retitles, never the request
+    while made.step():
+        pass
+    assert forge.titles == [f"work (delivery {delivery}, FAIL)"] * 2
