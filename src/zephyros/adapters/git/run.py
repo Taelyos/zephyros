@@ -13,6 +13,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 TIMEOUT_SECONDS = 120
+# The longest one git may run: a bound against a git that hangs, not a pace. The local calls work
+# on bounded data (a package of at most MAX_PACKAGE, 32 MiB; a tree to verify of at most 64 MiB,
+# read by one process) and take well under a second. Only the fetch and the push of a forge wait
+# on a network: a push carries one package, which 120 s still lets through at under 300 kB/s; a
+# fetch brings a whole branch with its history, which nothing bounds, and one that needs longer
+# fails with "took too long" rather than holding the hub. A caller that knows better passes
+# `timeout`.
 _SAFE_CONFIG = (
     "core.hooksPath=/dev/null",
     "core.fsmonitor=false",

@@ -17,6 +17,8 @@ from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 
 LOG_EXCERPT = 4000
+LISTED_TESTS = 50
+"""The most tests that never ran the report names one by one; it counts the others."""
 INSPECTIONS_HEADING = "## Inspections recorded after the gate"
 
 
@@ -46,9 +48,17 @@ class ReportInput:
     flagged_paths: tuple[str, ...] = ()
     """The client's own files the delivery changes (ADR 0020): flagged, never refused."""
     acceptance_files: tuple[tuple[str, str], ...] = ()
-    """The acceptance tests of the Owner side the run used, with the digest of their content."""
+    """The files of the Owner side in the tree verified, with the digest of their content."""
     unnamed_acceptance_files: tuple[str, ...] = ()
-    """The acceptance test files of the Owner side that no criterion names: they never run."""
+    """Those that no criterion names. The kit runs no test from them, but a test it runs may use
+    them (a support module): the report says no file never runs."""
+    never_run_tests: tuple[str, ...] = ()
+    """The tests the kit found in the files it ran and did not run, since no criterion names
+    them (`path::name`, as the kit names them)."""
+    missing_acceptance_files: tuple[str, ...] = ()
+    """The files a criterion names that neither the Owner side nor the base holds (ATK-16)."""
+    set_aside_paths: tuple[str, ...] = ()
+    """Those of the missing files the delivery brought: its versions were set aside, unrun."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -73,7 +83,10 @@ def _plain(text: str) -> str:
     return text.replace("|", "/").replace("\n", " ")
 
 
-def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
+def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
+    """The evidence report. Without the output of the run (`with_output` false), it is the
+    report the Contractor reads: the output shows the Owner side's acceptance tests, the outcome
+    of each test does not."""
     gate = report.gate
     delivery = report.delivery
     lines = [
@@ -95,10 +108,12 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         f"- Branch: {_code(delivery.branch)}",
         f"- Base: {_code(delivery.base[:12])}, head: {_code(delivery.head[:12])}",
         f"- Contract: version {report.contract_version} ({_code(report.contract_hash[:12])})",
-        f"- Acceptance tests of the Owner side ({len(report.acceptance_files)}): "
+        f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(
-                f"{_code(path)} ({_code(digest)})" for path, digest in report.acceptance_files
+                f"{_code(path)} ({_code(digest)}"
+                + (", named by no criterion)" if path in report.unnamed_acceptance_files else ")")
+                for path, digest in report.acceptance_files
             )
             or "none"
         ),
@@ -133,27 +148,45 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
         )
     lines += ["", f"## Verification (kit: {_plain(report.kit)})", ""]
     lines += [f"- {_code(test)}: {outcome.value}" for test, outcome in report.outcomes.items()]
-    excerpt = report.log[-LOG_EXCERPT:]
-    lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
-    lines += ["## Flags", ""]
-    if not report.flagged_paths and not report.unnamed_acceptance_files:
-        lines += ["None."]
+    if with_output:
+        excerpt = report.log[-LOG_EXCERPT:]
+        lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
     else:
-        if report.flagged_paths:
-            lines += [
-                "The delivery changes the client's own files: the Owner side reviews these "
-                "changes.",
-                "",
-            ]
-            lines += [f"- {_code(path)}" for path in report.flagged_paths]
-        if report.unnamed_acceptance_files:
-            if report.flagged_paths:
-                lines += [""]
-            lines += [
-                "Acceptance test files that no criterion names (they never run):",
-                "",
-            ]
-            lines += [f"- {_code(path)}" for path in report.unnamed_acceptance_files]
+        lines += ["", "The output of the run is kept for the Owner side: it shows its tests.", ""]
+    lines += ["## Flags", ""]
+    flags = [
+        (
+            "The delivery changes the client's own files: the Owner side reviews these changes.",
+            [_code(path) for path in report.flagged_paths],
+        ),
+        (
+            "Tests that no criterion names, in the files the kit ran: they never ran.",
+            [_code(test) for test in report.never_run_tests[:LISTED_TESTS]]
+            + (
+                [f"and {len(report.never_run_tests) - LISTED_TESTS} more"]
+                if len(report.never_run_tests) > LISTED_TESTS
+                else []
+            ),
+        ),
+        (
+            "Acceptance test files that a criterion names and neither the Owner side nor the "
+            "base holds (their tests cannot pass):",
+            [
+                _code(path)
+                + (
+                    " (the delivered version was set aside)"
+                    if path in report.set_aside_paths
+                    else ""
+                )
+                for path in report.missing_acceptance_files
+            ],
+        ),
+    ]
+    shown = [(intro, items) for intro, items in flags if items]
+    for number, (intro, items) in enumerate(shown):
+        lines += ([""] if number else []) + [intro, ""] + [f"- {item}" for item in items]
+    if not shown:
+        lines += ["None."]
     lines += [
         "",
         "## Automated delivery checks",
@@ -177,21 +210,17 @@ def render(report: ReportInput, secrets: Iterable[str] = ()) -> str:
     return mask("\n".join(lines), secrets)
 
 
-def with_inspections(
-    report: str,
+def inspection_addendum(
     inspections: Mapping[str, Mapping[str, str]],
     previous: str | None,
     gate: GateResult,
     secrets: Iterable[str] = (),
 ) -> str:
-    """The report of a delivery with its inspections and the decision they lead to (ADR 0020).
-
-    The inspections come after the gate: the report keeps what the gate saw, and an addendum,
-    rewritten at each inspection, lists every inspection and the decision now."""
-    body = report.split("\n" + INSPECTIONS_HEADING + "\n", 1)[0].rstrip("\n")
+    """The addendum of a report: every inspection recorded after the gate, and the decision they
+    lead to (ADR 0020). It is kept apart from the report the gate wrote and written whole at each
+    inspection: nothing is ever looked for in the report, whose text the delivery partly chose
+    (ATK-23)."""
     lines = [
-        body,
-        "",
         INSPECTIONS_HEADING,
         "",
         "| Object | Verdict | Observation | By | At |",
@@ -216,3 +245,10 @@ def with_inspections(
     lines += [f"- {_plain(r)}" for r in gate.reservations] or ["None."]
     lines.append("")
     return mask("\n".join(lines), secrets)
+
+
+def with_addendum(report: str, addendum: str | None) -> str:
+    """The report as the gate wrote it, then its addendum when there is one."""
+    if not addendum:
+        return report
+    return f"{report.rstrip(chr(10))}\n\n{addendum}"

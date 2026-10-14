@@ -48,7 +48,7 @@ from zephyros.core.deliveries import flagged_paths
 from zephyros.core.masking import mask_text
 
 FORMAT = "zephyros-replay"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 EXPORTER = f"tools.replay.export {VERSION}"
 KINDS = ("real", "scripted", "synthetic")
 PLAYER_TEMPLATE = Path(__file__).with_name("player.html")
@@ -128,8 +128,9 @@ CATEGORY_BY_ACTION: dict[str, str] = {
     "inspection.record": "judgment",
     "delivery.review": "judgment",
 }
-"""A `delivery.check` the hub accepts is always a flag: it records one only when a delivery
-changes a protected path. One it refuses is a refusal, as every refused action."""
+"""A `delivery.check` the hub accepts is a flag when the delivery changes a protected path; one
+that only says acceptance test files are missing is a `delivery` event (`hub_log_event`). One it
+refuses is a refusal, as every refused action."""
 DEFAULT_CATEGORY = "other"
 CATEGORY_REFUSAL = "refusal"
 CATEGORY_FLAG = "flag"
@@ -629,11 +630,25 @@ def _failure(data: Mapping[str, Any]) -> str:
     return str(data.get("error") or data.get("detail") or "no detail logged")
 
 
+def _paths(paths: object, count: object) -> str:
+    """`2 acceptance test files: a, b`, from the paths the hub logged (at most some) and their
+    count; an older hub logged the count alone, as `paths`."""
+    if not isinstance(paths, list):
+        return plural(paths if paths is not None else "?", "acceptance test file")
+    total = count if isinstance(count, int) else len(paths)
+    files = plural(total, "acceptance test file")
+    if not paths:
+        return files
+    return (
+        f"{files}: {', '.join(str(path) for path in paths)}{', ...' if total > len(paths) else ''}"
+    )
+
+
 def _refused(action: str, reason: str, data: Mapping[str, Any]) -> str:
     if data.get("detail"):
         what = str(data["detail"])
     elif action == "delivery.check":
-        files = plural(data.get("paths", "?"), "acceptance test file")
+        files = _paths(data.get("paths"), data.get("count"))
         what = f"delivery {data.get('delivery_id', '?')} changes {files}"
     elif action == "egress.refused":
         what = f"{data.get('purpose', 'a connection')} to {data.get('host', '?')}"
@@ -710,8 +725,25 @@ def _delivery_push(actor: str, _outcome: str, data: dict[str, Any]) -> str:
 
 
 def _delivery_check(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
-    paths = plural(data.get("flagged", "?"), "protected path")
-    return f"Hub flags delivery {data.get('delivery_id', '?')}: it changes {paths}"
+    """What the hub found when it checked a delivery: the protected paths it changes (a flag),
+    and the acceptance test files the contract names that nobody put (a delivered file at one of
+    those paths is set aside, never run)."""
+    flags = bool(data.get("flagged")) or "missing" not in data  # an older hub logged no `missing`
+    found: list[str] = []
+    if flags:
+        found.append(f"it changes {plural(data.get('flagged', '?'), 'protected path')}")
+    missing = data.get("missing")
+    if isinstance(missing, list) and missing:
+        are = "is" if len(missing) == 1 else "are"
+        found.append(
+            f"{plural(len(missing), 'acceptance test file')} the contract names {are} missing"
+        )
+    set_aside = data.get("set_aside")
+    if isinstance(set_aside, list) and set_aside:
+        are = "is" if len(set_aside) == 1 else "are"
+        found.append(f"{plural(len(set_aside), 'delivered file')} in their place {are} set aside")
+    verb = "flags" if flags else "checks"
+    return f"Hub {verb} delivery {data.get('delivery_id', '?')}: {'; '.join(found)}"
 
 
 def _staging_prepare(_actor: str, outcome: str, data: dict[str, Any]) -> str:
@@ -868,6 +900,8 @@ def hub_log_event(record: LogRecord, prices: Prices) -> Event:
     actor = actor_of(record.principal)
     data = kept(record.parameters)
     category = CATEGORY_BY_ACTION.get(record.action, DEFAULT_CATEGORY)
+    if record.action == "delivery.check" and "missing" in data and not data.get("flagged"):
+        category = "delivery"  # missing acceptance test files, no protected path changed
     if record.outcome == OUTCOME_REFUSED:
         category = CATEGORY_REFUSAL
         data.update(reason=record.reason, action=record.action)

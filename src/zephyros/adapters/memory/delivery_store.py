@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
-from zephyros.core.deliveries import DeliveryRecord, Source
+from zephyros.core.deliveries import DeliveryRecord, Source, StaleRecordError
 
 
 class InMemoryDeliveryStore:
@@ -14,9 +15,15 @@ class InMemoryDeliveryStore:
         self._sources: dict[str, Source] = {}
         self._lock = threading.Lock()
 
-    def put_record(self, record: DeliveryRecord) -> None:
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        key = (record.project_id, record.delivery_id)
         with self._lock:
-            self._records[(record.project_id, record.delivery_id)] = record
+            stored = self._records.get(key)
+            if record.revision != (0 if stored is None else stored.revision):
+                raise StaleRecordError(f"delivery {record.delivery_id} changed since it was read")
+            written = replace(record, revision=record.revision + 1)
+            self._records[key] = written
+        return written
 
     def get_record(self, project_id: str, delivery_id: str) -> DeliveryRecord | None:
         with self._lock:
