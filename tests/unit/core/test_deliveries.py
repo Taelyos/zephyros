@@ -998,6 +998,44 @@ def test_a_failure_after_the_checks_refused_a_delivery_leaves_it_refused_and_tol
     assert told == ["REFUSED"]
 
 
+class NothingFailedLogged(RefusalUnlogged):
+    """A log that takes neither the record of a refusal nor the record of an error."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.VERIFICATION_RUN and record.outcome is Outcome.ERROR:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+@pytest.mark.parametrize(
+    ("runner", "files", "state"),
+    [
+        (None, {**BASE, "checks/add.txt": b"test_add: pass\n# mine\n"}, DeliveryState.REFUSED),
+        (Exploding(), {**BASE, "calc.py": b"x = 2\n"}, DeliveryState.ERROR),
+    ],
+)
+def test_a_failure_the_log_cannot_take_is_still_told_once(
+    runner: AssertionRunner | None, files: dict[str, bytes], state: DeliveryState
+) -> None:
+    """EXG-23, review of #15: the log refuses the record of the error too. The delivery is told
+    once all the same, as a refusal or as an error, and the worker hears of the log's fault."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, audit, _store = service(
+        runner=runner,
+        events=lambda event, payload: events.append((event, payload)),
+        log_store=NothingFailedLogged(),
+    )
+    ready(made, project)
+    pushed = made.push(project, make_package(files, state_id(BASE)), "work")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(LogError):
+        made.step()  # the worker's loop reports it and goes on
+    assert made.status(project, pushed.delivery_id).state is state
+    assert audit.read(project, 0, 1000)[-1].action is not Action.VERIFICATION_RUN
+    told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
+    assert told == [state.name]
+
+
 class Contended(InMemoryDeliveryStore):
     """A store where, once `busy`, another writer always gets in first."""
 
