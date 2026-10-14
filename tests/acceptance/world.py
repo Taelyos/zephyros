@@ -161,14 +161,18 @@ class World:
         )
         self.hub, self.tokens, self.gateway = runtime.hub, runtime.tokens, runtime.gateway
         self.deliveries = runtime.deliveries
+        self.notifier = runtime.notifier
         self.agent_app = build_agent_app(self.hub, model_name=MODEL, gateway=self.gateway)
         self.main_app = build_main_agent_app(self.hub)
         self.operator_app = build_operator_app(self.hub, port=OPERATOR_PORT)
 
     def run_jobs(self) -> None:
-        """Do every queued job of the delivery loop, as its worker would."""
+        """Do every queued job of the delivery loop, as its worker would; then send what the
+        notifier queued meanwhile, as its own worker would."""
         assert self.deliveries is not None
         while self.deliveries.step():
+            pass
+        while self.notifier.step():
             pass
 
     def restart_hub(self) -> None:

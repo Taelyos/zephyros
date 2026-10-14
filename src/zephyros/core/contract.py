@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -596,6 +596,16 @@ class ContractService:
         resolved = self._store.get_pending(project_id, change_id)
         assert resolved is not None  # noqa: S101  # reason: it was pending a moment ago
         return resolved
+
+
+def approvable(version: ContractVersion, pending: Iterable[PendingChange]) -> list[PendingChange]:
+    """The pending changes that can still be approved, the oldest first: those proposed on
+    `version`, the version in force. One proposed on an older version is refused
+    (`STALE_BASE`)."""
+    return sorted(
+        (change for change in pending if change.base_version == version.number),
+        key=lambda change: change.created_at,
+    )
 
 
 def check_floor(versions: Sequence[ContractVersion]) -> list[str]:

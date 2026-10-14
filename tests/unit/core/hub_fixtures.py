@@ -22,6 +22,7 @@ from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.contract import ContractService
 from zephyros.core.deliveries import DeliveryService
 from zephyros.core.hub import Caller, Hub, ToolResponse
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import Principal, instance_principal
 from zephyros.core.projects import ProjectService
@@ -52,8 +53,16 @@ class Env:
     secrets: dict[str, str] = field(default_factory=dict)
     addresses: dict[str, str] = field(default_factory=dict)
     continuity: Continuity | None = None
+    notifier: Notifier | None = None
     notifications: list[tuple[str, dict[str, object]]] = field(default_factory=list)
     refuse_notifications: list[str] = field(default_factory=list)
+
+    def send_notifications(self) -> list[tuple[str, dict[str, object]]]:
+        """Send what the hub queued, as the notifier's worker would; what was sent so far."""
+        assert self.notifier is not None
+        while self.notifier.step():
+            pass
+        return self.notifications
 
     def principal(self, who: str) -> Principal:
         return self.callers[who].principal
@@ -94,6 +103,7 @@ def make_env(*, refusals_per_minute: int | None = None, simulation: bool = False
         notifications.append((event, dict(payload)))
         return NotifyResult()
 
+    notifier = Notifier(audit, record_notification)
     hub = Hub(
         audit=audit,
         tokens=tokens,
@@ -101,13 +111,14 @@ def make_env(*, refusals_per_minute: int | None = None, simulation: bool = False
         projects=projects,
         instances=instances,
         continuity=continuity,
-        notify=record_notification,
+        notifier=notifier,
         clock=clock,
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
     )
     env = Env(clock, log_store, audit, tokens, contracts, projects, instances, hub, "", "")
     env.continuity = continuity
+    env.notifier = notifier
     env.notifications = notifications
     env.refuse_notifications = refuse_notifications
 

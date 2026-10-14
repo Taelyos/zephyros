@@ -107,6 +107,8 @@ def test_the_example_plays_to_its_end(chromium: Chromium, tmp_path: Path) -> Non
     assert texts(chromium, "#flags-list .fp") == ["CONTRACT.md"]
     assert text(chromium, "#kind-badge") == "SYNTHETIC · test data, not a run"
     assert text(chromium, "#integrity").startswith("hash chain consistent")
+    badge = str(chromium.evaluate("document.getElementById('integrity').title"))
+    assert badge.startswith("Checked by the exporter when it wrote this replay, not by this player")
 
 
 def test_the_refusals_and_the_errors_of_every_actor_are_shown(

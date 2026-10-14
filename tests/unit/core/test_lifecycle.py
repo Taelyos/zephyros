@@ -33,6 +33,7 @@ from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import InstanceState as State
 from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
 from zephyros.core.webhooks import NotifyResult
@@ -104,6 +105,7 @@ class Rig:
     tokens: TokenService
     audit: AuditLog
     manager: InstanceManager
+    notifier: Notifier | None = None
 
     def make_manager(
         self,
@@ -112,6 +114,7 @@ class Rig:
         continuity: Continuity | None = None,
         notify: Any = None,
     ) -> InstanceManager:
+        self.notifier = Notifier(self.audit, notify)
         return InstanceManager(
             self.broker,
             self.store,
@@ -121,12 +124,18 @@ class Rig:
             timing,
             sleep=self.clock.advance,
             continuity=continuity,
-            notify=notify,
+            notifier=self.notifier,
         )
 
     # -- driving
     def run_jobs(self) -> None:
         while self.manager.step():
+            pass
+
+    def send_notifications(self) -> None:
+        """What the notifier's worker does: send what the watchdog queued."""
+        assert self.notifier is not None
+        while self.notifier.step():
             pass
 
     def start(self, project: str = PROJECT, side: Side = CONTRACTOR, prompt: str = "Work.") -> None:
@@ -779,14 +788,18 @@ def test_the_continuity_ladder_wakes_restarts_then_reports(rig: Rig) -> None:
     assert "restarts your instance" in str(restarted["Config"]["Cmd"][1])
     assert str(restarted["Config"]["Cmd"][1]) != str(before["Config"]["Cmd"][1])
 
-    # the main agent, then the human, are alerted through the notifier
+    # the main agent, then the human, are alerted through the notifier, which sends from its
+    # own worker: the watchdog only queues the alert
     rig.clock.advance(900)
     manager.tick()
     rig.run_jobs()
+    assert seen == []
+    rig.send_notifications()
     kinds = [event for event, _ in seen]
     assert kinds == ["continuity.alert_main"]
     rig.clock.advance(600)
     manager.tick()
+    rig.send_notifications()
     kinds = [event for event, _ in seen]
     assert kinds == ["continuity.alert_main", "continuity.alert_human"]
     assert seen[-1][1] == {
@@ -842,6 +855,7 @@ def test_an_alert_refused_by_the_egress_policy_is_logged(rig: Rig) -> None:
     rig.run_jobs()
     rig.clock.advance(900)
     manager.tick()  # the main agent is alerted, and the notifier refuses
+    rig.send_notifications()
     records = rig.records()
     refused = [r for r in records if r.action is Action.EGRESS]
     assert refused

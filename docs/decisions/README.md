@@ -25,4 +25,5 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0019 | [An anchor for the log head, outside the store](0019-anchor-outside-the-store.md) | Proposed |
 | 0020 | [The Owner side sees what it judges, and its verdict is recorded](0020-the-owner-sees-and-records.md) | Accepted |
 | 0021 | [The continuity ladder waits until the contract is ready for the Contractor](0021-the-ladder-waits-for-a-ready-contract.md) | Proposed |
+| 0023 | [A decision on the contract is awaited from whoever is to take it](0023-a-decision-is-awaited-from-whoever-takes-it.md) | Proposed |
 | 0024 | [Three levels of network access for instances; regulated by default](0024-three-levels-of-network-access.md) | Proposed |

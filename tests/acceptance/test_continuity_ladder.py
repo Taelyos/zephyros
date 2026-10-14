@@ -47,6 +47,7 @@ from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager
+from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import TokenService
 
@@ -67,20 +68,23 @@ class LadderWorld(World):
     manager: InstanceManager | None = None
 
     def _boot(self) -> None:
-        # Each boot is a new hub process: a new memory and a new manager. The database and the
-        # containers outlive it, as they would on a host.
+        # Each boot is a new hub process: a new memory and a new manager. The database (and the
+        # ladders it keeps) and the containers outlive it, as they would on a host.
         if not self.docker.containers:
             self.docker.add_hub()
         journal = MemoryJournal()
         executor = Executor(self.docker.api(), POLICY, journal, clock=lambda: 1_000_000)
         broker = FilterClient(TestClient(build_filter_app(executor, journal)))
-        continuity = Continuity(
-            ContinuityTiming(inactivity_seconds=INACTIVITY, restarts=1, unblock_seconds=3600)
-        )
         self.database = Database(self.db_path)
         timing = replace(TIMING, turn_seconds=10**6, silence_seconds=10**6)
 
-        def manager(tokens: TokenService, audit: AuditLog, clock: Clock) -> InstanceControl:
+        def manager(
+            tokens: TokenService,
+            audit: AuditLog,
+            clock: Clock,
+            notifier: Notifier,
+            continuity: Continuity | None,
+        ) -> InstanceControl:
             self.manager = InstanceManager(
                 broker,
                 SqliteInstanceStore(self.database),
@@ -90,6 +94,7 @@ class LadderWorld(World):
                 timing,
                 sleep=self.clock.advance,
                 continuity=continuity,
+                notifier=notifier,
             )
             return self.manager
 
@@ -99,10 +104,13 @@ class LadderWorld(World):
             instance_factory=manager,
             model=MODEL,
             delivery=self.delivery,
-            continuity=continuity,
+            continuity=ContinuityTiming(
+                inactivity_seconds=INACTIVITY, restarts=1, unblock_seconds=3600
+            ),
         )
         self.hub, self.tokens, self.gateway = runtime.hub, runtime.tokens, runtime.gateway
         self.deliveries = runtime.deliveries
+        self.notifier = runtime.notifier
         self.agent_app = build_agent_app(self.hub, model_name=MODEL, gateway=self.gateway)
         self.main_app = build_main_agent_app(self.hub)
         self.operator_app = build_operator_app(self.hub, port=OPERATOR_PORT)
@@ -111,11 +119,13 @@ class LadderWorld(World):
 
     def beat(self, seconds: int) -> None:
         """Let time pass, then one round of the instance worker: the watchdog and the ladder,
-        then the jobs they queued."""
+        then the jobs they queued; then the notifier's worker sends what was queued."""
         assert self.manager is not None
         self.clock.advance(seconds)
         self.manager.tick()
         while self.manager.step():
+            pass
+        while self.notifier.step():
             pass
 
     def log(self, project: str) -> list[dict[str, Any]]:
@@ -281,7 +291,7 @@ def test_a_change_proposed_during_a_turn_holds_the_ladder_until_it_is_decided(
     assert world.status(project) == "idle"
     world.operator_tool("contract.approve", project_id=project, change_id=change.data["change_id"])
     world.beat(INACTIVITY)
-    # the contract the Contractor is to build changed: the ladder starts again, from the wake
+    # the task could not be carried while it was held: its ladder starts again, from the wake
     assert world.story(project) == [*woken, DECISION, "release", "wake"]
     assert world.turns(project) == ["contractor", "contractor"]
 
@@ -300,23 +310,86 @@ def test_each_project_wakes_its_contractor_for_its_own_contract(world: LadderWor
     assert world.status(draft) == "absent"
 
 
-def test_after_a_restart_the_hub_wakes_no_contractor_on_what_it_forgot(
-    world: LadderWorld,
-) -> None:
-    """The ladder lives in the hub's memory. A restart forgets the task of a base prepared
-    before it: nothing is woken on it, even once its contract is ready. The next preparation
-    of the base starts the ladder again."""
+def test_a_restart_of_the_hub_keeps_each_task_where_its_ladder_was(world: LadderWorld) -> None:
+    """T12 (I10): the ladder is kept in the hub's database. A task held before a restart is
+    still held after it, until the contract is ready; a task woken before a restart goes on to
+    the next step of its ladder, not back to the wake."""
     project = world.project_a
     the_need(world, project)
     base_prepared(world, project)
     world.restart_hub()
     owner_works(world, project, rounds=4)
+    assert world.story(project) == [NO_TEST]  # still held, and nothing woken
+    assert world.status(project) == "absent"
     world.operator_tool(
         "contract.approve", project_id=project, change_id=owner_writes_the_stories(world, project)
     )
-    world.beat(INACTIVITY * 4)
-    assert world.story(project) == [NO_TEST]  # said before the restart; nothing since
-    assert world.status(project) == "absent"
-    base_prepared(world, project)
     world.beat(INACTIVITY)
-    assert world.story(project) == [NO_TEST, "wake"]
+    woken = [NO_TEST, DECISION, "release", "wake"]
+    assert world.story(project) == woken
+    world.docker.finish(turn_name(project, Side.CONTRACTOR))  # the turn ends with no delivery
+    world.restart_hub()
+    world.beat(INACTIVITY - 1)
+    assert world.story(project) == woken
+    world.beat(1)
+    assert world.story(project) == [*woken, "restart"]
+    assert world.turns(project) == ["contractor", "contractor"]
+
+
+def owner_proposes_a_note(world: LadderWorld, project: str, number: int) -> str:
+    note = {"type": "note", "id": f"NB-{number:03d}", "target": "EXG-01", "text": "Integers."}
+    change = world["owner_a"].tool(
+        "contract_propose",
+        {"project_id": project, "summary": "a note", "operations": [{"op": "put", "object": note}]},
+    )
+    assert not change.refused, change.error
+    assert change.data is not None
+    return str(change.data["change_id"])
+
+
+def alerts(world: LadderWorld, project: str) -> list[tuple[str, str]]:
+    """The alerts the main agent was sent, from the log: the side and the step of each."""
+    return [
+        (record["parameters"]["side"], record["parameters"]["step"])
+        for record in world.log(project)
+        if record["action"] == "notification.sent" and record["outcome"] == "ok"
+    ]
+
+
+def test_an_owner_side_that_proposes_without_end_reaches_the_main_agent(
+    world: LadderWorld,
+) -> None:
+    """ATK-94, proposed (ADR 0023). Every proposal reset the decision task and held the
+    Contractor, so an Owner side proposing more often than the inactivity of a task (a model in
+    a loop, or a hostile instance) kept both ladders silent. A change the Owner side proposed
+    awaits the operator or the main agent, as it cannot approve it itself: the ladder of that
+    decision counts from the first change and alerts the main agent, then the human."""
+    project = world.project_a
+    the_need(world, project)
+    base_prepared(world, project)
+    world.operator_tool(
+        "contract.approve", project_id=project, change_id=owner_writes_the_stories(world, project)
+    )
+    first = owner_proposes_a_note(world, project, 1)
+    for number in range(2, 14):  # two hours, a proposal every ten minutes; nobody decides
+        world.beat(600)
+        owner_proposes_a_note(world, project, number)
+    assert alerts(world, project) == [("main-agent", "alert_main"), ("main-agent", "alert_human")]
+    assert world.turns(project) == []  # neither side was woken: neither can decide
+    assert world.story(project) == [NO_TEST, DECISION, "release", DECISION]
+    # The main agent decides the first change; the others were proposed on the version before.
+    world.main_client().post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "contract_approve",
+                "arguments": {"project_id": project, "change_id": first},
+            },
+        },
+    )
+    assert world.story(project) == [NO_TEST, DECISION, "release", DECISION, "release"]
+    world.beat(INACTIVITY)
+    assert world.turns(project) == ["contractor"]

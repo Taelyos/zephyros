@@ -13,7 +13,7 @@ uv run --locked python -m tools.replay.export --db hub.db --project p_0123456789
   --kind real --from-seq 238 --to-seq 501 --output run.replay.json
 ```
 
-Current version: **2.0.0**.
+Current version: **2.1.0**.
 
 ## Versioning
 
@@ -27,7 +27,7 @@ change.
 ```json
 {
   "format": "zephyros-replay",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "run": { ... },
   "integrity": { ... },
   "pricing": { ... },
@@ -71,7 +71,9 @@ the records it exports against their hashes and their links.
 check reads neither the head the hub keeps of the stream nor its anchor outside the store, and
 the chain has no key: records cut after the last exported one, or a log rewritten whole with its
 hashes recomputed, would still read `verified`. `log.verify` on the hub checks those. Compare
-`first_previous` and `last_hash` with the hub's own log to tie a replay to it.
+`first_previous` and `last_hash` with the hub's own log to tie a replay to it. The check is the
+exporter's, made when it wrote the replay: a player shows its result and checks nothing itself,
+so a replay edited by hand would read the same.
 
 Only events whose `source` is `hub-log` are covered by the chain, and of each one only the fields
 its record holds (see `data` and `hub_state` below).
@@ -140,11 +142,11 @@ shows its new version, even when that version's own time falls at the edge of th
 | `contract` | `contract.import`, `contract.apply_reserved`, `contract.propose`, `contract.approve`, `contract.reject`, `contract.pending`, `contract.read`, `contract.version`, `acceptance.put` | `change_id`, `summary`, `operations` (a count), `version_id`, `version`, `pending`; for `contract.version` (source `hub-state`): `number`, `version_id`, `author`, `objects` (as in `contract`, the objects of that version); for `acceptance.put`: `path`, `sha256`. | |
 | `turn` | `instance.start`, `turn.start`, `turn.end` | `side`, `prompt_chars`, `result` (an error outcome when the turn did not end well); `error` when a turn could not start. | |
 | `model` | `gateway.call` | `side`, `model`, `prompt_tokens`, `completion_tokens`, `tool_calls`, `cost_usd`; on error, `detail` and no tokens. | |
-| `refusal` | any type with outcome `refused` | `reason` (the hub's reason code), `detail`, `action` (the refused action), and the record's other parameters. | |
-| `delivery` | `delivery.push`, `delivery.declare`, `delivery.status`, `staging.prepare`, `staging.read`, `verification.run`, `pull_request.open`, `pull_request.comment`, `pull_request.retitle` | `delivery_id`, `branch`, `changed` (a count), `bytes`, `passed`, `tests`, `number`; on error, `error`. | `changed_paths` on `delivery.push`; `url` on `pull_request.*`. |
+| `refusal` | any type with outcome `refused` | `reason` (the hub's reason code), `detail`, `action` (the refused action), and the record's other parameters. A refused `delivery.check` carries `paths` (the acceptance test files the delivery changes, the first of them) and `count` (all of them); a hub older than that logged the count alone, as `paths`. | |
+| `delivery` | `delivery.push`, `delivery.declare`, `delivery.status`, `staging.prepare`, `staging.read`, `verification.run`, `pull_request.open`, `pull_request.comment`, `pull_request.retitle`, and `delivery.check` when it flags no protected path | `delivery_id`, `branch`, `changed` (a count), `bytes`, `passed`, `tests`, `number`; on error, `error`; for `delivery.check`, as in `flag`. | `changed_paths` on `delivery.push`; `url` on `pull_request.*`. |
 | `gate` | `gate.decision` | `delivery_id`, `decision` (`PASS`, `CONCERNS`, `FAIL`), `contract_version`; after an inspection, `after` and `previous` (the decision before). | `outcomes` (test id to result). |
 | `judgment` | `inspection.record`, `delivery.review` | `delivery_id`, `object_id`, `verdict`, `decision` (the gate's decision after the record). | `observation` or `reasons`. |
-| `flag` | `delivery.check`, `delivery.flag` | `delivery.check` (source `hub-log`): the hub flagged a delivery that changes protected paths, `delivery_id`, `flagged` (a count). `delivery.flag` (source `hub-state`): a run older than that rule, where the exporter found the protected paths among the delivered ones, `delivery_id`, `paths`, `rule` (`protected-path`), `by` (`exporter`). | `paths` on `delivery.check`. |
+| `flag` | `delivery.check`, `delivery.flag` | `delivery.check` (source `hub-log`): the hub flagged a delivery that changes protected paths, `delivery_id`, `flagged` (a count), and, from a hub that logs them, `missing` (the acceptance test files the contract names that nobody put) and `set_aside` (the delivered files at those paths, never run). A check that only reports `missing` files, with `flagged` 0, is no flag: its category is `delivery`. `delivery.flag` (source `hub-state`): a run older than that rule, where the exporter found the protected paths among the delivered ones, `delivery_id`, `paths`, `rule` (`protected-path`), `by` (`exporter`). | `paths` on `delivery.check`. |
 | `message` | `agent.message` | `side`, `text` (possibly shortened, see `truncated`), `truncated`, `role` (`final` for the last answer of a turn, `note` otherwise). A message the state database holds in several sessions appears once. | |
 | `other` | `project.create`, `token.issue`, `token.revoke`, `notification.sent`, `continuity.step`, ... | The record's parameters. | |
 
