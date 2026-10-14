@@ -1036,6 +1036,63 @@ def test_a_failure_the_log_cannot_take_is_still_told_once(
     assert told == [state.name]
 
 
+class OpeningUnlogged(InMemoryLogStore):
+    """A log that takes no record of a pull request opened, or not."""
+
+    def append(self, record: AuditRecord) -> None:
+        if record.action is Action.PULL_REQUEST_OPEN:
+            raise LogError("the log is full")
+        super().append(record)
+
+
+class ProposalContended(InMemoryDeliveryStore):
+    """A store where another writer always gets in first once the pull request is open."""
+
+    def put_record(self, record: DeliveryRecord) -> DeliveryRecord:
+        if record.state is DeliveryState.PROPOSED:
+            raise StaleRecordError("written by someone else")
+        return super().put_record(record)
+
+
+@pytest.mark.parametrize(
+    ("forge", "log_store", "store", "fault"),
+    [
+        ("open", OpeningUnlogged(), None, LogError),
+        ("refusing", OpeningUnlogged(), None, LogError),
+        ("open", None, ProposalContended(), StaleRecordError),
+    ],
+    ids=["opened-unlogged", "refused-unlogged", "proposal-unwritten"],
+)
+def test_a_decision_is_told_once_whatever_becomes_of_its_pull_request(
+    forge: str,
+    log_store: InMemoryLogStore | None,
+    store: InMemoryDeliveryStore | None,
+    fault: type[Exception],
+) -> None:
+    """EXG-23, review of #15: a PASS whose pull request the log cannot record, opened or
+    refused, or whose proposal is never written. The main agent hears of the decision once,
+    and the worker hears of the fault."""
+    events: list[tuple[str, Mapping[str, object]]] = []
+    made, project, _audit, _store = service(
+        forge=calc_forge()
+        if forge == "open"
+        else RefusingForge(
+            {"example/calc": frozenset({"main"})}, {("example/calc", "main"): make_package(BASE)}
+        ),
+        log_store=log_store,
+        store=store,
+        events=lambda event, payload: events.append((event, payload)),
+    )
+    ready(made, project)
+    pushed = made.push(project, make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE)), "w")
+    made.declare(project, pushed.delivery_id)
+    with pytest.raises(fault):
+        made.step()  # the worker's loop reports it and goes on
+    assert made.status(project, pushed.delivery_id).decision == "PASS"
+    told = [payload["decision"] for event, payload in events if event == "delivery.decided"]
+    assert told == ["PASS"]
+
+
 class Contended(InMemoryDeliveryStore):
     """A store where, once `busy`, another writer always gets in first."""
 

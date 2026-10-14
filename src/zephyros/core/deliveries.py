@@ -650,18 +650,21 @@ class DeliveryService:
         if checked.state is DeliveryState.REFUSED:
             self._tell_decision(checked, REFUSED)
             return
-        if checked.decision != Decision.FAIL.value:
-            self._propose(checked, delivery)
-        # Told once the forge has answered, so that a receiver that fails cannot keep the pull
-        # request from opening; and told as it stands now, an inspection recorded meanwhile
-        # included, so that the last decision the main agent hears of is the one in force.
-        now = self._record(project_id, delivery_id)
         try:
-            self._tell_decision(now, str(now.decision))
+            if checked.decision != Decision.FAIL.value:
+                self._propose(checked, delivery)
         finally:
-            # EXG-23: a decision that cannot be told never hides the loop it closes.
-            if checked.decision == Decision.FAIL.value:
-                self._alert_loop(project_id, checked.branch)
+            # Told once the forge has answered, so that a receiver that fails cannot keep the
+            # pull request from opening; told even when what follows the forge's answer fails
+            # (EXG-23); and told as it stands now, an inspection recorded meanwhile included,
+            # so that the last decision the main agent hears of is the one in force.
+            now = self._record(project_id, delivery_id)
+            try:
+                self._tell_decision(now, str(now.decision))
+            finally:
+                # EXG-23: a decision that cannot be told never hides the loop it closes.
+                if checked.decision == Decision.FAIL.value:
+                    self._alert_loop(project_id, checked.branch)
 
     def _alert_loop(self, project_id: str, branch: str) -> None:
         """EXG-23: the loop the Owner and the Contractor may fall into — a streak of refused
