@@ -391,7 +391,7 @@ def test_the_published_schema_matches_the_specification() -> None:
     assert exported["x-zephyros-schema-version"] == CONFIG_SCHEMA_VERSION
     assert exported["required"] == ["schema_version", "images"]
     assert exported["additionalProperties"] is False
-    assert len(exported["x-zephyros-rules"]) == 10  # type: ignore[arg-type]  # reason: the export holds a list
+    assert len(exported["x-zephyros-rules"]) == 11  # type: ignore[arg-type]  # reason: the export holds a list
 
 
 def test_the_defaults_do_not_alias_the_schema() -> None:
@@ -558,3 +558,41 @@ def test_the_egress_port_differs_from_the_other_ports_of_the_hub() -> None:
     with pytest.raises(ConfigError) as caught:
         parse_config(with_value("hub.egress_port", 8080))
     assert [problem.key for problem in caught.value.problems] == ["hub.egress_port"]
+
+
+# ----------------------------------------------------------------------------- ADR 0029
+def test_the_contractor_runs_hermes_unless_the_file_says_otherwise() -> None:
+    config = parse_config(minimal())
+    assert config.instances.contractor_engine == "hermes"
+    assert config.images.opencode is None
+
+
+def test_a_contractor_that_runs_opencode_takes_the_opencode_image() -> None:
+    document = with_value("instances.contractor.engine", "opencode")
+    document["images"]["opencode"] = DIGEST
+    config = parse_config(document)
+    assert config.instances.contractor_engine == "opencode"
+    assert config.images.opencode == DIGEST
+
+
+def test_a_contractor_that_runs_opencode_without_its_image_is_refused() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value("instances.contractor.engine", "opencode"))
+    assert [p.key for p in caught.value.problems] == ["images.opencode"]
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "faulty"),
+    [
+        ("instances.contractor.engine", "claude", "instances.contractor.engine"),
+        ("instances.owner.engine", "opencode", "instances.owner"),  # the Owner runs Hermes
+        ("instances.contractor.image", DIGEST, "instances.contractor.image"),
+        ("images.opencode", "opencode:latest", "images.opencode"),
+    ],
+)
+def test_an_engine_or_an_image_outside_the_schema_is_refused(
+    path: str, value: object, faulty: str
+) -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value(path, value))
+    assert [p.key for p in caught.value.problems] == [faulty]

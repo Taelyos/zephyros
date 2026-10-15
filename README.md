@@ -8,7 +8,8 @@ the **Contractor**, builds and delivers. Between them sits a **hub with no model
 replays the Owner's tests on every delivery in a sandbox, applies fixed rules, and opens the pull
 request with an evidence report. A human merges.
 
-Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent). Version 0.2.0:
+Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent); the Contractor can also be
+a third-party coding agent such as OpenCode, under the same guarantees. Version 0.2.0:
 experimental, one machine, Linux or macOS with Docker.
 
 The **operator** is the person who runs Zephyros: they write the requirements, approve what only
@@ -138,7 +139,7 @@ suite, on real containers. As collected by pytest, parametrized cases each count
 | --- | --- | --- |
 | `tests/unit/` | 2,443 | The hub, its adapters, the configuration, the kit, the replay tools; no container |
 | `tests/acceptance/` | 534 | Whole stories and attacks of the threat model through a real hub, with fakes for containers and the forge |
-| `tests/runtime/` | 147 | Real containers: the turn's hardening, the network guard and levels, the listeners closed to an instance network without a guard, the sandbox and the kit, real Hermes turns with a scripted model |
+| `tests/runtime/` | 159 | Real containers: the turn's hardening, the network guard and levels, the listeners closed to an instance network without a guard, the sandbox and the kit, real Hermes and OpenCode turns with a scripted model |
 
 Without a container runtime, `scripts/check.sh` reports 2,976 passed and 148 skipped: every
 skipped test needs a container runtime (the runtime suite, with the conformance cases it runs
@@ -223,7 +224,7 @@ What holds and what does not, in version 0.2.0:
 | hub | Holds the contracts, tokens and log; serves the operator channel, the main agent's endpoint and, on each instance network, the agent endpoint (MCP tools and the model gateway) and the egress proxy. No model inside. |
 | filter | The only process that reaches the container runtime; no network, a closed list of operations. |
 | guard | One per instance: its network rules, at the level the configuration sets, and its fixed address. |
-| turn | The pinned Hermes Agent, unprivileged, for one piece of work. |
+| turn | The pinned agent engine, unprivileged, for one piece of work: Hermes Agent, or for the Contractor a third-party coding agent such as OpenCode. |
 
 Zephyros is not built inside Zephyros. A written specification came first, and it evolves
 through product decisions; the work goes through small pull requests, each checked by the CI and

@@ -1,0 +1,54 @@
+// The configuration of OpenCode in a Zephyros instance (ADR 0029), in its managed scope.
+// {env:NAME} is replaced by OpenCode with the environment of the turn, which the container
+// filter sets: the hub's agent endpoint, the model name and the project token, the one secret.
+// The model gateway and the MCP server of the hub are at the same address, which the network
+// guard lets through at every level (ADR 0024).
+{
+  "$schema": "https://opencode.ai/config.json",
+  // The model: the one the gateway serves, through the gateway alone. The provider key stays in
+  // the hub; OpenCode authenticates with the project token, and the hub counts every call
+  // against the instance that made it.
+  "enabled_providers": ["zephyros"],
+  "model": "zephyros/{env:ZEPHYROS_MODEL}",
+  "small_model": "zephyros/{env:ZEPHYROS_MODEL}",
+  "provider": {
+    "zephyros": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Zephyros model gateway",
+      "options": {
+        "baseURL": "{env:ZEPHYROS_HUB_URL}/v1",
+        "apiKey": "{env:ZEPHYROS_TOKEN}"
+      },
+      "models": {
+        "{env:ZEPHYROS_MODEL}": {
+          "name": "{env:ZEPHYROS_MODEL}",
+          "tool_call": true,
+          // OpenCode compacts a session as it nears this context, minus the output: about
+          // 80 000 tokens, where Hermes compacts too (images/instance/seed.yaml).
+          "limit": { "context": 96000, "output": 16000 }
+        }
+      }
+    }
+  },
+  // The hub's tools, with the project token, and no other MCP server.
+  "mcp": {
+    "zephyros": {
+      "type": "remote",
+      "url": "{env:ZEPHYROS_HUB_URL}/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": { "Authorization": "Bearer {env:ZEPHYROS_TOKEN}" }
+    }
+  },
+  // Every tool is allowed without a question, which a turn could not answer: the agent acts
+  // inside its container only, and what the container reaches is the guard's and the hub's
+  // decision, not this one.
+  "permission": "allow",
+  "share": "disabled",
+  "autoupdate": false,
+  "snapshot": false,
+  "lsp": false,
+  "formatter": false,
+  "plugin": [],
+  "compaction": { "auto": true }
+}

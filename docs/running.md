@@ -10,7 +10,7 @@ This page describes the deployment on one machine, which is also the one the run
 | filter | The only process that reaches the container runtime. It has no network and serves the hub on a Unix socket, with a closed list of operations ([ADR 0014](decisions/0014-container-filter-as-typed-broker.md)) |
 | guard, one per instance | Loads the network rules of the instance, at the level of `network.egress`, and holds its fixed address. No listener, no secret |
 | sandbox, one per verification | The `tests` kit replaying the acceptance tests on a delivery, with no network |
-| turn, one per piece of work | The pinned Hermes Agent, as user 10000, in the guard's network namespace, with the instance's two volumes. It ends when its work is done |
+| turn, one per piece of work | The pinned agent engine (Hermes Agent, or OpenCode for a Contractor configured for it), as user 10000, in the guard's network namespace, with the instance's two volumes. It ends when its work is done |
 
 An instance is one side (owner or contractor) of one project: a guard, a network and two volumes (the Hermes home and the work directory). The hub starts a turn when it is given work, and a watchdog ends turns that run too long or stop calling the hub. If the hub itself is gone, the filter keeps a reaper: it stops and removes any turn older than `limits.turn_seconds` plus a three-poll grace (so a live hub always decides the fate of its own turns first), one sweep — 30 seconds — behind at the latest.
 
@@ -22,7 +22,7 @@ Needs a Docker-compatible runtime (OrbStack on macOS works) and `docker compose`
 scripts/deploy.sh up
 ```
 
-It builds three images (the hub and filter image, the guard, the instance image derived from the pinned Hermes image), and a fourth, the image of the `tests` verification kit, when `ZEPHYROS_KIT=tests` is set. It writes the configuration to `deploy/state/zephyros.toml` with the images by identifier, and starts the hub and the filter. The operator channel listens on `127.0.0.1:8081`, the main-agent endpoint on `127.0.0.1:8082`.
+It builds three images (the hub and filter image, the guard, the instance image derived from the pinned Hermes image), a fourth, the image of the `tests` verification kit, when `ZEPHYROS_KIT=tests` is set, and the OpenCode instance image (`images/instance-opencode`) when `ZEPHYROS_CONTRACTOR_ENGINE=opencode` makes the Contractor run OpenCode ([ADR 0029](decisions/0029-the-contractor-can-be-a-third-party-coding-agent.md)). It writes the configuration to `deploy/state/zephyros.toml` with the images by identifier, and starts the hub and the filter. The operator channel listens on `127.0.0.1:8081`, the main-agent endpoint on `127.0.0.1:8082`.
 
 Without `ZEPHYROS_KIT=tests` the hub has no verification runner, and every delivery ends in an error that says so; [a run with real models](real-test.md) gives the whole command.
 

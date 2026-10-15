@@ -17,6 +17,7 @@ from zephyros.adapters.docker.api import DockerApi, DockerError
 from zephyros.adapters.filter.journal import Journal
 from zephyros.adapters.filter.sandbox import run_sandbox
 from zephyros.adapters.hermes.engine import HermesEngine
+from zephyros.adapters.opencode.engine import OpenCodeEngine
 from zephyros.core.broker import (
     BrokerError,
     ContainerInfo,
@@ -54,6 +55,11 @@ STOP_SECONDS = 2
 WATCHED_ACTIONS = ("start", "die", "kill", "oom", "stop", "destroy")
 MANAGED_FILTER = f"{LABEL_MANAGED}=true"
 HUB_ROLE = "hub"
+ENGINES: Mapping[str, Callable[[], AgentEngine]] = {
+    "hermes": HermesEngine,
+    "opencode": OpenCodeEngine,
+}
+"""The agent engines a turn can run, by the name the configuration gives (ADR 0029)."""
 
 
 def _labels(data: Mapping[str, Any]) -> Mapping[str, str]:
@@ -85,7 +91,11 @@ class Executor:
         clock: Callable[[], float] = time.time,
         engine: AgentEngine | None = None,
     ) -> None:
-        self._engine = engine or HermesEngine()
+        """`engine`, when given, runs the turns of both sides (tests); otherwise each side runs
+        the engine the policy names for it."""
+        self._engines = {
+            side: engine or ENGINES[policy.engine(side)]() for side in (Side.OWNER, Side.CONTRACTOR)
+        }
         self._api = api
         self._policy = policy
         self._journal = journal
@@ -315,7 +325,7 @@ class Executor:
             raise BrokerError("not_ready", "the guard of the instance is not running")
         spec = turn_spec(
             self._policy,
-            self._engine,
+            self._engines[side],
             project_id,
             side,
             self._hub_address(project_id, side),

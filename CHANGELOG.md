@@ -8,7 +8,21 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
-Nothing yet.
+| Surface | 0.2.0 | Unreleased |
+| --- | --- | --- |
+| Configuration schema | 1.15.0 | 1.16.0 |
+| Agent engine interface | 0.2.0 | 0.2.0 (a second real implementation) |
+
+### Added
+- The Contractor can be a third-party coding agent (ADR 0029). `instances.contractor.engine`
+  chooses `hermes` (the default) or `opencode`, OpenCode 1.19.0 in its own image
+  (`images/instance-opencode`, `images.opencode`): pinned and checked by its SHA-512, configured
+  in its read-only managed scope with the gateway and the MCP server of the hub and the project
+  token, nothing shared, updated or fetched by itself. A turn runs `opencode run --continue`
+  with the prompt on its standard input. The guarantees do not change with the engine: no
+  provider key in the instance, the same rights, guard, level, sandbox and gate; the filter holds
+  each side to the image of its engine. The Owner runs Hermes. `scripts/deploy.sh` builds the
+  image when `ZEPHYROS_CONTRACTOR_ENGINE=opencode`.
 
 ## [0.2.0] - 2026-10-14
 

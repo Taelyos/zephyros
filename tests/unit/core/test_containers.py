@@ -13,6 +13,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from zephyros.adapters.hermes.engine import HermesEngine
+from zephyros.adapters.opencode.engine import OpenCodeEngine
+from zephyros.core.config import CONFIG_SCHEMA_VERSION, parse_config
 from zephyros.core.containers import (
     GUARD_USER,
     HOME_PATH,
@@ -486,3 +488,77 @@ def test_the_guard_is_labelled_with_its_level_and_check_spec_holds_it() -> None:
     spec["Labels"]["org.zephyros.egress"] = "open"
     with pytest.raises(SpecError, match="labelled"):
         check_spec(spec, Role.GUARD, POLICY)
+
+
+# ----------------------------------------------------------------------------- ADR 0029
+OPENCODE_IMAGE = DIGEST + "c" * 64
+OPENCODE = replace(POLICY, contractor_engine="opencode", opencode_image=OPENCODE_IMAGE)
+
+
+def opencode_turn(side: Side = Side.CONTRACTOR, policy: Policy = OPENCODE) -> dict[str, Any]:
+    engine = OpenCodeEngine() if policy.engine(side) == "opencode" else HermesEngine()
+    return turn_spec(policy, engine, PROJECT, side, "10.200.0.19", TOKEN, "Do it.")
+
+
+def test_a_contractor_that_runs_opencode_takes_its_image_and_the_owner_keeps_hermes() -> None:
+    contractor = opencode_turn()
+    assert contractor["Image"] == OPENCODE_IMAGE
+    assert contractor["Cmd"] == ["turn", "Do it."]
+    check_spec(contractor, Role.TURN, OPENCODE)
+    owner = opencode_turn(Side.OWNER)
+    assert owner["Image"] == POLICY.instance_image
+    assert owner["Cmd"] == ["chat", "--query=Do it.", *HERMES_TAIL]
+    check_spec(owner, Role.TURN, OPENCODE)
+
+
+def test_a_turn_of_opencode_has_the_template_of_any_turn_and_the_same_one_secret() -> None:
+    """Everything but the image and the command is the template's: the same user, namespace,
+    volumes, limits and hardening, and the same environment, the token its one secret."""
+    hermes, opencode = turn(), opencode_turn()
+    for key in ("User", "WorkingDir", "Env", "Labels", "HostConfig"):
+        assert opencode[key] == hermes[key], key
+    assert [e for e in opencode["Env"] if TOKEN in e and not e.startswith(("http", "HTTP"))] == [
+        f"ZEPHYROS_TOKEN={TOKEN}"
+    ]
+    assert TOKEN not in " ".join(opencode["Cmd"])
+
+
+def test_check_spec_holds_each_side_to_the_image_of_its_engine() -> None:
+    """A Contractor turn that runs OpenCode may not start the Hermes image, nor a Hermes one the
+    OpenCode image; an Owner turn runs Hermes whatever the Contractor runs; and a turn that does
+    not say its side is refused."""
+    contractor = opencode_turn()
+    with pytest.raises(SpecError, match="configured"):
+        check_spec({**contractor, "Image": POLICY.instance_image}, Role.TURN, OPENCODE)
+    with pytest.raises(SpecError, match="configured"):
+        check_spec({**turn(), "Image": OPENCODE_IMAGE}, Role.TURN, POLICY)
+    with pytest.raises(SpecError, match="configured"):
+        check_spec({**opencode_turn(Side.OWNER), "Image": OPENCODE_IMAGE}, Role.TURN, OPENCODE)
+    unlabelled = copy.deepcopy(contractor)
+    del unlabelled["Labels"]["org.zephyros.side"]
+    with pytest.raises(SpecError, match="side"):
+        check_spec(unlabelled, Role.TURN, OPENCODE)
+
+
+def test_a_policy_that_runs_opencode_without_its_image_builds_no_turn() -> None:
+    policy = replace(POLICY, contractor_engine="opencode")
+    with pytest.raises(SpecError, match="no image"):
+        opencode_turn(policy=policy)
+    assert opencode_turn(Side.OWNER, policy)["Image"] == POLICY.instance_image
+
+
+def test_the_policy_takes_the_engine_and_its_image_from_the_configuration() -> None:
+    config = parse_config(
+        {
+            "schema_version": CONFIG_SCHEMA_VERSION,
+            "images": {
+                "instance": DIGEST + "b" * 64,
+                "guard": DIGEST + "a" * 64,
+                "opencode": OPENCODE_IMAGE,
+            },
+            "instances": {"contractor": {"engine": "opencode"}},
+        }
+    )
+    policy = Policy.from_config(config)
+    assert (policy.engine(Side.CONTRACTOR), policy.engine(Side.OWNER)) == ("opencode", "hermes")
+    assert policy.turn_image(Side.CONTRACTOR) == OPENCODE_IMAGE

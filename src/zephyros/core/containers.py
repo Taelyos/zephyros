@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from zephyros.core.config import DEFAULT_EGRESS, DEFAULT_RESOLVERS, Config
+from zephyros.core.config import DEFAULT_EGRESS, DEFAULT_ENGINE, DEFAULT_RESOLVERS, Config
 from zephyros.core.ports.agent_engine import AgentEngine, Side, TurnRequest
 from zephyros.core.principals import is_project_id
 
@@ -88,6 +88,22 @@ class Policy:
     """What an instance reaches besides the hub (ADR 0024): the guard loads the rules of this
     level, and a regulated turn is given the egress proxy of the hub."""
     egress_port: int = 8083
+    contractor_engine: str = DEFAULT_ENGINE
+    """The agent engine of a Contractor instance (ADR 0029); an Owner instance runs Hermes."""
+    opencode_image: str | None = None
+    """The image of an instance that runs OpenCode."""
+
+    def engine(self, side: Side) -> str:
+        """The name of the agent engine that the instance of `side` runs."""
+        return self.contractor_engine if side is Side.CONTRACTOR else DEFAULT_ENGINE
+
+    def turn_image(self, side: Side) -> str:
+        """The image of a turn of the instance of `side`: the image of its engine."""
+        if self.engine(side) == "opencode":
+            if not self.opencode_image:
+                raise SpecError("no image for the OpenCode engine")
+            return self.opencode_image
+        return self.instance_image
 
     def sandbox_image(self, kit: str) -> str:
         for name, image in self.sandbox_images:
@@ -112,6 +128,8 @@ class Policy:
             resolvers=config.network.resolvers,
             egress=config.network.egress,
             egress_port=config.hub.egress_port,
+            contractor_engine=config.instances.contractor_engine,
+            opencode_image=config.images.opencode,
             sandbox_images=(
                 ((config.verification.kit, config.verification.kit_image),)
                 if config.verification.kit_image
@@ -360,7 +378,8 @@ def turn_spec(
 ) -> dict[str, Any]:
     """One turn of an instance: the agent engine as user 10000, in the namespace of the guard,
     with the home and work volumes and one secret, the project token. The engine gives the
-    command and the environment; everything else is this template's."""
+    command and the environment; the image is the one of the side's engine; everything else is
+    this template's."""
     if not _TOKEN.fullmatch(token):
         raise SpecError("not a project token")
     if not prompt or len(prompt) > MAX_PROMPT or "\x00" in prompt:
@@ -402,7 +421,7 @@ def turn_spec(
         }
     )
     return {
-        "Image": policy.instance_image,
+        "Image": policy.turn_image(side),
         "User": INSTANCE_USER,
         "WorkingDir": WORK_PATH,
         "Cmd": command,
@@ -443,6 +462,16 @@ def _check_description(command: list[str], environment: dict[str, str], token: s
 
 
 # ----------------------------------------------------------------------------- the allow-list
+def _turn_side(spec: Mapping[str, Any]) -> Side:
+    """The side a turn says it belongs to: its image must be the one of that side's engine."""
+    found = spec.get("Labels")
+    side = found.get(LABEL_SIDE) if isinstance(found, Mapping) else None
+    try:
+        return Side(str(side))
+    except ValueError:
+        raise SpecError("a turn carries the side of its instance") from None
+
+
 _FORBIDDEN_HOST_KEYS = (
     "Binds",
     "Devices",
@@ -482,8 +511,10 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
         raise SpecError("no host configuration")
     if role is Role.SANDBOX:
         allowed_images = {image for _kit, image in policy.sandbox_images}
+    elif role is Role.GUARD:
+        allowed_images = {policy.guard_image}
     else:
-        allowed_images = {policy.guard_image if role is Role.GUARD else policy.instance_image}
+        allowed_images = {policy.turn_image(_turn_side(spec))}
     if spec.get("Image") not in allowed_images:
         raise SpecError("the image is not the configured one")
     unknown = set(spec) - {

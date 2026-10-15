@@ -35,6 +35,11 @@
 #                           that path); the file itself, never a copy
 #   ZEPHYROS_FORGE_TOKEN_FILE   the file of the GitHub token, mounted the same way at
 #                           /run/zephyros-credentials/forge.key
+#   ZEPHYROS_CONTRACTOR_ENGINE  the agent engine of the Contractor instances: hermes (default)
+#                           or opencode, which builds images/instance-opencode and writes
+#                           images.opencode and [instances.contractor] (ADR 0029)
+#   ZEPHYROS_OPENCODE_IMAGE an image to run for opencode instead of building it (an identifier,
+#                           or a name the runtime knows)
 #   ZEPHYROS_EXTRA_CONFIG   TOML appended to the configuration (for example a [gateway] table)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -82,6 +87,19 @@ up() {
   docker build -q -t zephyros-guard:local images/guard >/dev/null
   docker build -q -t zephyros-instance:local images/instance >/dev/null
   docker build -q -f images/zephyros/Dockerfile -t zephyros:local . >/dev/null
+  engine="${ZEPHYROS_CONTRACTOR_ENGINE:-hermes}"
+  opencode_toml=""
+  case "$engine" in
+    hermes) ;;
+    opencode)
+      opencode_image="${ZEPHYROS_OPENCODE_IMAGE:-}"
+      if [ -z "$opencode_image" ]; then
+        docker build -q -t zephyros-instance-opencode:local images/instance-opencode >/dev/null
+        opencode_image=zephyros-instance-opencode:local
+      fi
+      opencode_toml="opencode = \"$(image_id "$opencode_image")\"" ;;
+    *) echo "ZEPHYROS_CONTRACTOR_ENGINE is hermes or opencode" >&2; exit 2 ;;
+  esac
   export ZEPHYROS_IMAGE; ZEPHYROS_IMAGE=$(image_id zephyros:local)
   # deploy/compose.yaml takes its image from this variable: it must be an image identifier.
   [[ "$ZEPHYROS_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "not an image identifier" >&2; exit 1; }
@@ -100,6 +118,10 @@ schema_version = "$schema_version"
 [images]
 guard = "$(image_id zephyros-guard:local)"
 instance = "$(image_id zephyros-instance:local)"
+$opencode_toml
+
+[instances.contractor]
+engine = "$engine"
 
 [hub]
 operator_bind = "core"

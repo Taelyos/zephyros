@@ -157,6 +157,13 @@
           "x-zephyros-kind": "image-digest",
           "pattern": "^(?:[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$",
           "description": "Image of the network guard, by digest"
+        },
+        "opencode": {
+          "type": "string",
+          "maxLength": 4096,
+          "x-zephyros-kind": "image-digest",
+          "pattern": "^(?:[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?@)?sha256:[0-9a-f]{64}$",
+          "description": "Image of an instance that runs OpenCode (images/instance-opencode), by digest; required when an instance runs OpenCode"
         }
       },
       "additionalProperties": false,
@@ -226,6 +233,29 @@
       },
       "additionalProperties": false,
       "description": "Instance networks"
+    },
+    "instances": {
+      "type": "object",
+      "properties": {
+        "contractor": {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "type": "string",
+              "enum": [
+                "hermes",
+                "opencode"
+              ],
+              "description": "The agent engine of the Contractor instance (ADR 0029): hermes, or opencode, a third-party coding agent, in the image images.opencode. The hub's guarantees do not depend on it: the same guard, sandbox, gate, rights and model gateway. The Owner instance runs Hermes",
+              "default": "hermes"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The Contractor instance of each project"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The agent engine of each side of a project"
     },
     "limits": {
       "type": "object",
@@ -531,7 +561,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.15.0",
+  "x-zephyros-schema-version": "1.16.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
@@ -541,6 +571,7 @@
     "forge.token_file is set when forge.provider is github",
     "gateway.upstream_url and gateway.credential_file are set when gateway.provider is openai-compatible, and the model it sends to the provider (gateway.upstream_model, or gateway.model when that is unset) is one of gateway.models",
     "verification.kit_image is set when verification.runner is sandbox",
+    "images.opencode is set when instances.contractor.engine is opencode",
     "gateway.simulation runs only with the stub provider",
     "notifications.url and notifications.secret are set together, the url is http(s), and the secret is at least 16 characters"
   ]

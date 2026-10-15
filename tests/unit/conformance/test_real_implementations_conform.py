@@ -24,6 +24,7 @@ from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.adapters.git.run import git
 from zephyros.adapters.github.forge import GitHubForge
 from zephyros.adapters.hermes.engine import HermesEngine
+from zephyros.adapters.opencode.engine import OpenCodeEngine
 from zephyros.adapters.providers.openai_compatible import FileCredential, OpenAiCompatibleProvider
 from zephyros.conformance import (
     AgentEngineConformance,
@@ -84,6 +85,13 @@ class TestHermesEngine(AgentEngineConformance):
 
     def make_engine(self) -> AgentEngine:
         return HermesEngine()
+
+
+class TestOpenCodeEngine(AgentEngineConformance):
+    implementation: ClassVar[type] = OpenCodeEngine
+
+    def make_engine(self) -> AgentEngine:
+        return OpenCodeEngine()
 
 
 class TestGitDeliveryArea(DeliveryConformance):

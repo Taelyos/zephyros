@@ -70,6 +70,7 @@ def test_the_discovery_sees_the_implementations() -> None:
         "InMemoryForge",
         "ObedientStubProvider",
         "OpenAiCompatibleProvider",
+        "OpenCodeEngine",
         "SandboxRunner",
         "ScriptedModelProvider",
     }

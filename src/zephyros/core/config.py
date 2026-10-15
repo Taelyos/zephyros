@@ -27,7 +27,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.15.0"
+CONFIG_SCHEMA_VERSION = "1.16.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -47,6 +47,13 @@ allowed hosts through the egress proxy of the hub; `sealed` reaches the hub alon
 reaches every public destination, as ADR 0009 had it. No level reaches a protected network."""
 
 DEFAULT_EGRESS = "regulated"
+
+ENGINES: tuple[str, ...] = ("hermes", "opencode")
+"""The agent engines an instance can run (ADR 0029): Hermes Agent, the engine of every instance
+until then and the one of the Owner, and OpenCode, a third-party coding agent, for the
+Contractor. Each has its own instance image."""
+
+DEFAULT_ENGINE = "hermes"
 
 DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
     "pypi.org",
@@ -216,6 +223,37 @@ def _images() -> Table:
                 Text("image-digest"),
                 "Image of the network guard, by digest",
                 required=True,
+            ),
+            Field(
+                "opencode",
+                Text("image-digest"),
+                "Image of an instance that runs OpenCode (images/instance-opencode), by digest; "
+                "required when an instance runs OpenCode",
+            ),
+        )
+    )
+
+
+def _instances() -> Table:
+    return Table(
+        (
+            Field(
+                "contractor",
+                Table(
+                    (
+                        Field(
+                            "engine",
+                            Choice(ENGINES),
+                            "The agent engine of the Contractor instance (ADR 0029): hermes, "
+                            "or opencode, a third-party coding agent, in the image "
+                            "images.opencode. The hub's guarantees do not depend on it: the "
+                            "same guard, sandbox, gate, rights and model gateway. The Owner "
+                            "instance runs Hermes",
+                            default=DEFAULT_ENGINE,
+                        ),
+                    )
+                ),
+                "The Contractor instance of each project",
             ),
         )
     )
@@ -664,6 +702,15 @@ def _rule_sandbox(data: Mapping[str, object]) -> list[Problem]:
     return []
 
 
+def _rule_engine_image(data: Mapping[str, object]) -> list[Problem]:
+    contractor = _section(_section(data, "instances"), "contractor")
+    if contractor["engine"] == "opencode" and "opencode" not in _section(data, "images"):
+        return [
+            Problem("images.opencode", "is required when instances.contractor.engine is opencode")
+        ]
+    return []
+
+
 def _rule_forge(data: Mapping[str, object]) -> list[Problem]:
     forge = _section(data, "forge")
     if forge["provider"] != "github":
@@ -734,6 +781,7 @@ SCHEMA = Schema(
             Field("runtime", _runtime(), "Container runtime objects"),
             Field("images", _images(), "Images, by digest", required=True),
             Field("network", _network(), "Instance networks"),
+            Field("instances", _instances(), "The agent engine of each side of a project"),
             Field("limits", _limits(), "Limits of the containers and of a turn"),
             Field("tokens", _tokens(), "Project tokens"),
             Field("gateway", _gateway(), "Model gateway"),
@@ -778,6 +826,10 @@ SCHEMA = Schema(
         ),
         Rule("verification.kit_image is set when verification.runner is sandbox", _rule_sandbox),
         Rule(
+            "images.opencode is set when instances.contractor.engine is opencode",
+            _rule_engine_image,
+        ),
+        Rule(
             "gateway.simulation runs only with the stub provider",
             _rule_simulation,
         ),
@@ -821,6 +873,12 @@ class RuntimeConfig:
 class ImagesConfig:
     instance: str
     guard: str
+    opencode: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InstancesConfig:
+    contractor_engine: str = DEFAULT_ENGINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -893,6 +951,7 @@ class Config:
     verification: VerificationConfig
     notifications: NotificationsConfig
     continuity: ContinuityConfig
+    instances: InstancesConfig = InstancesConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -946,6 +1005,7 @@ def parse_config(data: object) -> Config:
     forge, verification = section("forge"), section("verification")
     notifications = section("notifications")
     continuity = section("continuity")
+    instances = section("instances")
     return Config(
         hub=HubConfig(
             agent_port=_int(hub, "agent_port"),
@@ -969,7 +1029,14 @@ def parse_config(data: object) -> Config:
             poll_seconds=_int(runtime, "poll_seconds"),
         ),
         images=ImagesConfig(
-            instance=cast("str", images["instance"]), guard=cast("str", images["guard"])
+            instance=cast("str", images["instance"]),
+            guard=cast("str", images["guard"]),
+            opencode=cast("str | None", images.get("opencode")),
+        ),
+        instances=InstancesConfig(
+            contractor_engine=cast(
+                "str", cast("Mapping[str, object]", instances["contractor"])["engine"]
+            ),
         ),
         network=NetworkConfig(
             instance_pool=cast("str", network["instance_pool"]),
