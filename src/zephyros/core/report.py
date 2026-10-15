@@ -15,6 +15,7 @@ from zephyros.core.gate import GateResult
 from zephyros.core.masking import mask_text
 from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
+from zephyros.core.tools import TOOLS_PATH, ToolsDigest
 
 LOG_EXCERPT = 4000
 LISTED_TESTS = 50
@@ -62,6 +63,11 @@ class ReportInput:
     built_by: tuple[tuple[str, int], ...] = ()
     """The agent engines of the Contractor's turns recorded before the delivery came in, each
     with its version and how many turns it ran (ADR 0029)."""
+    tools: ToolsDigest | None = None
+    """The tools the sandbox mounted, as the hub measured them around the run (ADR 0030)."""
+    tools_of_turns: tuple[tuple[str, int], ...] = ()
+    """The tools the turns of both sides found before the delivery came in: each fingerprint
+    (or "none"), with how many turns found it."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -84,6 +90,21 @@ def _fence(text: str) -> str:
 def _plain(text: str) -> str:
     """A text of the hub's own (names, reasons), safe in a table cell."""
     return text.replace("|", "/").replace("\n", " ")
+
+
+def _tools_lines(tools: ToolsDigest | None, sandbox: bool) -> list[str]:
+    """`sandbox`: whether a sandbox ran tests with them; with no test to run, none started."""
+    if tools is None:
+        return []
+    where = (
+        "in the turns of both sides and in the sandbox"
+        if sandbox
+        else "in the turns of both sides (no test ran, so no sandbox started)"
+    )
+    return [
+        f"- Project tools: {_code(tools.fingerprint)} ({tools.files} files, {tools.bytes} bytes), "
+        f"mounted read-only at {_code(TOOLS_PATH)} {where}"
+    ]
 
 
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
@@ -119,6 +140,7 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             )
             or "no turn of the Contractor recorded"
         ),
+        *_tools_lines(report.tools, bool(report.outcomes)),
         f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(
@@ -178,6 +200,15 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
                 if len(report.never_run_tests) > LISTED_TESTS
                 else []
             ),
+        ),
+        (
+            "Turns before this delivery found other tools than the verification (each "
+            "fingerprint, with how many turns found it):",
+            [
+                f"{_code(found)} ({turns} turn{'' if turns == 1 else 's'})"
+                for found, turns in report.tools_of_turns
+                if report.tools is not None and found != report.tools.fingerprint
+            ],
         ),
         (
             "Acceptance test files that a criterion names and neither the Owner side nor the "

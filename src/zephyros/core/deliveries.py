@@ -61,6 +61,7 @@ from zephyros.core.report import (
     render,
     with_addendum,
 )
+from zephyros.core.tools import ToolsDigest, ToolsError, ToolsProbe
 
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
@@ -68,6 +69,9 @@ ACCEPTANCE_PATH = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$")
 LOGGED_PATHS = 20
 """The most paths a record of the log names: each is short, and a record stays small."""
 WRITE_ATTEMPTS = 10
+READ_RECORDS = 100_000
+"""The most records of the log of a project the report reads, from the first, for the cost, the
+engines and the tools of the turns: a project with more has its later ones left out of those."""
 """How many times a change is applied again to a record that others keep writing."""
 REFUSED = "REFUSED"
 """What `delivery.decided` tells of a delivery the checks refused before any run."""
@@ -251,6 +255,7 @@ class DeliveryService:
         events: Callable[[str, Mapping[str, object]], None] | None = None,
         rejections_alert: int | None = None,
         simulation: bool = False,
+        tools: ToolsProbe | None = None,
     ) -> None:
         self._area = area
         self._runner = runner
@@ -269,6 +274,7 @@ class DeliveryService:
         self._events = events or (lambda _event, _payload: None)
         self._rejections_alert = rejections_alert
         self._simulation = simulation
+        self._tools = tools
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._jobs: deque[_Job] = deque()
@@ -356,6 +362,21 @@ class DeliveryService:
         _before, record = self._update(project_id, delivery_id, declared)
         self._enqueue(_Job("verify", project_id, delivery_id))
         return record
+
+    def resume(self) -> list[tuple[str, str]]:
+        """Queue again the verification of every delivery declared and not yet decided. The queue
+        lives in memory: a hub that stopped while a verification waited or ran would otherwise
+        leave its delivery declared for ever. Called once, when the hub starts, before the
+        worker runs; returns the deliveries queued, as (project, delivery)."""
+        resumed = [
+            (record.project_id, record.delivery_id)
+            for project in self._projects.visible_to(OPERATOR)
+            for record in self._store.records(project.id)
+            if record.state is DeliveryState.DECLARED
+        ]
+        for project_id, delivery_id in resumed:
+            self._enqueue(_Job("verify", project_id, delivery_id))
+        return resumed
 
     def status(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         return self._record(project_id, delivery_id)
@@ -753,10 +774,18 @@ class DeliveryService:
         outcomes: dict[str, Any] = {}
         log = ""
         never_run: tuple[str, ...] = ()
+        # The tools the sandbox mounts, measured before the run and after it (ADR 0030): a
+        # verdict names the tools it was reached with, and is not kept when they differ after
+        # the run. A change undone before the run ends is not seen: two measures, not a watch.
+        tools = self._measure_tools()
         if tests:
             result = self._runner.run(
                 VerificationRequest(project_id, self._kit, files, tests, self._timeout)
             )
+            if tools is not None and self._measure_tools() != tools:
+                raise VerificationError(
+                    "the tools changed during the verification: its results are not kept"
+                )
             outcomes = dict(result.outcomes)
             log = result.log
             never_run = deselected_tests(result, tests)
@@ -764,11 +793,13 @@ class DeliveryService:
             project_id,
             Action.VERIFICATION_RUN,
             Outcome.OK,
+            Reason.NONE,
             delivery=record.delivery_id,
             kit=self._kit,
             tests=len(tests),
             passed=sum(1 for o in outcomes.values() if o.value == "passed"),
             never_run=len(never_run),
+            **({} if tools is None else {"tools": tools.fingerprint}),
         )
         gate = compute_gate(objects, outcomes)
         self._record_event(
@@ -800,6 +831,10 @@ class DeliveryService:
             missing_acceptance_files=missing,
             set_aside_paths=set_aside,
             built_by=self._built_by(project_id, record.delivery_id),
+            tools=tools,
+            tools_of_turns=(
+                () if tools is None else self._tools_of_turns(project_id, record.delivery_id)
+            ),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)
@@ -903,7 +938,7 @@ class DeliveryService:
 
     def _cost(self, project_id: str) -> Cost:
         calls = prompt = completion = 0
-        for item in self._audit.read(project_id, 0, 100_000):
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.action is Action.GATEWAY_CALL and item.outcome is Outcome.OK:
                 parameters = json.loads(item.parameters)
                 calls += 1
@@ -914,9 +949,10 @@ class DeliveryService:
     def _built_by(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
         """The agent engines of the Contractor's turns started before the delivery came in, read
         from the log as the cost is (ADR 0029): each with its version, and how many turns it
-        ran. A start recorded before the hub recorded engines counts as "not recorded"."""
+        ran. A start recorded before the hub recorded engines counts as "not recorded". Read from
+        the first READ_RECORDS records of the log."""
         turns: dict[str, int] = {}
-        for item in self._audit.read(project_id, 0, 100_000):
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.outcome is not Outcome.OK:
                 continue
             parameters = json.loads(item.parameters)
@@ -929,6 +965,33 @@ class DeliveryService:
             ):
                 engine, version = parameters.get("engine"), parameters.get("engine_version")
                 label = f"{engine} {version}" if engine and version else "not recorded"
+                turns[label] = turns.get(label, 0) + 1
+        return tuple(turns.items())
+
+    def _measure_tools(self) -> ToolsDigest | None:
+        if self._tools is None:
+            return None
+        try:
+            return self._tools.digest()
+        except ToolsError as error:
+            raise VerificationError(
+                "the tools cannot be mounted: " + "; ".join(error.problems[:3])
+            ) from None
+
+    def _tools_of_turns(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
+        """The tools each turn of either side found when it started, by fingerprint, for the
+        turns started before the delivery came in (ADR 0030); a start that recorded none is
+        "none". Read from the first READ_RECORDS records of the log, as the cost is."""
+        turns: dict[str, int] = {}
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
+            if item.outcome is not Outcome.OK:
+                continue
+            parameters = json.loads(item.parameters)
+            if item.action is Action.DELIVERY_PUSH and parameters.get("delivery_id") == delivery_id:
+                break
+            if item.action is Action.TURN_START and item.principal == SYSTEM_PRINCIPAL:
+                found = parameters.get("tools")
+                label = found if isinstance(found, str) and found else "none"
                 turns[label] = turns.get(label, 0) + 1
         return tuple(turns.items())
 

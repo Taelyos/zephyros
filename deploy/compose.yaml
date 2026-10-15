@@ -64,6 +64,18 @@ services:
       - ${ZEPHYROS_GATEWAY_KEY_FILE:?}:/run/zephyros-credentials/gateway.key:ro
       - ${ZEPHYROS_FORGE_TOKEN_FILE:?}:/run/zephyros-credentials/forge.key:ro
       - ${ZEPHYROS_CONFIG:?}:/etc/zephyros/zephyros.toml:ro
+      # The tools of the projects, read-only, at their path on the machine, where the hub
+      # fingerprints them (ADR 0030); deploy.sh sets the variable, to an empty directory when
+      # there are none. The filter needs no such mount: the runtime binds the path itself.
+      # Not recursive, as in the turns and the sandbox. Some versions of Compose (2.26 among
+      # them) drop the option without a word: the hub then sees what is mounted under the
+      # directory, and refuses to start rather than fingerprint files the turns would not find.
+      - type: bind
+        source: ${ZEPHYROS_TOOLS_DIR:?}
+        target: ${ZEPHYROS_TOOLS_DIR:?}
+        read_only: true
+        bind:
+          recursive: disabled
     healthcheck:
       test: ["CMD", "/opt/zephyros/bin/python", "-c",
              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/operator/health', timeout=2)"]

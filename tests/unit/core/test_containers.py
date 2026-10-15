@@ -364,6 +364,33 @@ def test_check_spec_refuses_a_volume_mounted_anywhere_but_the_two_paths_or_not_o
         check_spec(spec, Role.GUARD, POLICY)
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"VolumeOptions": {"DriverConfig": {"Name": "local", "Options": {"device": "/"}}}},
+        {"VolumeOptions": {"Subpath": "x"}},
+        {"VolumeOptions": {"NoCopy": True}},
+        {"ReadOnly": True},
+        {"Consistency": "cached"},
+        {"BindOptions": {"Propagation": "rshared"}},
+    ],
+)
+@pytest.mark.parametrize("role", [Role.TURN, Role.SANDBOX])
+def test_check_spec_refuses_a_volume_with_any_option_its_template_does_not_give(
+    role: Role, change: dict[str, Any]
+) -> None:
+    """A volume is held to its template by equality, as the tools are (ADR 0030): a driver
+    option could mount a path of the machine through the `local` driver."""
+    spec = (
+        turn() if role is Role.TURN else sandbox_spec(SANDBOX_POLICY, PROJECT, "0a1b2c3d", "tests")
+    )
+    policy = POLICY if role is Role.TURN else SANDBOX_POLICY
+    check_spec(spec, role, policy)
+    spec["HostConfig"]["Mounts"][0] = {**spec["HostConfig"]["Mounts"][0], **change}
+    with pytest.raises(SpecError, match="as its template says"):
+        check_spec(spec, role, policy)
+
+
 @pytest.mark.parametrize("user", ["0:0", "0", "root", "10000:10000", None])
 def test_check_spec_refuses_a_guard_as_root_or_as_anyone_but_its_user(user: str | None) -> None:
     spec = guard()

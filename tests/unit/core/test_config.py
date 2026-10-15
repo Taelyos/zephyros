@@ -596,3 +596,57 @@ def test_an_engine_or_an_image_outside_the_schema_is_refused(
     with pytest.raises(ConfigError) as caught:
         parse_config(with_value(path, value))
     assert [p.key for p in caught.value.problems] == [faulty]
+
+
+# ----------------------------------------------------------------------------- tools (ADR 0030)
+def test_a_file_without_tools_names_none() -> None:
+    assert parse_config(minimal()).tools.source is None
+
+
+@pytest.mark.parametrize(
+    "source", ["/srv/zephyros-tools", "/opt/sim-2.1/build_x86_64", "/home/op/tools@v3+fix"]
+)
+def test_a_tools_directory_is_an_absolute_plain_path(source: str) -> None:
+    assert parse_config(with_value("tools.source", source)).tools.source == source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "/",  # the whole machine
+        "tools",  # relative
+        "/srv/tools/",  # a trailing slash
+        "/srv//tools",
+        "/srv/./tools",
+        "/srv/../etc",
+        "/srv/tools/..",
+        "/srv/my tools",  # a space
+        "/srv/tools:/etc",  # a colon would end a mount option
+        "/srv/tools,ro=false",
+        '/srv/"tools"',
+        "/srv/tools\\x",
+    ],
+)
+def test_a_tools_directory_that_is_not_a_plain_absolute_path_is_refused(source: str) -> None:
+    with pytest.raises(ConfigError) as refused:
+        parse_config(with_value("tools.source", source))
+    assert [problem.key for problem in refused.value.problems] == ["tools.source"]
+
+
+def test_the_tools_table_takes_no_other_key() -> None:
+    document = with_value("tools.source", "/srv/tools")
+    document["tools"]["target"] = "/elsewhere"
+    with pytest.raises(ConfigError, match=r"tools\.target"):
+        parse_config(document)
+
+
+@pytest.mark.parametrize(("seconds", "valid"), [(7200, True), (86400, True), (86401, False)])
+def test_a_verification_may_last_up_to_a_day(seconds: int, valid: bool) -> None:
+    """ADR 0030: an acceptance test may play several runs of a simulator, so a verification
+    may last hours; the bound is the one of a turn."""
+    document = with_value("verification.timeout_seconds", seconds)
+    if valid:
+        assert parse_config(document).verification.timeout_seconds == seconds
+    else:
+        with pytest.raises(ConfigError, match=r"verification\.timeout_seconds"):
+            parse_config(document)

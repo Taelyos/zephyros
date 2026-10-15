@@ -7,12 +7,12 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.16.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.17.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
 ```toml
-schema_version = "1.16.0"
+schema_version = "1.17.0"
 
 [images]
 instance = "registry.example/zephyros-instance@sha256:…"   # by digest, always
@@ -34,8 +34,9 @@ On one machine, `scripts/deploy.sh up` writes the file (`deploy/state/zephyros.t
 | `[limits]` | CPUs, memory and process count of an agent container, memory of a guard, the longest duration of a turn, how long a turn may go without calling the hub before it is stopped, and how many refused actions of one instance in a minute make the hub answer without doing the work (`refusals_per_minute`, ATK-71) |
 | `[tokens]` | The lifetime of a project token and how long before its expiry a new turn gets a new one; the lifetime of the operator and main-agent tokens (`channel_lifetime_days`, 90 days by default, see below) |
 | `[forge]` | Where pull requests are opened: `none`, `directory` (bare git repositories in a directory, for the development deployment and the tests), or `github` (the repositories of the person, through the API and git over https, with the file of its token in `token_file`; read at each call) |
-| `[verification]` | What runs the acceptance tests of a delivery (`none`, which ends every verification in an error, or `sandbox`), the verification kit and its image, the longest run, and the client's own files (`protected_paths`, `CONTRACT.md` by default): a delivery that changes one is flagged in its report and its pull request, never refused ([ADR 0020](decisions/0020-the-owner-sees-and-records.md)) |
+| `[verification]` | What runs the acceptance tests of a delivery (`none`, which ends every verification in an error, or `sandbox`), the verification kit and its image, the longest run (up to 24 hours, see [the sandbox](#the-sandbox-of-verification)), and the client's own files (`protected_paths`, `CONTRACT.md` by default): a delivery that changes one is flagged in its report and its pull request, never refused ([ADR 0020](decisions/0020-the-owner-sees-and-records.md)) |
 | `[gateway]` | The model provider behind the gateway (`stub`, or `openai-compatible` with a URL and a credential file), the model name instances ask for, the name of the model at the provider when it differs, the models the gateway may serve (`models`, see below), `simulation` to mark the report, the pull request and the events of a run with the stub (EXG-46), the name of the session header the gateway sends to the provider (`session_header`, for OpenCode Go's `x-opencode-session`; one stable session name per hub process), and how long the gateway waits for one answer of the provider (`timeout_seconds`: a long answer of a real model takes minutes). The credential file is read at each call, so changing it takes effect on the next call |
+| `[tools]` | The tools of the projects: a directory of the machine mounted read-only at `/opt/project-tools` in every turn and every sandbox (see [the tools of a project](#the-tools-of-a-project)) |
 | `[notifications]` | Where the hub posts its signed notifications to the main agent, and the shared secret that signs them ([docs/webhooks.md](webhooks.md), [docs/notifications.md](notifications.md)); set both keys, or neither: both empty turn the notifications off |
 | `[continuity]` | The escalation ladder of a task without activity (US-E7-01): how long before the instance is woken and restarted, how many restarts before the main agent is alerted, the delay the main agent has before the human is alerted, and how many FAIL decisions in a row on one project alert the main agent (`rejections`, EXG-23) |
 
@@ -106,6 +107,97 @@ The proxy opens a tunnel to an allowed host whatever the request inside: it does
 **Changing the level.** A guard loads its rules when it starts and carries its level as a label. When the hub starts, and each time it looks at an instance, it takes down a guard whose level is not the configured one (an instance made before 1.14.0 included) and logs it (`instance.egress`, `why: level_changed`). The turn under way stops; the volumes stay, and the next start of the instance brings it up at the new level.
 
 With `scripts/deploy.sh`, `ZEPHYROS_EGRESS` sets the level and `ZEPHYROS_ALLOWED_HOSTS` the list (comma-separated).
+
+## The tools of a project
+
+Some projects need heavy, fixed tooling that neither side may fetch or change: a simulator, a headless engine, a test bench and its scripts. `tools.source` names a directory of the machine that holds it ([ADR 0030](decisions/0030-the-tools-of-a-project-are-mounted-read-only.md)):
+
+```toml
+[tools]
+source = "/srv/zephyros-tools"
+```
+
+With `scripts/deploy.sh`, `ZEPHYROS_TOOLS=/srv/zephyros-tools` writes that table.
+
+The container filter mounts the directory **read-only at `/opt/project-tools`** in every turn, Owner and Contractor, whatever the engine, and in every sandbox of verification: the acceptance tests run with the tools the agents had. `/opt/project-tools/bin` is the last directory of the `PATH` in the three images, so a tool there runs by its name (`sim`), and never hides a program of the image. The mount is not recursive: a file system mounted under the directory on the machine would show there as an empty directory, so the hub refuses one (below). The directory is the same for every project of the deployment.
+
+The hub reads the directory at that same path (`deploy/compose.yaml` mounts it into the hub container there, read-only and not recursive), and **refuses to start** when the user of the instances (uid and gid 10000) could change it, or when it holds a link that leads out of it. Each path at fault is named:
+
+```text
+refused to start: the tools directory '/srv/zephyros-tools' cannot be mounted:
+  'bin/sim' is writable by every user
+  'lib/libsim.so' is a link that leads out of the tools directory
+```
+
+What is refused:
+
+- an entry owned by uid 10000, writable by gid 10000 or by every user, or carrying a POSIX access control list;
+- a link to an absolute path, or one that leads out of the directory: on the machine, or on its way, read step by step as the kernel reads it in a container. There the directory is `/opt/project-tools`, so a `..` above it is a way out, even when the next names lead back in on the machine: in `/srv/sim/build`, the link `lib/cur -> ../../build/lib` resolves to `/srv/sim/build/lib` on the machine, but to `/opt/build/lib` in a turn, and is refused. A loop of links is refused too;
+- a file system mounted under the directory, when the hub sees it: the turns and the sandbox would find an empty directory there. The mount of the hub is not recursive, so it sees what they see, but some versions of Compose (2.26 among them) drop `recursive: disabled` without a word: the hub then sees the file system, and refuses rather than fingerprint files the turns do not have. `scripts/deploy.sh` checks with a recursive mount, so it refuses one in every case;
+- a device, a socket or a pipe; a setuid or setgid file; a file the hub (uid 10001) cannot read.
+
+A directory owned by its operator with modes `0755` and `0644` (and `0755` for programs) passes. `scripts/deploy.sh` runs the same check before it writes the configuration or starts anything. The hub checks again at each start of a turn and at each verification: a turn whose tools have since become refused does not start (`turn.start`, `error: tools_refused`, with the problems), and such a verification ends in an error. The log of a project and the status of a delivery, which the agents read, name the paths inside the directory only, never its path on the machine; that path is in the log of the hub (`tools.check`: `source`) and in the message of a hub that refuses to start.
+
+**The fingerprint.** The hub fingerprints the directory when it starts (`tools.check`, in the log of the hub), at each start of a turn (`turn.start`: `tools`), and before and after each verification (`verification.run`: `tools`); when the two around a verification differ, its results are dropped and the delivery ends in an error. The evidence report gives it, with the number of files and their size, and flags the turns of either side, before the delivery, that found other tools when they started (read from the first 100 000 records of the log of the project, as the cost is). These are measures at given moments, not a watch: a change undone before the end of a verification, or made during a turn, is not seen. To check a copy of the tools against a report, anywhere:
+
+```bash
+zephyros tools check /path/to/tools
+# {"tools": "sha256:…", "files": 12, "bytes": 314572800}
+```
+
+It is the SHA-256 of one JSON line per entry, sorted by path (relative, `/` between names, the directory itself `""`): `["d", path]` for a directory, `["f", path, "x" or "-", size, sha256]` for a file (`x` when any execute bit is set), `["l", path, target]` for a link. Owners, times and other mode bits do not count.
+
+The hub walks the whole tree at each measure, and hashes the content again only when the status of an entry changed (size, times, inode, mode, owner). A change of content moves the change time (ctime) of the file, which no program sets at will; since the kernel moves it by ticks of a few milliseconds, a result is kept only once every entry is at least two seconds old.
+
+**What a tool needs to run everywhere.** The three images do not share a C library: the Hermes image is Debian 13 (glibc 2.41), the OpenCode image and the `tests` kit are Alpine 3.24 (musl). A program linked against the glibc of the machine runs in a Hermes turn and fails at the gate with `not found`. Give the tools what they run on:
+
+- a statically linked program runs in all three;
+- a dynamically linked one runs through the loader and the libraries the directory carries, from a small script:
+
+  ```sh
+  #!/bin/sh
+  # bin/sim: the simulator, with the glibc it was built against (lib/ holds ld-linux and the libraries ldd lists)
+  here=$(dirname "$(readlink -f "$0")")/..
+  exec "$here/lib/ld-linux-x86-64.so.2" --library-path "$here/lib" "$here/libexec/sim" "$@"
+  ```
+
+- a Python script runs on the Python of the image, 3.14 in a Hermes turn and 3.12 in the OpenCode image and at the gate; one that needs a package brings it in the directory (on its `PYTHONPATH`, set by the script that starts it).
+
+The tools are the operator's, and trusted: Zephyros keeps everyone inside it from changing them, not from reading them. Both sides read them, so they hold no secret and no hidden part of an evaluation, which belongs to the acceptance tests of the Owner side.
+
+**A turn that runs a tool for long.** The hub stops a turn that has called neither the hub nor the model for `limits.silence_seconds` (600 s by default): the turn ends `silent`. A turn that runs a simulation of more than ten minutes and waits for it says nothing meanwhile, and is stopped. When a tool runs long in a turn, set the silence above its longest run, with room to spare, and `limits.turn_seconds` above the whole turn; the sandbox of verification has no such limit, only `verification.timeout_seconds`:
+
+```toml
+[limits]
+silence_seconds = 3600   # a run of the simulator takes up to 45 min
+turn_seconds = 14400
+```
+
+**What has not been checked.** The check judges the owners and the modes the hub sees, which are those of the instances only when the runtime maps no user: with Docker in rootless mode or with user namespace remapping (`userns-remap`), uid 10000 in a container is another uid on the machine, and the check does not know which; neither the check nor the runtime tests have run there. It reads POSIX access control lists only: an NFSv4 one (`system.nfs4_acl`) is not seen. It has been run with Docker on Linux only: on macOS the owner shown for a directory shared from the host may not be the owner on the host, and whether Podman honours a non-recursive bind has not been checked.
+
+## The sandbox of verification
+
+A sandbox runs the acceptance tests of one delivery, as user 10000, with no network, a read-only root, the files to verify in a volume of its own on `/work`, and the tools of the projects at `/opt/project-tools`. Its resources are those of a turn:
+
+| What | Default | Key |
+| --- | --- | --- |
+| Processors | 2 | `limits.cpus` (0.1 to 16) |
+| Memory, with no swap | 1 536 MiB | `limits.memory_mib` (128 to 65 536) |
+| Processes and threads | 256 | `limits.pids` (32 to 4 096) |
+| `/tmp` | 64 MiB in memory, counted in the memory above, where no program runs (`noexec`) | fixed |
+| `/work` | the files of the delivery, on a volume of the runtime: writable, and a program there runs | fixed |
+| Longest run | 300 s | `verification.timeout_seconds` (30 to 86 400) |
+
+A tool that unpacks a program to run it unpacks it in `/work`. Raising `limits.*` raises them for the turns too. A verification that reaches `verification.timeout_seconds` is stopped and verifies nothing: every test reads `not_run`.
+
+The delivery loop runs one job at a time, for every project, on one thread of the hub: a verification, and also the preparation of a project's base from the forge and the comments and titles of its pull requests. A verification of two hours makes every one of them wait, for every project; the turns do not wait (their watch runs on another thread). The queue of the loop is in memory: when the hub starts again, it queues again, from the start, the verification of every delivery declared and not decided. A sandbox lives inside one call of the container filter, which removes it at the end whatever happens: a sandbox whose hub stopped runs on until it ends or reaches `verification.timeout_seconds`, then is removed, its result lost; one whose filter stopped is removed when the filter starts again.
+
+For tests that play several runs of a few minutes, set the limit to cover them all with room to spare:
+
+```toml
+[verification]
+timeout_seconds = 9000   # 2 h 30
+```
 
 ## Where the operator channel and the main-agent endpoint listen
 
@@ -208,8 +300,9 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `verification.runner` | `"none"` | `none` or `sandbox` |
 | `verification.kit` | `"tests"` | a name |
 | `verification.kit_image` | unset | an image, by digest or local identifier; required with `sandbox` |
-| `verification.timeout_seconds` | `300` | 30 to 3600 |
+| `verification.timeout_seconds` | `300` | 30 to 86400 |
 | `verification.protected_paths` | `["CONTRACT.md"]` | one to 32 relative paths; a directory ends with `/` |
+| `tools.source` | unset | the absolute path of a directory of the machine, not `/`, with no `.` or `..` step, no trailing `/`, and letters, digits and `._@+-` between the `/`; checked when the hub starts |
 | `notifications.url` | `""` | an http or https URL, or empty |
 | `notifications.secret` | `""` | 16 to 512 characters when the URL is set, or empty |
 | `continuity.inactivity_seconds` | `900` | 60 to 86400 |
@@ -219,6 +312,6 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 
 ## Versions
 
-1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029).
+1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029); 1.17.0 added `[tools]` and raised the bound of `verification.timeout_seconds` from 3 600 to 86 400 (ADR 0030).
 
 Each addition has a default, except one: since 1.8.0, an `openai-compatible` provider needs `gateway.models`, so a file older than 1.8.0 that uses one must add it. Since 1.15.0, a file that binds the operator channel or the main-agent endpoint to `0.0.0.0` is refused: write `"core"` for a hub in a container. Any other 1.x file still reads.

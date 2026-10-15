@@ -48,6 +48,9 @@ from zephyros.adapters.filter.journal import Journal
 from zephyros.core.broker import BrokerError, SandboxManifest, parse_sandbox_manifest
 from zephyros.core.containers import (
     INSTANCE_USER,
+    LABEL_MANAGED,
+    LABEL_PROJECT,
+    LABEL_ROLE,
     WORK_PATH,
     Policy,
     Role,
@@ -229,6 +232,28 @@ def run_sandbox(
         "timed_out": exit_code is None,
         "duration_seconds": round(duration, 3),
     }
+
+
+def sweep_sandboxes(api: DockerApi, journal: Journal) -> list[str]:
+    """Remove the sandboxes a filter that stopped during a run left behind, with their volumes;
+    returns their names. A run lives inside one call of the filter, which removes its sandbox
+    whatever happens, unless the process itself is stopped: called once when the filter starts,
+    before it serves, when no run of its own can be in progress."""
+    try:
+        listed = api.list_containers(f"{LABEL_ROLE}={Role.SANDBOX.value}")
+    except DockerError:
+        return []
+    swept: list[str] = []
+    for item in listed:
+        labels = item.get("Labels") or {}
+        names = item.get("Names") or []
+        name = str(names[0]).lstrip("/") if names else ""
+        if labels.get(LABEL_MANAGED) != "true" or not name.startswith("zs-sbx-"):
+            continue
+        _destroy(api, name)
+        journal.record("done", "sandbox.sweep", "ok", project_id=str(labels.get(LABEL_PROJECT, "")))
+        swept.append(name)
+    return swept
 
 
 def _destroy(api: DockerApi, name: str) -> None:

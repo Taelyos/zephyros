@@ -33,6 +33,26 @@ def _config_check(path: Path) -> int:
     return 0
 
 
+def _tools_check(path: Path) -> int:
+    """What the hub checks of a tools directory when it starts (ADR 0030), and its fingerprint:
+    the one the log and the evidence report give, so that a verdict can be replayed with the
+    same tools."""
+    from zephyros.adapters.project_tools import ToolsDirectory
+    from zephyros.core.tools import ToolsError
+
+    try:
+        measured = ToolsDirectory(path).digest()
+    except ToolsError as error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 2
+    print(
+        json.dumps(
+            {"tools": measured.fingerprint, "files": measured.files, "bytes": measured.bytes}
+        )
+    )
+    return 0
+
+
 def _config_schema() -> int:
     sys.stdout.write(published_schemas()["configuration.schema.json"])
     return 0
@@ -111,6 +131,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     check = config_commands.add_parser("check", help="validate a configuration file")
     check.add_argument("file", type=Path)
     config_commands.add_parser("schema", help="print the JSON Schema of the configuration")
+    tools = commands.add_parser("tools", help="the tools directory of the projects")
+    tools_commands = tools.add_subparsers(dest="tools_command", required=True)
+    tools_check = tools_commands.add_parser(
+        "check", help="check a tools directory as the hub does, and print its fingerprint"
+    )
+    tools_check.add_argument("directory", type=Path)
     hub = commands.add_parser("hub", help="run the hub, or call its operator channel")
     hub_commands = hub.add_subparsers(dest="hub_command", required=True)
     start = hub_commands.add_parser("start", help="run the hub")
@@ -149,6 +175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from zephyros.app.hub import main as hub_main
 
         return hub_main(["--config", str(args.config)])
+    if args.command == "tools":
+        return _tools_check(args.directory.absolute())
     if args.config_command == "check":
         return _config_check(args.file)
     return _config_schema()

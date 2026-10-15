@@ -155,7 +155,7 @@ SANDBOX_MANIFEST = Table(
             "The acceptance tests to run",
             required=True,
         ),
-        Field("timeout_seconds", Integer(1, 3600), "Longest run", required=True),
+        Field("timeout_seconds", Integer(1, 86400), "Longest run", required=True),
     )
 )
 

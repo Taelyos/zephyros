@@ -49,6 +49,7 @@ from zephyros.core.ports.verification import (
 )
 from zephyros.core.principals import MAIN_AGENT, OPERATOR, instance_principal
 from zephyros.core.projects import ProjectService
+from zephyros.core.tools import ToolsProbe
 
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
 
@@ -116,6 +117,7 @@ def service(
     log_store: InMemoryLogStore | None = None,
     secrets: Callable[[], list[str]] | None = None,
     rejections_alert: int | None = None,
+    tools: ToolsProbe | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
@@ -149,6 +151,7 @@ def service(
         events=events,
         secrets=secrets,
         rejections_alert=rejections_alert,
+        tools=tools,
     )
     return made, project, audit, store
 
@@ -319,6 +322,36 @@ def test_a_delivery_declared_before_the_contract_runs_nothing_and_never_passes()
     assert (record.outcomes, record.decision, record.contract_version) == ({}, "CONCERNS", 0)
     assert record.report is not None
     assert f"- {NOTHING_JUDGED}" in record.report.splitlines()
+
+
+def test_a_hub_that_starts_again_runs_the_verifications_it_had_not_ended() -> None:
+    """The queue of the loop is in memory: what a stopped hub had declared and not decided runs
+    again when it starts (resume), and nothing else does."""
+    made, project, _audit, store = service()
+    ready(made, project)
+    decided = delivered(made, project)
+    package = make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE))
+    waiting = made.push(project, package, "later").delivery_id
+    made.declare(project, waiting)  # the hub stops here: its queue goes with it
+    # The hub that starts again: the same store, staging area and services, a new queue.
+    again = DeliveryService(
+        made._area,
+        made._runner,
+        made._forge,
+        made._contracts,
+        made._projects,
+        store,
+        made._audit,
+        made._clock,
+        kit="assertions",
+    )
+    assert not again.step()
+    assert again.resume() == [(project, waiting)]
+    while again.step():
+        pass
+    assert again.status(project, waiting).decision == "PASS"
+    assert again.resume() == []
+    assert store.get_record(project, decided) == made.status(project, decided)
 
 
 def test_the_worker_hooks_are_harmless() -> None:

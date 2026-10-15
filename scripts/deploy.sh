@@ -40,6 +40,10 @@
 #                           images.opencode and [instances.contractor] (ADR 0029)
 #   ZEPHYROS_OPENCODE_IMAGE an image to run for opencode instead of building it (an identifier,
 #                           or a name the runtime knows)
+#   ZEPHYROS_TOOLS          a directory of this machine holding the tools of the projects (a
+#                           simulator, a test bench): checked as the hub checks it, then mounted
+#                           read-only at /opt/project-tools in every turn and every sandbox,
+#                           and into the hub at its own path; writes [tools] (ADR 0030)
 #   ZEPHYROS_EXTRA_CONFIG   TOML appended to the configuration (for example a [gateway] table)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -69,6 +73,18 @@ empty_credential="$(cd "$state" && pwd)/empty-credential"
 [ -e "$empty_credential" ] || : > "$empty_credential"
 export ZEPHYROS_GATEWAY_KEY_FILE="$(realpath "${ZEPHYROS_GATEWAY_KEY_FILE:-$empty_credential}")"
 export ZEPHYROS_FORGE_TOKEN_FILE="$(realpath "${ZEPHYROS_FORGE_TOKEN_FILE:-$empty_credential}")"
+
+# The tools of the projects (ADR 0030) are mounted into the hub, read-only, at the path the
+# configuration names, which is their path on this machine: the hub fingerprints them there,
+# and the runtime binds that same path into the turns and the sandboxes. When none is given, an
+# empty directory is mounted instead, and the configuration names none.
+if [ -n "${ZEPHYROS_TOOLS:-}" ]; then
+  [ -d "$ZEPHYROS_TOOLS" ] || { echo "ZEPHYROS_TOOLS is not a directory: $ZEPHYROS_TOOLS" >&2; exit 2; }
+  export ZEPHYROS_TOOLS_DIR="$(realpath "$ZEPHYROS_TOOLS")"
+else
+  mkdir -p "$state/no-tools"
+  export ZEPHYROS_TOOLS_DIR="$(cd "$state/no-tools" && pwd)"
+fi
 
 make_credential_readable() {
   local file="$1"
@@ -103,6 +119,14 @@ up() {
   export ZEPHYROS_IMAGE; ZEPHYROS_IMAGE=$(image_id zephyros:local)
   # deploy/compose.yaml takes its image from this variable: it must be an image identifier.
   [[ "$ZEPHYROS_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "not an image identifier" >&2; exit 1; }
+  if [ -n "${ZEPHYROS_TOOLS:-}" ]; then
+    # Checked as the hub will check them, by the user of the hub, before the configuration is
+    # written and anything starts: a refusal names each path at fault here rather than in the
+    # log of a hub that exits. The mount is recursive on purpose: a file system mounted under
+    # the directory shows, and is refused (the turns would find an empty directory there).
+    docker run --rm --network none --user 10001:10001 \
+      -v "$ZEPHYROS_TOOLS_DIR:$ZEPHYROS_TOOLS_DIR:ro" "$ZEPHYROS_IMAGE" tools check "$ZEPHYROS_TOOLS_DIR"
+  fi
   export ZEPHYROS_CONFIG; ZEPHYROS_CONFIG="$(cd "$state" && pwd)/zephyros.toml"
   resolvers_toml="$(printf '%s' "$ZEPHYROS_RESOLVERS" | tr ',' '\n' \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^/"/' -e 's/$/"/' \
@@ -169,6 +193,13 @@ TOML
 [forge]
 provider = "github"
 token_file = "/run/zephyros-credentials/forge.key"
+TOML
+  fi
+  if [ -n "${ZEPHYROS_TOOLS:-}" ]; then
+    cat >> "$ZEPHYROS_CONFIG" <<TOML
+
+[tools]
+source = "$ZEPHYROS_TOOLS_DIR"
 TOML
   fi
   if [ -n "${ZEPHYROS_EXTRA_CONFIG:-}" ]; then printf '\n%s\n' "$ZEPHYROS_EXTRA_CONFIG" >> "$ZEPHYROS_CONFIG"; fi

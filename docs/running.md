@@ -34,6 +34,8 @@ What an instance reaches is the level of `network.egress` ([ADR 0024](decisions/
 
 No level reaches a protected network. A guard whose level differs from the configuration (one made before version 0.2.0, or a level changed since) is stopped when the hub starts or finds it, so that the next turn starts at the configured level.
 
+A project that needs heavy, fixed tooling (a simulator, a test bench and its scripts) gets it from a directory of this machine: `ZEPHYROS_TOOLS=/srv/zephyros-tools` mounts it read-only at `/opt/project-tools` in every turn and every sandbox, with its `bin` on the `PATH`, after the same check the hub makes when it starts ([the tools of a project](configuration.md#the-tools-of-a-project), [ADR 0030](decisions/0030-the-tools-of-a-project-are-mounted-read-only.md)). A verification may then need more than its default 300 s: `verification.timeout_seconds` in `ZEPHYROS_EXTRA_CONFIG` goes up to 86 400.
+
 ```bash
 scripts/deploy.sh call project.create '{"name": "My project"}'
 scripts/deploy.sh call instance.start '{"project_id": "p_…", "side": "contractor", "prompt": "…"}'

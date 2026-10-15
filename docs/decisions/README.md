@@ -32,3 +32,4 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0027 | [The network guard runs without root; its one capability comes from nft](0027-the-network-guard-runs-without-root.md) | Accepted |
 | 0028 | [The contract of a project is stored in SQLite, as immutable versions](0028-the-contract-of-a-project-is-stored-in-sqlite.md) | Accepted |
 | 0029 | [The Contractor can be a third-party coding agent](0029-the-contractor-can-be-a-third-party-coding-agent.md) | Accepted |
+| 0030 | [The tools of a project are mounted read-only, on both sides and at the gate](0030-the-tools-of-a-project-are-mounted-read-only.md) | Accepted |

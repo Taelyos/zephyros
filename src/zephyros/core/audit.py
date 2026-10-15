@@ -94,6 +94,7 @@ class Action(StrEnum):
     STAGING_PREPARE = "staging.prepare"
     DELIVERY_CHECK = "delivery.check"
     VERIFICATION_RUN = "verification.run"
+    TOOLS_CHECK = "tools.check"
     GATE_DECISION = "gate.decision"
     PULL_REQUEST_OPEN = "pull_request.open"
     AUTHENTICATION = "authentication"

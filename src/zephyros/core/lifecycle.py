@@ -51,6 +51,7 @@ from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import instance_principal
 from zephyros.core.tokens import TokenService
+from zephyros.core.tools import ToolsError, ToolsProbe
 
 SYSTEM_PRINCIPAL = "hub"
 LOST_ROUNDS = 3
@@ -142,6 +143,7 @@ class InstanceManager:
         continuity: Continuity | None = None,
         notifier: Notifier | None = None,
         engines: Mapping[Side, TurnEngine] | None = None,
+        tools: ToolsProbe | None = None,
     ) -> None:
         self._broker = broker
         self._store = store
@@ -154,6 +156,7 @@ class InstanceManager:
         self._continuity = continuity
         self._notifier = notifier
         self._engines = dict(engines or {})
+        self._tools = tools
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._live: dict[Key, _Live] = {}
@@ -258,6 +261,10 @@ class InstanceManager:
             return
         except NoFreeSubnetError:
             self._start_failed(live, "no_free_subnet")
+        except ToolsError as error:
+            # The tools changed into something the hub refuses since it started (ADR 0030): no
+            # turn runs with tools that the gate would not take either.
+            self._start_failed(live, "tools_refused", problems=list(error.problems[:5]))
         except BrokerError as error:
             self._start_failed(live, error.code)
         except Exception:  # reason: a bug must not stop the worker or leak
@@ -304,6 +311,9 @@ class InstanceManager:
         record = live.record
         assert record is not None  # noqa: S101  # reason: set by _bring_up or by an earlier start
         self._check_not_stopping(live)
+        # Measured before the turn starts: the fingerprint the log keeps is that of the tools the
+        # turn finds when it starts; nothing measures them again at its end (ADR 0030).
+        tools = None if self._tools is None else self._tools.digest()
         secret = self._token_for_turn(live, record)
         self._broker.start_turn(project_id, side, secret, prompt)
         with self._lock:
@@ -323,6 +333,7 @@ class InstanceManager:
             prompt_chars=len(prompt),
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
             **({} if engine is None else {"engine": engine.name, "engine_version": engine.version}),
+            **({} if tools is None else {"tools": tools.fingerprint}),
         )
         if self._timing.egress == "open":
             # An exception the operator wrote down (ADR 0024): said again at every start.
@@ -374,9 +385,14 @@ class InstanceManager:
                 )
         return issued.secret
 
-    def _start_failed(self, live: _Live, code: str) -> None:
+    def _start_failed(self, live: _Live, code: str, **detail: object) -> None:
         self._record(
-            live.project_id, Action.TURN_START, Outcome.ERROR, side=live.side.value, error=code
+            live.project_id,
+            Action.TURN_START,
+            Outcome.ERROR,
+            side=live.side.value,
+            error=code,
+            **detail,
         )
         outcome = f"start_failed:{code}"
         with self._lock:

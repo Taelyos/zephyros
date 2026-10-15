@@ -70,3 +70,35 @@ def test_schema_prints_the_published_document(capsys: pytest.CaptureFixture[str]
     assert main(["config", "schema"]) == 0
     document = json.loads(capsys.readouterr().out)
     assert document["x-zephyros-schema-version"] == CONFIG_SCHEMA_VERSION
+
+
+def test_tools_check_prints_the_fingerprint_the_hub_would_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR 0030: a verdict is replayed with tools whose fingerprint is the report's."""
+    from zephyros.adapters.project_tools import ToolsDirectory
+
+    root = tmp_path / "tools"
+    root.mkdir(mode=0o755)
+    (root / "sim").write_bytes(b"run\n")
+    (root / "sim").chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    assert main(["tools", "check", "tools"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed == {
+        "tools": ToolsDirectory(root).digest().fingerprint,
+        "files": 1,
+        "bytes": 4,
+    }
+
+
+def test_tools_check_refuses_what_the_hub_refuses_and_names_the_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "tools"
+    root.mkdir(mode=0o755)
+    (root / "out").symlink_to("../elsewhere")
+    assert main(["tools", "check", str(root)]) == 2
+    error = capsys.readouterr().err
+    assert error.startswith(f"refused: the tools directory {str(root)!r} cannot be mounted:")
+    assert "'out' is a link that leads out of the tools directory" in error

@@ -24,10 +24,11 @@ from zephyros.adapters.filter.sandbox import (
     parse_outcomes,
     read_archive,
     run_sandbox,
+    sweep_sandboxes,
 )
 from zephyros.adapters.filter.server import build_filter_app
 from zephyros.core.broker import BrokerError, SandboxManifest
-from zephyros.core.containers import Policy
+from zephyros.core.containers import Policy, sandbox_name, sandbox_spec, sandbox_volume_spec
 
 DIGEST = "ghcr.io/example/app@sha256:" + "e" * 64
 POLICY = Policy(
@@ -158,12 +159,24 @@ def test_a_second_manifest_is_refused() -> None:
         json.dumps(
             {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 0}
         ).encode(),
+        json.dumps(
+            {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 86401}
+        ).encode(),
     ],
 )
 def test_a_manifest_that_does_not_check_is_refused(broken: bytes) -> None:
     with pytest.raises(BrokerError) as caught:
         read_archive(make_tar([(MANIFEST, broken), ("test_a.py", b"x\n")]))
     assert caught.value.code in ("bad_request", "bad_json")
+
+
+def test_a_run_of_hours_is_asked_for_as_the_configuration_allows() -> None:
+    """ADR 0030: verification.timeout_seconds goes up to a day, and so does the manifest."""
+    raw = json.dumps(
+        {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 86400}
+    ).encode()
+    manifest, _clean = read_archive(make_tar([(MANIFEST, raw), ("test_a.py", b"x\n")]))
+    assert manifest.timeout_seconds == 86400
 
 
 def test_a_member_that_is_not_a_plain_regular_file_is_refused() -> None:
@@ -200,7 +213,7 @@ def test_a_member_with_a_path_that_is_not_plain_is_refused(name: str) -> None:
 
 
 def test_a_top_level_dotfile_is_accepted() -> None:
-    """A real repository carries `.gitignore` and friends: the first real run (steam-watch)
+    """A real repository carries `.gitignore` and friends: the first real run
     found this refusal — the check now allows a leading dot, and keeps refusing `.` and `..`."""
     raw = make_tar(
         [
@@ -500,6 +513,28 @@ def test_a_runtime_failure_is_reported_and_the_objects_are_still_removed() -> No
         rig.run(tests=("test_a.py::test_a",))
     assert rig.journal.lines[-1]["code"] == "runtime_error"
     assert not [name for name in (*rig.docker.containers, *rig.docker.volumes) if "zs-sbx" in name]
+
+
+def test_a_filter_that_starts_removes_the_sandboxes_a_stopped_one_left() -> None:
+    """A filter stopped during a run never reaches its `finally`: the sandbox would run on, and
+    stay. The next filter removes it, and its volume, before it serves; nothing else."""
+    rig = SandboxRig(lambda archive: (None, ""))
+    api = rig.docker.api()
+    for run in ("0a1b2c3d", "0e0f1011"):
+        api.create_volume(sandbox_volume_spec(PROJECT, run))
+        api.create_container(
+            sandbox_name(PROJECT, run), sandbox_spec(POLICY, PROJECT, run, "tests")
+        )
+        api.start(sandbox_name(PROJECT, run))
+    rig.docker.add_foreign(
+        "container", "zs-sbx-p_abcdef12-99999999", {"org.zephyros.role": "sandbox"}
+    )
+    swept = sweep_sandboxes(api, rig.journal)
+    assert swept == [sandbox_name(PROJECT, "0a1b2c3d"), sandbox_name(PROJECT, "0e0f1011")]
+    left = [name for name in (*rig.docker.containers, *rig.docker.volumes) if "zs-sbx" in name]
+    assert left == ["zs-sbx-p_abcdef12-99999999"]  # not one of the filter's
+    assert [line["op"] for line in rig.journal.lines] == ["sandbox.sweep", "sandbox.sweep"]
+    assert sweep_sandboxes(api, rig.journal) == []
 
 
 # ----------------------------------------------------------------------------- the route

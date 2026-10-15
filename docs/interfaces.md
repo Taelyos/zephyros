@@ -127,6 +127,8 @@ The honest limits (see ADR 0017): acceptance tests of the "tests" kit cannot imp
 
 `VerificationResult` carries `outcomes` (one per test asked for), `log`, `evidence`, `duration_seconds` and `deselected` (tests seen in the asked files but not named by a criterion; none is a test asked for).
 
+The sandbox runner of the hub mounts the tools of the projects, when the configuration names some, read-only at `/opt/project-tools` in the sandbox, as in the turns of both sides ([ADR 0030](decisions/0030-the-tools-of-a-project-are-mounted-read-only.md)); the hub fingerprints them before and after the run, and drops the results of a run whose tools changed. The interface does not change.
+
 What the suite checks: the major version; the runner names the kit it runs; a passing test passes and a failing one fails; a broken test never passes; every test asked for gets exactly one outcome and no other test gets one, an absent test does not pass, and the deselected tests are well-formed and never shadow a test asked for; the same request gives the same outcomes twice; an unknown kit is refused.
 
 Dummy: `AssertionRunner`, whose one kit ("assertions") runs no code: a test `path::name` passes when the file holds the line `name: pass`.

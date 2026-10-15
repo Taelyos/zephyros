@@ -476,8 +476,8 @@
         "timeout_seconds": {
           "type": "integer",
           "minimum": 30,
-          "maximum": 3600,
-          "description": "Longest run of the acceptance tests of one delivery",
+          "maximum": 86400,
+          "description": "Longest run of the acceptance tests of one delivery; the delivery loop runs one verification at a time, so a long one makes the next deliveries wait",
           "default": 300
         },
         "protected_paths": {
@@ -497,6 +497,19 @@
       },
       "additionalProperties": false,
       "description": "Verification of deliveries"
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^(?:(?!.*//)(?!.*/\\.\\.?(?:/|$))/[A-Za-z0-9._@+-][A-Za-z0-9._@+/-]*(?<!/))$",
+          "description": "The tools of the projects (ADR 0030): a directory of the machine, as the container runtime sees it, mounted read-only at /opt/project-tools in every turn, Owner and Contractor, and in every sandbox of verification. The hub reads it at the same path, refuses to start when the user of the instances could change it or a link leads out of it, and writes its fingerprint to the log and to the evidence report"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The tools of the projects, mounted read-only"
     },
     "notifications": {
       "type": "object",
@@ -561,7 +574,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.16.0",
+  "x-zephyros-schema-version": "1.17.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
