@@ -3,6 +3,14 @@
 The credential is read from a file at each call, so that changing it in the hub takes effect on
 the next call (US-E3-01). It is sent to the configured upstream and nowhere else, and it never
 appears in an error: a failure of the upstream is reported by its status code alone.
+
+The reasoning of a thinking model (`reasoning_content`) is read from every answer. Whether it
+goes back with the conversation is the choice of the configuration (`gateway.reasoning_echo`,
+ADR 0032), because providers disagree: DeepSeek in thinking mode refuses an assistant message
+without it (HTTP 400), and strict OpenAI-compatible providers refuse one with it. When it goes
+back, every assistant message carries it, and one that has none (an answer without reasoning,
+or an engine that dropped it) carries a single space, which DeepSeek accepts and an empty text
+is not.
 """
 
 from __future__ import annotations
@@ -28,6 +36,8 @@ from zephyros.core.ports.model_provider import (
 TIMEOUT_SECONDS = 600.0
 REASON_CHARACTERS = 300
 """How much of the provider's reason for refusing a request (HTTP 400) the error carries."""
+REASONING_PAD = " "
+"""The reasoning of an assistant message that has none, when the provider wants it back."""
 
 
 class FileCredential:
@@ -48,8 +58,10 @@ class FileCredential:
         return [value] if value else []
 
 
-def _wire_message(message: ChatMessage) -> dict[str, object]:
+def _wire_message(message: ChatMessage, *, reasoning_echo: bool) -> dict[str, object]:
     wire: dict[str, object] = {"role": message.role.value, "content": message.content}
+    if reasoning_echo and message.role is Role.ASSISTANT:
+        wire["reasoning_content"] = message.reasoning or REASONING_PAD
     if message.tool_calls:
         wire["tool_calls"] = [
             {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
@@ -85,6 +97,7 @@ class OpenAiCompatibleProvider:
         *,
         upstream_model: str,
         session_header: str | None = None,
+        reasoning_echo: bool = False,
         timeout_seconds: float = TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -92,6 +105,7 @@ class OpenAiCompatibleProvider:
         self._credential = credential
         self._upstream_model = upstream_model
         self._session_header = session_header
+        self._reasoning_echo = reasoning_echo
         # One session name per process: the providers that route by session (OpenCode Go asks
         # for `x-opencode-session`) keep this hub's traffic together.
         self._session = f"zephyros-{uuid.uuid4().hex}"
@@ -109,7 +123,9 @@ class OpenAiCompatibleProvider:
             raise ModelProviderError("no model credential is configured")
         body: dict[str, object] = {
             "model": self._upstream_model,
-            "messages": [_wire_message(m) for m in request.messages],
+            "messages": [
+                _wire_message(m, reasoning_echo=self._reasoning_echo) for m in request.messages
+            ],
         }
         if request.tools:
             body["tools"] = [
@@ -149,7 +165,13 @@ class OpenAiCompatibleProvider:
                 ToolCall(str(c["id"]), str(c["function"]["name"]), str(c["function"]["arguments"]))
                 for c in message.get("tool_calls") or []
             )
-            reply = ChatMessage(Role.ASSISTANT, message.get("content"), calls)
+            reasoning = message.get("reasoning_content")
+            reply = ChatMessage(
+                Role.ASSISTANT,
+                message.get("content"),
+                calls,
+                reasoning=reasoning if isinstance(reasoning, str) and reasoning else None,
+            )
             tokens = Usage(int(usage["prompt_tokens"]), int(usage["completion_tokens"]))
         except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError):
             raise ModelProviderError("the provider's answer is not a chat completion") from None

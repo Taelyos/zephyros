@@ -11,6 +11,7 @@ import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import urlsplit
 
 from zephyros.core.schema import (
     CORE_ADDRESS,
@@ -27,7 +28,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.17.0"
+CONFIG_SCHEMA_VERSION = "1.18.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -497,6 +498,16 @@ def _gateway() -> Table:
                 default=None,
             ),
             Field(
+                "reasoning_echo",
+                Flag(),
+                "Send the reasoning of the model back to the provider with the conversation, on "
+                "every assistant message, when it is openai-compatible: a thinking model such "
+                "as DeepSeek refuses a conversation without it, a strict provider one with it. "
+                "Unset, it is true when the model at the provider or its host is of a family "
+                "that asks for it (DeepSeek, Kimi, MiMo), false otherwise (ADR 0032)",
+                default=None,
+            ),
+            Field(
                 "timeout_seconds",
                 Integer(10, 3600),
                 "How long the gateway waits for one answer of the provider, in seconds, when it is "
@@ -584,6 +595,39 @@ def _verification() -> Table:
 def _flag(table: Mapping[str, object], key: str) -> bool:
     value = table[key]
     return value if isinstance(value, bool) else False
+
+
+# The model families whose thinking mode wants its reasoning back, as the pinned Hermes Agent
+# knows them (ADR 0032): by a part of the model name at the provider, or by the provider's host.
+REASONING_ECHO_MODELS = ("deepseek", "mimo")
+REASONING_ECHO_HOSTS = (
+    "api.deepseek.com",
+    "api.kimi.com",
+    "moonshot.ai",
+    "moonshot.cn",
+    "xiaomimimo.com",
+)
+
+
+def reasoning_echo_default(upstream_model: str, upstream_url: str | None) -> bool:
+    """Whether the provider wants the reasoning back when gateway.reasoning_echo is unset: the
+    name of the model at the provider, never the one instances ask for, or the host."""
+    model = upstream_model.lower()
+    host = (urlsplit(upstream_url).hostname or "") if upstream_url else ""
+    return any(part in model for part in REASONING_ECHO_MODELS) or any(
+        host == known or host.endswith("." + known) for known in REASONING_ECHO_HOSTS
+    )
+
+
+def _reasoning_echo(gateway: Mapping[str, object]) -> bool:
+    value = gateway.get("reasoning_echo")
+    if isinstance(value, bool):
+        return value
+    if gateway.get("provider") != "openai-compatible":
+        return False
+    upstream = gateway.get("upstream_model", gateway.get("model"))
+    url = gateway.get("upstream_url")
+    return reasoning_echo_default(str(upstream or ""), url if isinstance(url, str) else None)
 
 
 def _int(table: Mapping[str, object], key: str) -> int:
@@ -944,6 +988,7 @@ class GatewayConfig:
     session_header: str | None
     simulation: bool
     timeout_seconds: int = 600
+    reasoning_echo: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1102,6 +1147,7 @@ def parse_config(data: object) -> Config:
             credential_file=cast("str | None", gateway.get("credential_file")),
             session_header=cast("str | None", gateway.get("session_header")),
             timeout_seconds=_int(gateway, "timeout_seconds"),
+            reasoning_echo=_reasoning_echo(gateway),
         ),
         forge=ForgeConfig(
             provider=cast("str", forge["provider"]),

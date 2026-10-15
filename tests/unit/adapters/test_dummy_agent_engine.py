@@ -16,4 +16,4 @@ def test_describes_a_turn_that_echoes() -> None:
         "ZEPHYROS_TOKEN": "zph_o_t",
     }
     assert DummyAgentEngine().engine_version == "dummy-0"
-    assert DummyAgentEngine().interface_version == "0.2.0"
+    assert DummyAgentEngine().interface_version == "0.3.0"

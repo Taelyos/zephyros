@@ -10,8 +10,9 @@ version. Each schema carries its own version number.
 
 | Surface | 0.2.0 | Unreleased |
 | --- | --- | --- |
-| Configuration schema | 1.15.0 | 1.17.0 |
-| Agent engine interface | 0.2.0 | 0.2.0 (a second real implementation) |
+| Configuration schema | 1.15.0 | 1.18.0 |
+| Agent engine interface | 0.2.0 | 0.3.0 (a second real implementation; `TurnRequest.reasoning_echo`) |
+| Model provider interface | 0.1.0 | 0.2.0 (`ChatMessage.reasoning`) |
 
 ### Added
 - The Contractor can be a third-party coding agent (ADR 0029). `instances.contractor.engine`
@@ -44,6 +45,26 @@ version. Each schema carries its own version number.
   prints its fingerprint. `scripts/deploy.sh` takes the directory from `ZEPHYROS_TOOLS`.
 - `verification.timeout_seconds` goes up to 86 400 s (it stopped at 3 600 s): an acceptance test
   may play several runs of a simulator. The default stays 300 s.
+- The reasoning of a thinking model goes back to a provider that wants it, whatever the model is
+  named behind the gateway (ADR 0032). The gateway carries `reasoning_content` both ways: from an
+  answer to the instance, whole or streamed, and from the conversation of the instance to the
+  provider. `gateway.reasoning_echo` (configuration schema 1.18.0) says whether the provider gets
+  it: with `true`, every assistant message carries its reasoning, or a single space when it has
+  none; with `false`, none carries the field, which a strict provider refuses. Unset, it follows
+  the model at the provider and its host (DeepSeek, Kimi, MiMo), never `gateway.model`. Each turn
+  tells its engine (`ZEPHYROS_REASONING_ECHO`): Hermes sets `model.reasoning_echo`, OpenCode the
+  `interleaved` field of its model.
+
+### Fixed
+- A Hermes turn no longer refuses its own commands (ADR 0031). Hermes refused, in a one-shot chat
+  with nobody to approve, `python3 -c`, a here-document and `execute_code`: a real Owner turn
+  worked 46 minutes and 180 model calls without producing anything. The managed scope of the
+  instance image turns the approvals off (`approvals.mode: "off"`, and `approve` in every
+  context) and lets the file tools write `AGENTS.md` and `CLAUDE.md`. What protects is around
+  the agent: the guard, no key, the container, the hub's rights and the gate.
+- A real run with DeepSeek in thinking mode no longer ends a turn with `failed:exit_1` after an
+  answer without reasoning: the gateway dropped `reasoning_content`, and Hermes stripped it under
+  a model name without `deepseek`, so the next call was refused (HTTP 400, answered 502).
 
 ### Known limits
 - The images do not share a C library (Debian glibc for Hermes, Alpine musl for OpenCode and the

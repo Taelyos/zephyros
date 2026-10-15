@@ -2,7 +2,9 @@
 
 An instance sends a chat conversation in the OpenAI wire format with its project token. The
 gateway checks the token's rights, translates the conversation into the types of the
-`ModelProvider` interface, asks the provider, and translates the answer back. The model
+`ModelProvider` interface, asks the provider, and translates the answer back. The reasoning of a
+thinking model (`reasoning_content`) goes both ways: to the instance with the answer, and back
+to the provider with the conversation, where the provider decides what to send (ADR 0032). The model
 credential lives behind the provider and nowhere else: it is never part of a request, an
 answer, an error or a log record. Every call leaves one record naming the instance, the model
 and the tokens used.
@@ -114,6 +116,15 @@ def _tool_call(raw: object, where: str) -> ToolCall:
     return ToolCall(identifier, name, arguments)
 
 
+def _reasoning_of(raw: Mapping[str, object], where: str) -> str | None:
+    """The reasoning an assistant message carries back, if any. Another type is refused rather
+    than dropped: the provider that asks for the field would refuse the call for it anyway."""
+    reasoning = raw.get("reasoning_content")
+    if reasoning is None or isinstance(reasoning, str):
+        return reasoning
+    raise GatewayError(400, "invalid_message", f"{where}: reasoning_content is a text")
+
+
 _ROLES = {
     "system": Role.SYSTEM,
     "developer": Role.SYSTEM,
@@ -136,7 +147,7 @@ def _message(raw: object, index: int) -> ChatMessage:
         if role is Role.TOOL:
             return ChatMessage(role, content, tool_call_id=str(raw.get("tool_call_id") or ""))
         if role is Role.ASSISTANT:
-            return ChatMessage(role, content, calls)
+            return ChatMessage(role, content, calls, reasoning=_reasoning_of(raw, where))
         return ChatMessage(role, content)
     except ValueError as error:
         raise GatewayError(400, "invalid_message", f"{where}: {error}") from error
@@ -157,7 +168,10 @@ def parse_chat_request(body: object, *, model: str) -> ModelRequest:
     if len(raw_messages) > MAX_MESSAGES:
         raise GatewayError(400, "too_many_messages", f"at most {MAX_MESSAGES} messages")
     messages = tuple(_message(raw, index) for index, raw in enumerate(raw_messages))
-    size = sum(len(m.content or "") + sum(len(c.arguments) for c in m.tool_calls) for m in messages)
+    size = sum(
+        len(m.content or "") + len(m.reasoning or "") + sum(len(c.arguments) for c in m.tool_calls)
+        for m in messages
+    )
     if size > MAX_CHARACTERS:
         raise GatewayError(413, "too_large", "the conversation is too large")
     raw_tools = body.get("tools") or []
@@ -190,6 +204,8 @@ def render_chat_response(
 ) -> dict[str, Any]:
     message = response.message
     rendered: dict[str, Any] = {"role": "assistant", "content": message.content}
+    if message.reasoning:
+        rendered["reasoning_content"] = message.reasoning
     if message.tool_calls:
         rendered["tool_calls"] = [
             {
@@ -235,6 +251,8 @@ def render_stream(completion: Mapping[str, Any], *, include_usage: bool) -> list
 
     message = choice["message"]
     events = [event({"role": "assistant", "content": ""})]
+    if message.get("reasoning_content"):
+        events.append(event({"reasoning_content": message["reasoning_content"]}))
     if message.get("tool_calls"):
         events.append(
             event(

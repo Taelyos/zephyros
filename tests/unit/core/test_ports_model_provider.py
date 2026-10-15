@@ -24,6 +24,14 @@ class TestChatMessage:
         ChatMessage(Role.ASSISTANT, None, (CALL,))
         ChatMessage(Role.ASSISTANT, "a", (CALL,))
         ChatMessage(Role.TOOL, "result", tool_call_id="c1")
+        ChatMessage(Role.ASSISTANT, None, (CALL,), reasoning="r")
+
+    @pytest.mark.parametrize("role", [Role.SYSTEM, Role.USER])
+    def test_only_an_assistant_message_carries_reasoning(self, role: Role) -> None:
+        with pytest.raises(ValueError, match="reasoning"):
+            ChatMessage(role, "x", reasoning="r")
+        with pytest.raises(ValueError, match="reasoning"):
+            ChatMessage(Role.TOOL, "x", tool_call_id="c1", reasoning="r")
 
     @pytest.mark.parametrize(
         ("role", "content", "calls", "call_id"),

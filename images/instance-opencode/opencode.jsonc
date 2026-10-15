@@ -1,6 +1,7 @@
 // The configuration of OpenCode in a Zephyros instance (ADR 0029), in its managed scope.
 // {env:NAME} is replaced by OpenCode with the environment of the turn, which the container
-// filter sets: the hub's agent endpoint, the model name and the project token, the one secret.
+// filter sets: the hub's agent endpoint, the model name and the project token, the one secret,
+// and one the entrypoint sets.
 // The model gateway and the MCP server of the hub are at the same address, which the network
 // guard lets through at every level (ADR 0024).
 {
@@ -29,6 +30,11 @@
         "{env:ZEPHYROS_MODEL}": {
           "name": "{env:ZEPHYROS_MODEL}",
           "tool_call": true,
+          // Keep the reasoning of each answer in the conversation sent again when the model
+          // wants it back, whatever its name behind the gateway (ADR 0032): the entrypoint
+          // makes this "reasoning_content", the field the gateway carries, or empty, which
+          // keeps nothing. OpenCode would otherwise decide from the name.
+          "interleaved": "{env:ZEPHYROS_REASONING_FIELD}",
           // OpenCode compacts a session as it nears this context, minus the output: about
           // 80 000 tokens, where Hermes compacts too (images/instance/seed.yaml).
           "limit": { "context": 96000, "output": 16000 }

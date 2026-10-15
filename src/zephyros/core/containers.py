@@ -96,6 +96,9 @@ class Policy:
     tools_source: str | None = None
     """The tools directory of the machine (ADR 0030), bound read-only at TOOLS_PATH in every
     turn and every sandbox; None when the projects have none."""
+    reasoning_echo: bool = False
+    """Whether the model wants the reasoning of its answers back (gateway.reasoning_echo): each
+    turn tells its engine to keep it in the conversation (ADR 0032)."""
 
     def engine(self, side: Side) -> str:
         """The name of the agent engine that the instance of `side` runs."""
@@ -135,6 +138,7 @@ class Policy:
             contractor_engine=config.instances.contractor_engine,
             opencode_image=config.images.opencode,
             tools_source=config.tools.source,
+            reasoning_echo=config.gateway.reasoning_echo,
             sandbox_images=(
                 ((config.verification.kit, config.verification.kit_image),)
                 if config.verification.kit_image
@@ -420,6 +424,7 @@ def turn_spec(
             policy.model,
             token,
             prompt,
+            reasoning_echo=policy.reasoning_echo,
         )
     )
     command = list(description.command)

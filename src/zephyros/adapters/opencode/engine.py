@@ -1,8 +1,9 @@
 """OpenCode as the agent engine: one non-interactive run per turn (ADR 0016, ADR 0029).
 
 The instance image (images/instance-opencode) carries the configuration of OpenCode in its
-managed scope, read-only, and OpenCode fills it from three environment variables: the hub's URL
-(the model gateway and the MCP server are both there), the model name and the project token.
+managed scope, read-only, and OpenCode fills it from four environment variables: the hub's URL
+(the model gateway and the MCP server are both there), the model name, the project token, and
+whether the model wants its reasoning back (ADR 0032).
 A turn is `turn <prompt>`: the entrypoint of the image hands the prompt to `opencode run
 --continue` on its standard input, so the turn continues the last session of the work
 directory, kept on the home volume; the first turn creates it.
@@ -34,5 +35,6 @@ class OpenCodeEngine:
                 "ZEPHYROS_HUB_URL": request.agent_endpoint,
                 "ZEPHYROS_MODEL": request.model,
                 "ZEPHYROS_TOKEN": request.token,
+                "ZEPHYROS_REASONING_ECHO": "true" if request.reasoning_echo else "false",
             },
         )

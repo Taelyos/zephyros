@@ -104,8 +104,19 @@ def test_what_opencode_would_fetch_or_send_by_itself_is_off(flag: str) -> None:
 
 
 # ----------------------------------------------------------------------------- the configuration
-def test_the_configuration_reads_three_variables_of_the_turn_and_no_other() -> None:
-    assert set(ENV.findall(raw())) == set(TURN)
+def test_the_configuration_reads_three_variables_of_the_turn_and_one_of_the_entrypoint() -> None:
+    assert set(ENV.findall(raw())) == {*TURN, "ZEPHYROS_REASONING_FIELD"}
+
+
+@pytest.mark.parametrize("model", ["deepseek-v4.1-flash", "served-model"])
+def test_the_reasoning_goes_back_in_its_field_when_the_entrypoint_names_it(model: str) -> None:
+    """ADR 0032: OpenCode keeps the reasoning of each answer in the field the gateway carries,
+    whatever the model is named; an empty field keeps none, where OpenCode would otherwise
+    decide from a name that holds "deepseek"."""
+    turn = {**TURN, "ZEPHYROS_MODEL": model}
+    for field, expected in (("reasoning_content", "reasoning_content"), ("", "")):
+        config = resolved({**turn, "ZEPHYROS_REASONING_FIELD": field})
+        assert config["provider"]["zephyros"]["models"][model]["interleaved"] == expected
 
 
 def test_the_model_goes_to_the_gateway_of_the_hub_with_the_project_token() -> None:
@@ -190,5 +201,8 @@ def test_the_hub_address_of_a_real_turn_fills_the_configuration() -> None:
     )
     environment = dict(entry.split("=", 1) for entry in spec["Env"])
     assert set(TURN) <= set(environment)
-    assert set(environment) - set(TURN) == set(proxy_environment(policy, "10.200.0.19", TOKEN))
+    assert set(environment) - set(TURN) == {
+        *proxy_environment(policy, "10.200.0.19", TOKEN),
+        "ZEPHYROS_REASONING_ECHO",  # read by the entrypoint, which sets the field
+    }
     assert resolved(environment) == resolved(TURN)

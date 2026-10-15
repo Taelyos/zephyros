@@ -145,6 +145,7 @@ def build_provider(config: Config) -> tuple[ModelProvider, CredentialSource | No
             credential,
             upstream_model=gateway.upstream_model,
             session_header=gateway.session_header,
+            reasoning_echo=gateway.reasoning_echo,
             timeout_seconds=gateway.timeout_seconds,
         )
         return provider, credential

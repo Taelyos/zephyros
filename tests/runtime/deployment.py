@@ -93,7 +93,26 @@ class Deployment:
                 docker("network", "rm", network_name(project, side), check=False)
                 for kind in VolumeKind:
                     docker("volume", "rm", volume_name(project, side, kind), check=False)
-        self.script("down", "--volumes", timeout=300)
+        # Its own compose project only: `deploy.sh down` also removes every container labelled
+        # as Zephyros's on the machine, the hub of another deployment among them.
+        state = Path(self.env["ZEPHYROS_STATE"])
+        compose = ["docker", "compose", "-f", str(ROOT / "deploy" / "compose.yaml")]
+        subprocess.run(  # noqa: S603  # reason: the compose file of the repository
+            [*compose, "down", "--volumes"],
+            env={
+                **self.env,
+                "ZEPHYROS_IMAGE": "unused",
+                "ZEPHYROS_CONFIG": "/dev/null",
+                "ZEPHYROS_FORGE_DIR": str(state),
+                "ZEPHYROS_GATEWAY_KEY_FILE": "/dev/null",
+                "ZEPHYROS_FORGE_TOKEN_FILE": "/dev/null",
+                "ZEPHYROS_TOOLS_DIR": str(state),
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
 
     def _wait_hub_healthy(self, seconds: float = 120) -> None:
         deadline = time.monotonic() + seconds

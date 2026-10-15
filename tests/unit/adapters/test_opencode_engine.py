@@ -37,7 +37,14 @@ def request(prompt: str) -> TurnRequest:
 def test_a_turn_hands_the_prompt_to_the_entrypoint_as_one_word() -> None:
     description = OpenCodeEngine().describe_turn(request("Build it."))
     assert description.command == ("turn", "Build it.")
-    assert dict(description.environment) == ENVIRONMENT
+    assert dict(description.environment) == {**ENVIRONMENT, "ZEPHYROS_REASONING_ECHO": "false"}
+
+
+def test_a_turn_says_whether_the_model_wants_its_reasoning_back() -> None:
+    wanted = TurnRequest(
+        "p_a", Side.CONTRACTOR, "http://10.200.0.3:8080", "served-model", "zph_c_t", "Go.", True
+    )
+    assert OpenCodeEngine().describe_turn(wanted).environment["ZEPHYROS_REASONING_ECHO"] == "true"
 
 
 def test_the_engine_names_the_version_the_image_pins() -> None:
@@ -48,12 +55,14 @@ def test_the_engine_names_the_version_the_image_pins() -> None:
 
 def make_entrypoint(directory: Path) -> Path:
     """The entrypoint of the image, with a recorder in the place of OpenCode: it writes the
-    words it was given and what it read on its standard input. In the place of session.py, a
+    words it was given, what it read on its standard input and the field of the reasoning it
+    was given. In the place of session.py, a
     script prints the file `found` and exits with the code in the file `code`, when they are
     there."""
     recorder = directory / "opencode"
     recorder.write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "$@" > "{directory}/argv"\ncat > "{directory}/stdin"\n',
+        f'#!/bin/sh\nprintf "%s\\n" "$@" > "{directory}/argv"\ncat > "{directory}/stdin"\n'
+        f'printf "%s" "${{ZEPHYROS_REASONING_FIELD-unset}}" > "{directory}/field"\n',
         encoding="utf-8",
     )
     recorder.chmod(0o755)
@@ -80,10 +89,12 @@ def entrypoint(tmp_path: Path) -> Path:
     return make_entrypoint(tmp_path)
 
 
-def run(entrypoint: Path, *words: str) -> tuple[list[str], str]:
+def run(
+    entrypoint: Path, *words: str, extra: dict[str, str] | None = None
+) -> tuple[list[str], str]:
     subprocess.run(  # noqa: S603  # reason: the repository's own script, with a recorder
         [str(entrypoint), *words],
-        env={**ENVIRONMENT, "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        env={**ENVIRONMENT, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), **(extra or {})},
         stdin=subprocess.DEVNULL,
         check=True,
         timeout=30,
@@ -114,6 +125,20 @@ def test_the_prompt_reaches_opencode_on_its_input_exactly_and_never_as_an_option
     argv, stdin = run(entrypoint, *OpenCodeEngine().describe_turn(request(prompt)).command)
     assert argv == ["run", "--continue"]
     assert stdin == prompt + "\n"
+
+
+@pytest.mark.parametrize(
+    ("echo", "field"),
+    [("true", "reasoning_content"), ("false", ""), (None, ""), ("yes", ""), ("TRUE", "")],
+)
+def test_the_entrypoint_names_the_field_of_the_reasoning_only_when_the_hub_says_true(
+    entrypoint: Path, echo: str | None, field: str
+) -> None:
+    """ADR 0032: the configuration reads the field from the entrypoint, which sets it from the
+    hub's true or false; anything else, or nothing, keeps no reasoning."""
+    extra = {} if echo is None else {"ZEPHYROS_REASONING_ECHO": echo}
+    run(entrypoint, "turn", "Go.", extra=extra)
+    assert (entrypoint.parent / "field").read_text(encoding="utf-8") == field
 
 
 @pytest.fixture(scope="module")

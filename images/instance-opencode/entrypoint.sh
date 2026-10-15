@@ -7,6 +7,13 @@
 # would read a prompt that begins with "-" as an option, and quote one that holds a space.
 # Any other command line goes to OpenCode as it is (`--version`, `debug config`).
 set -eu
+# The hub says whether the model wants its reasoning back (ADR 0032); the configuration names
+# the field that carries it, or none.
+case "${ZEPHYROS_REASONING_ECHO:-false}" in
+  true) ZEPHYROS_REASONING_FIELD=reasoning_content ;;
+  *) ZEPHYROS_REASONING_FIELD= ;;
+esac
+export ZEPHYROS_REASONING_FIELD
 if [ "$#" -eq 2 ] && [ "$1" = "turn" ]; then
   : "${ZEPHYROS_HUB_URL:?}" "${ZEPHYROS_MODEL:?}" "${ZEPHYROS_TOKEN:?}"
   prompt=$2

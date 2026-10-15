@@ -22,7 +22,16 @@ def test_a_turn_is_one_shot_in_the_session_of_the_instance() -> None:
         "ZEPHYROS_HUB_URL": "http://10.200.0.3:8080",
         "ZEPHYROS_MODEL": "m",
         "ZEPHYROS_TOKEN": "zph_c_t",
+        "ZEPHYROS_REASONING_ECHO": "false",
     }
+
+
+def test_a_turn_says_whether_the_model_wants_its_reasoning_back() -> None:
+    """ADR 0032: the image turns it into `model.reasoning_echo`, whatever the model's name."""
+    wanted = TurnRequest(
+        "p_a", Side.CONTRACTOR, "http://10.200.0.3:8080", "served-model", "zph_c_t", "Go.", True
+    )
+    assert HermesEngine().describe_turn(wanted).environment["ZEPHYROS_REASONING_ECHO"] == "true"
 
 
 @pytest.mark.parametrize("prompt", ["-p evil", "--profile=x", "--help", "-", "--"])

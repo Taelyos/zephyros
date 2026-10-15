@@ -40,7 +40,7 @@ def completion(
 
 
 def provider_for(
-    tmp_path: Path, handler: Handler, *, key: str = KEY
+    tmp_path: Path, handler: Handler, *, key: str = KEY, reasoning_echo: bool = False
 ) -> tuple[OpenAiCompatibleProvider, Path]:
     path = tmp_path / "model.key"
     path.write_text(key + "\n", encoding="utf-8")
@@ -49,6 +49,7 @@ def provider_for(
         "https://models.invalid/v1/",
         FileCredential(path),
         upstream_model="upstream-1",
+        reasoning_echo=reasoning_echo,
         client=client,
     )
     return provider, path
@@ -274,3 +275,59 @@ def test_no_session_header_is_sent_when_none_is_configured(tmp_path: Path) -> No
     provider, _ = provider_for(tmp_path, handler)
     run(provider, request())
     assert seen["session"] is None
+
+
+# ----------------------------------------------------------------------------- reasoning (ADR 0032)
+CALL = (ToolCall("c1", "echo", "{}"),)
+CONVERSATION = (
+    ChatMessage(Role.USER, "go"),
+    ChatMessage(Role.ASSISTANT, None, CALL, reasoning="I should echo."),
+    ChatMessage(Role.TOOL, "done", tool_call_id="c1"),
+    ChatMessage(Role.ASSISTANT, None, (ToolCall("c2", "echo", "{}"),)),
+    ChatMessage(Role.TOOL, "done", tool_call_id="c2"),
+    ChatMessage(Role.ASSISTANT, "said", reasoning=""),
+    ChatMessage(Role.USER, "again"),
+)
+
+
+def sent_assistants(tmp_path: Path, *, reasoning_echo: bool) -> list[dict[str, object]]:
+    seen: list[dict[str, object]] = []
+
+    def handler(http: httpx.Request) -> httpx.Response:
+        seen.extend(m for m in json.loads(http.content)["messages"] if m["role"] == "assistant")
+        return httpx.Response(200, json=completion())
+
+    provider, _path = provider_for(tmp_path, handler, reasoning_echo=reasoning_echo)
+    run(provider, request(*CONVERSATION))
+    return seen
+
+
+def test_with_reasoning_echo_every_assistant_message_carries_its_reasoning_or_a_space(
+    tmp_path: Path,
+) -> None:
+    """DeepSeek in thinking mode refuses an assistant message without its reasoning, and an
+    empty text as reasoning: one that has none carries a single space."""
+    sent = sent_assistants(tmp_path, reasoning_echo=True)
+    assert [m["reasoning_content"] for m in sent] == ["I should echo.", " ", " "]
+
+
+def test_without_reasoning_echo_no_message_carries_the_field(tmp_path: Path) -> None:
+    """A strict provider refuses the field, even empty."""
+    sent = sent_assistants(tmp_path, reasoning_echo=False)
+    assert len(sent) == 3
+    assert all("reasoning_content" not in m for m in sent)
+
+
+@pytest.mark.parametrize(
+    ("given", "kept"), [("Thinking.", "Thinking."), ("", None), (None, None), (7, None)]
+)
+def test_the_reasoning_of_an_answer_is_kept_when_it_is_a_text(
+    tmp_path: Path, given: object, kept: str | None
+) -> None:
+    message: dict[str, object] = {"role": "assistant", "content": "ok"}
+    if given is not None:
+        message["reasoning_content"] = given
+    provider, _path = provider_for(
+        tmp_path, lambda _http: httpx.Response(200, json=completion(message))
+    )
+    assert run(provider, request()).message.reasoning == kept

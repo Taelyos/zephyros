@@ -7,3 +7,21 @@ model:
   default: ${ZEPHYROS_MODEL}
   base_url: ${ZEPHYROS_HUB_URL}/v1
   api_key: ${ZEPHYROS_TOKEN}
+  # Keep the reasoning of each answer in the conversation sent again, whatever the model is
+  # named behind the gateway (ADR 0032). Hermes takes the truth of the expanded text: the
+  # entrypoint makes it "true" or empty.
+  reasoning_echo: ${ZEPHYROS_REASONING_ECHO}
+# The agent has every power inside its instance (ADR 0031): what protects is around it (the
+# network guard, no key, a user without root, a read-only root and read-only tools, the hub's
+# rights, the independent gate). A turn is a one-shot chat with nobody to answer, so Hermes
+# neither asks nor refuses: no approval of commands, of code or of writes, in any context.
+approvals:
+  mode: "off"
+  single_query_mode: approve
+  unattended_mode: approve
+  cron_mode: approve
+  deny: []
+security:
+  # Writes to AGENTS.md, CLAUDE.md, SOUL.md or .cursorrules ask a human even with approvals
+  # off, and fail without one: a project may need to write them.
+  protected_instruction_files: false

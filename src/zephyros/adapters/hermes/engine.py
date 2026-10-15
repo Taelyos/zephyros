@@ -1,9 +1,10 @@
 """Hermes Agent as the agent engine: one non-interactive run per turn (ADR 0016).
 
-The instance image (images/instance) seeds the configuration of Hermes from three environment
-variables at every start: the hub's URL (the model gateway and the MCP server are both there),
-the model name and the project token. A turn is a one-shot chat in the session named
-`zephyros`, kept in the home volume: created by the first turn, resumed by every later one.
+The instance image (images/instance) configures Hermes from four environment variables at
+every start: the hub's URL (the model gateway and the MCP server are both there), the model
+name, the project token, and whether the model wants its reasoning back (ADR 0032). A turn
+is a one-shot chat in the session named `zephyros`, kept in the home volume: created by the
+first turn, resumed by every later one.
 (A bare `--continue` fails when there is no session yet, which is the case of the first turn.)
 
 The prompt is attached to its option in one word. Hermes reads its command line twice, once
@@ -42,5 +43,6 @@ class HermesEngine:
                 "ZEPHYROS_HUB_URL": request.agent_endpoint,
                 "ZEPHYROS_MODEL": request.model,
                 "ZEPHYROS_TOKEN": request.token,
+                "ZEPHYROS_REASONING_ECHO": "true" if request.reasoning_echo else "false",
             },
         )

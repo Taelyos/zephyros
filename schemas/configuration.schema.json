@@ -398,6 +398,10 @@
           "pattern": "^(?:[A-Za-z0-9-]+)$",
           "description": "Name of the session header the gateway sends to the provider, when it asks for one (OpenCode Go requires x-opencode-session); unset sends none. The value is one stable session name per hub process"
         },
+        "reasoning_echo": {
+          "type": "boolean",
+          "description": "Send the reasoning of the model back to the provider with the conversation, on every assistant message, when it is openai-compatible: a thinking model such as DeepSeek refuses a conversation without it, a strict provider one with it. Unset, it is true when the model at the provider or its host is of a family that asks for it (DeepSeek, Kimi, MiMo), false otherwise (ADR 0032)"
+        },
         "timeout_seconds": {
           "type": "integer",
           "minimum": 10,
@@ -574,7 +578,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.17.0",
+  "x-zephyros-schema-version": "1.18.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
     "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",

@@ -6,7 +6,7 @@ The hub reaches the agent engine, the model provider, the forge, the delivery ar
 
 All five interfaces are at version 0.x. Until 1.0, a change can break an implementation, and the change is announced in the [CHANGELOG](../CHANGELOG.md).
 
-- **AgentEngine** (0.2.0) starts a turn with the configuration of the instance image and the first prompt on the command line, as the pinned Hermes Agent takes them; the image of OpenCode passes that word on to OpenCode's standard input. **ModelProvider** answers a call whole, without streaming; the gateway turns a whole answer into a stream for a client that asks for one. Either may change when another engine or provider is supported.
+- **AgentEngine** (0.3.0) starts a turn with the configuration of the instance image and the first prompt on the command line, as the pinned Hermes Agent takes them; the image of OpenCode passes that word on to OpenCode's standard input. **ModelProvider** answers a call whole, without streaming; the gateway turns a whole answer into a stream for a client that asks for one. Either may change when another engine or provider is supported.
 - **The model of the contract's objects** that the hub's API reads and writes (requirements, constraints, stories, criteria, links, notes, and the contract schema that describes them) and **the events schema** of the notifications are unstable too until 1.0: an incompatible change remains possible in 0.x, and is always announced in the CHANGELOG with the new version of the schema.
 - **Forge**, **DeliveryArea** and **VerificationRunner** carry the delivery loop. They will grow with it: more kits, more evidence from a kit. A project source must be one the hub accepts (`core/sources.py`, EXG-44).
 
@@ -28,7 +28,7 @@ class TestMyForge(ForgeConformance):
 
 ## AgentEngine
 
-Version: `0.2.0`
+Version: `0.3.0`
 
 The agent engine is the software that runs an agent in an instance: Hermes Agent, or for the Contractor a third-party coding agent such as OpenCode ([ADR 0029](decisions/0029-the-contractor-can-be-a-third-party-coding-agent.md)); the configuration chooses, and each engine has its own instance image. Each piece of work is one *turn*: one container started from the configured instance image, in the network namespace of the instance's guard, with the instance's two volumes (ADR 0016). The container filter builds that container from its own templates (ADR 0014); the engine only says which command and which environment start a turn. A description therefore holds no image, user, mount, capability, network, limit or file.
 
@@ -38,7 +38,7 @@ The agent engine is the software that runs an agent in an instance: Hermes Agent
 | `engine_version` | The version of the agent engine that instances run |
 | `describe_turn(TurnRequest) -> TurnDescription` | The words of the command and the environment variables that start a turn |
 
-`TurnRequest` holds the project, the side (`owner` or `contractor`), the URL of the hub's agent endpoint, the model name, the project token and the prompt of the turn. The token and the prompt do not appear when the request is printed.
+`TurnRequest` holds the project, the side (`owner` or `contractor`), the URL of the hub's agent endpoint, the model name, the project token, the prompt of the turn, and whether the model wants the reasoning of its answers back with the conversation (`reasoning_echo`, from `gateway.reasoning_echo`, [ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)). The token and the prompt do not appear when the request is printed.
 
 The filter checks every description before using it, as if it came from outside: no empty word, no NUL, the token never on the command line and present in the environment, plain variable names.
 
@@ -48,11 +48,13 @@ Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (
 
 Changes from 0.1: `describe_instance` became `describe_turn`; the image is configured, not described; the files are gone (the configuration of Hermes is in the instance image, seeded from the environment at each start).
 
+Changes from 0.2: `TurnRequest.reasoning_echo`, false by default. Both real engines pass it to their image as `ZEPHYROS_REASONING_ECHO` (`true` or `false`), which sets `model.reasoning_echo` of Hermes and the `interleaved` field of the model of OpenCode.
+
 ## ModelProvider
 
-Version: `0.1.0`
+Version: `0.2.0`
 
-A model provider answers a chat conversation, possibly with calls to tools that the caller offered. The hub's model gateway translates the wire format of an instance into these types. The provider never sees a project token.
+A model provider answers a chat conversation, possibly with calls to tools that the caller offered. The hub's model gateway translates the wire format of an instance into these types. The provider never sees a project token. An assistant message can carry the reasoning of a thinking model (`ChatMessage.reasoning`): the gateway takes it from the answer to the instance and from the conversation the instance sends again; whether it goes on to the provider is the provider's decision (for the OpenAI-compatible one, `gateway.reasoning_echo`, [ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)).
 
 | Operation | Meaning |
 | --- | --- |
@@ -63,6 +65,8 @@ A model provider answers a chat conversation, possibly with calls to tools that 
 What the suite checks: the major version; the answer names a model; the usage counts both prompt and completion tokens; an empty conversation is refused with `ModelProviderError`; every tool call in the answer has an identifier, is unique, names a tool that the request offered, and carries a JSON object as arguments; the request is not modified.
 
 Dummy: `ScriptedModelProvider`, which replays replies written in advance and records the requests. It is the seed of the simulated model provider (EXG-46, Z3) and of the obedient stub that the attack suite uses.
+
+Changes from 0.1: `ChatMessage.reasoning`, on assistant messages only, unset by default.
 
 ## Forge
 

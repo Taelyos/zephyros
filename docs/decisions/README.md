@@ -33,3 +33,5 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0028 | [The contract of a project is stored in SQLite, as immutable versions](0028-the-contract-of-a-project-is-stored-in-sqlite.md) | Accepted |
 | 0029 | [The Contractor can be a third-party coding agent](0029-the-contractor-can-be-a-third-party-coding-agent.md) | Accepted |
 | 0030 | [The tools of a project are mounted read-only, on both sides and at the gate](0030-the-tools-of-a-project-are-mounted-read-only.md) | Accepted |
+| 0031 | [The agent has every power inside its instance](0031-the-agent-has-every-power-inside-its-instance.md) | Accepted |
+| 0032 | [The gateway carries the reasoning of the model, and the configuration says whether it goes back](0032-the-gateway-carries-the-reasoning-of-the-model.md) | Proposed |

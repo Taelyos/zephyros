@@ -327,6 +327,59 @@ def test_a_gateway_serving_a_named_model_starts() -> None:
     assert config.gateway.models == ("deepseek-v4.1-flash",)
 
 
+# ----------------------------------------------------------------------------- reasoning (ADR 0032)
+def openai_gateway(**keys: object) -> dict[str, Any]:
+    document = with_value("gateway.provider", "openai-compatible")
+    document["gateway"].update(
+        {
+            "upstream_url": "https://provider.example.test/v1",
+            "credential_file": "/t/key",
+            "model": "served-model",
+            "models": [str(keys.get("upstream_model", "served-model"))],
+            **keys,
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize(
+    ("keys", "echo"),
+    [
+        ({"upstream_model": "deepseek-v4.1-flash"}, True),
+        ({"upstream_model": "DeepSeek-V4-Pro"}, True),
+        ({"upstream_model": "mimo-v2.5-pro"}, True),
+        ({"upstream_model": "plain-model"}, False),
+        ({}, False),  # served-model goes to the provider as it is
+        ({"upstream_url": "https://api.deepseek.com/v1"}, True),
+        ({"upstream_url": "https://api.moonshot.ai/v1"}, True),
+        ({"upstream_url": "https://notmoonshot.ai/v1"}, False),
+        ({"upstream_model": "deepseek-v4.1-flash", "reasoning_echo": False}, False),
+        ({"upstream_model": "plain-model", "reasoning_echo": True}, True),
+    ],
+)
+def test_the_reasoning_goes_back_to_a_provider_of_a_family_that_asks_for_it(
+    keys: dict[str, object], echo: bool
+) -> None:
+    """Unset, gateway.reasoning_echo follows the model at the provider or its host, never the
+    name instances ask for (served-model); set, it is what the file says."""
+    config = parse_config(openai_gateway(**keys))
+    assert config.gateway.model == "served-model"
+    assert config.gateway.reasoning_echo is echo
+
+
+def test_the_stub_takes_no_reasoning_back_unless_the_file_says_so() -> None:
+    assert parse_config(minimal()).gateway.reasoning_echo is False
+    named = with_value("gateway.model", "deepseek-v4-flash")
+    assert parse_config(named).gateway.reasoning_echo is False
+    assert parse_config(with_value("gateway.reasoning_echo", True)).gateway.reasoning_echo is True
+
+
+def test_the_reasoning_key_is_true_or_false() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value("gateway.reasoning_echo", "yes"))
+    assert [problem.key for problem in caught.value.problems] == ["gateway.reasoning_echo"]
+
+
 def test_the_notifications_are_read_as_written() -> None:
     document = with_value("notifications.url", "https://main.example.test/zephyros")
     document["notifications"]["secret"] = NOTIFICATION_SECRET
