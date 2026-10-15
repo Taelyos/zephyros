@@ -471,16 +471,18 @@ def test_atk_74_a_prompt_with_a_nul_or_too_long_is_refused(filt: Filter) -> None
     assert not filt.docker.calls
 
 
-def test_atk_74_the_instance_environment_holds_three_values_and_no_text_of_the_caller(
+def test_atk_74_the_instance_environment_holds_four_values_and_no_text_of_the_caller(
     filt: Filter,
 ) -> None:
-    """The engine's three values; at the default level (regulated, ADR 0024) the egress proxy
-    too, built from the hub address, the configured port and the token, nothing else."""
+    """The engine's four values, none from the caller (the reasoning flag is the policy's, ADR
+    0032); at the default level (regulated, ADR 0024) the egress proxy too, built from the hub
+    address, the configured port and the token, nothing else."""
     bring_up(filt)
     spec = created(filt, "/containers/create")[-1].body
     environment = dict(entry.split("=", 1) for entry in spec["Env"])
-    engine = {"ZEPHYROS_HUB_URL", "ZEPHYROS_MODEL", "ZEPHYROS_TOKEN"}
+    engine = {"ZEPHYROS_HUB_URL", "ZEPHYROS_MODEL", "ZEPHYROS_TOKEN", "ZEPHYROS_REASONING_ECHO"}
     assert engine <= set(environment)
+    assert environment["ZEPHYROS_REASONING_ECHO"] == str(POLICY.reasoning_echo).lower()
     hub = environment["ZEPHYROS_HUB_URL"].removeprefix("http://").split(":")[0]
     proxy = f"http://instance:{TOKEN}@{hub}:{POLICY.egress_port}"
     assert {k: v for k, v in environment.items() if k not in engine} == {
