@@ -7,12 +7,12 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.17.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.18.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
 ```toml
-schema_version = "1.17.0"
+schema_version = "1.18.0"
 
 [images]
 instance = "registry.example/zephyros-instance@sha256:…"   # by digest, always
@@ -35,7 +35,7 @@ On one machine, `scripts/deploy.sh up` writes the file (`deploy/state/zephyros.t
 | `[tokens]` | The lifetime of a project token and how long before its expiry a new turn gets a new one; the lifetime of the operator and main-agent tokens (`channel_lifetime_days`, 90 days by default, see below) |
 | `[forge]` | Where pull requests are opened: `none`, `directory` (bare git repositories in a directory, for the development deployment and the tests), or `github` (the repositories of the person, through the API and git over https, with the file of its token in `token_file`; read at each call) |
 | `[verification]` | What runs the acceptance tests of a delivery (`none`, which ends every verification in an error, or `sandbox`), the verification kit and its image, the longest run (up to 24 hours, see [the sandbox](#the-sandbox-of-verification)), and the client's own files (`protected_paths`, `CONTRACT.md` by default): a delivery that changes one is flagged in its report and its pull request, never refused ([ADR 0020](decisions/0020-the-owner-sees-and-records.md)) |
-| `[gateway]` | The model provider behind the gateway (`stub`, or `openai-compatible` with a URL and a credential file), the model name instances ask for, the name of the model at the provider when it differs, the models the gateway may serve (`models`, see below), `simulation` to mark the report, the pull request and the events of a run with the stub (EXG-46), the name of the session header the gateway sends to the provider (`session_header`, for OpenCode Go's `x-opencode-session`; one stable session name per hub process), and how long the gateway waits for one answer of the provider (`timeout_seconds`: a long answer of a real model takes minutes). The credential file is read at each call, so changing it takes effect on the next call |
+| `[gateway]` | The model provider behind the gateway (`stub`, or `openai-compatible` with a URL and a credential file), the model name instances ask for, the name of the model at the provider when it differs, the models the gateway may serve (`models`, see below), `simulation` to mark the report, the pull request and the events of a run with the stub (EXG-46), the name of the session header the gateway sends to the provider (`session_header`, for OpenCode Go's `x-opencode-session`; one stable session name per hub process), how long the gateway waits for one answer of the provider (`timeout_seconds`: a long answer of a real model takes minutes), whether the reasoning of the model goes back to the provider with the conversation (`reasoning_echo`, see below), and the context window of the model with the context the agents work with (`context_window`, `context_tokens`, see below). The credential file is read at each call, so changing it takes effect on the next call |
 | `[tools]` | The tools of the projects: a directory of the machine mounted read-only at `/opt/project-tools` in every turn and every sandbox (see [the tools of a project](#the-tools-of-a-project)) |
 | `[notifications]` | Where the hub posts its signed notifications to the main agent, and the shared secret that signs them ([docs/webhooks.md](webhooks.md), [docs/notifications.md](notifications.md)); set both keys, or neither: both empty turn the notifications off |
 | `[continuity]` | The escalation ladder of a task without activity (US-E7-01): how long before the instance is woken and restarted, how many restarts before the main agent is alerted, the delay the main agent has before the human is alerted, and how many FAIL decisions in a row on one project alert the main agent (`rejections`, EXG-23) |
@@ -63,6 +63,38 @@ gateway.upstream_model: 'claude-opus-5-5' is not one of gateway.models (deepseek
 ```
 
 The policy holds only as long as nobody else edits the table: keep it in a file that only you can change, outside the repository ([a run with real models](real-test.md)).
+
+## The reasoning of the model
+
+A thinking model gives its reasoning with each answer (`reasoning_content`, beside the content and the tool calls), and providers disagree on what to do with it next. DeepSeek in thinking mode wants it back: a conversation whose assistant message with tool calls comes without its reasoning is refused (HTTP 400, "The `reasoning_content` in the thinking mode must be passed back to the API"). A strict OpenAI-compatible provider refuses the field on any message, even empty. `gateway.reasoning_echo` says which kind the provider is ([ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)):
+
+- `true`: the gateway sends every assistant message to the provider with its reasoning, and a message that has none (an answer that came without reasoning, or an engine that dropped it) with a single space, which DeepSeek accepts where it refuses an empty text. Each turn tells its engine to keep the reasoning in the conversation it sends again: `model.reasoning_echo` for Hermes, the `interleaved` field of the model for OpenCode, whatever the model is named behind the gateway.
+- `false`: no message goes to the provider with the field, and the engines keep no reasoning.
+- Unset: `true` when the model at the provider (`gateway.upstream_model`, or `gateway.model` when that is unset) holds `deepseek`, `kimi` or `mimo`, or the provider's host is that of DeepSeek, Kimi (Moonshot) or MiMo; `false` otherwise, and always `false` with the stub. The name instances ask for (`gateway.model`, `"served-model"` in these examples) does not count when `upstream_model` is set.
+
+The gateway always gives the instance the reasoning of an answer, whole or streamed. Set the key when the provider is one the rule does not know: a DeepSeek model served under another name wants `true`; a DeepSeek or Kimi model at a strict host (some resellers of open models; Hermes itself recognises Kimi by its host alone for that reason) wants `false`.
+
+## The context of the agents
+
+The agents of both sides work with the whole context window of the model ([ADR 0033](decisions/0033-the-agents-work-with-the-context-of-the-model.md)). Neither engine can know it from the name the model has behind the gateway, so the operator declares it:
+
+```toml
+[gateway]
+context_window = 1000000   # the window of the model, as its provider gives it
+context_tokens = 400000    # optional: less of it for the agents (400 000 or 256 000, never below)
+```
+
+`context_window` is 256 000 when unset, and 64 000 at least (the smallest window the pinned Hermes Agent starts with). `context_tokens` is the whole window when unset, and never more than the window. Both engines compact the conversation at the same point: `context_tokens`, or the window less a margin of a tenth of it (32 000 tokens at least) when that comes first. The margin keeps room for the answer of the model and the results of its tools, so that the provider never refuses a call for its length. Hermes takes the window as `model.context_length` and the point as `compression.threshold_tokens`; OpenCode takes the window as the context of its model, and an input limit 16 000 tokens above the point (the answer it reserves). `zephyros config check` prints the three figures.
+
+**Below 256 000 tokens, the hub warns.** A compaction point below 256 000 tokens, whether a smaller `context_tokens` or a model whose window leaves no more, is accepted. So is a real model whose window the file does not declare (the window is then a guess of 256 000, and the agents compact at 224 000). Both are said where they cannot be missed: by `zephyros config check`, which `scripts/deploy.sh up` runs before it starts anything; on the standard error of the hub and in its log at every start (`context.check`, with `below_floor`, `context_declared` and the warnings); and, for the floor, at the top of the evidence report of each delivery whose turns compacted below it (CONTEXT BELOW THE FLOOR). Below 256 000 tokens, a long task loses the thread of its work: compactions repeat and the agent re-reads what it already knew. With the stub there is no model, and nothing is said. Each start of a turn records the figures (`turn.start`: `context_window`, `context_tokens`, `compaction_tokens`).
+
+**How large a conversation the gateway takes.** The gateway takes a request of 8 bytes a token of the window, plus 1 MiB for the system prompt and the definitions of the tools. That is twice the 3.9 bytes a token measured on the JSON of a real conversation of 152 calls; the 25 tools of Hermes and its system prompt measured 55 000 bytes. It also takes one message per 64 tokens of the window (1 000 messages at least). A conversation at the compaction point passes, and keeps room for what a turn adds before the engine compacts. Whatever the window, a request stays below 16 MiB: parsing one takes about twice its size, and the hub (512 MiB) may serve several instances at once. That bound covers a window of about two million tokens; past it, the gateway refuses a larger request (413), and the operator should give the agents less with `context_tokens`.
+
+**Cost.** Each call sends the whole conversation, so a long context means more input tokens a call. A provider with a prompt cache bills the part of the conversation it has already seen at a fraction of the price. DeepSeek does, for example. A turn that appends to its conversation is mostly that part. Compaction breaks the cache: the summary is new text, billed in full, and so is everything after it, and writing it costs calls of its own. The evidence report and `gateway.call` give the tokens used.
+
+**Latency.** A call with a long conversation takes longer before its first token, more so when the cache misses. `gateway.timeout_seconds` bounds one answer and `limits.turn_seconds` a turn; raise them if long answers come close.
+
+Declare the window the provider gives, not more: past the real window, the provider refuses the calls, with a reason the log of the hub keeps (`gateway.call`).
 
 ## The agent of the Contractor
 
@@ -242,6 +274,7 @@ The schema document lists them (`x-zephyros-rules`):
 - a `sandbox` runner has its `kit_image`;
 - a Contractor that runs `opencode` has its image, `images.opencode`;
 - `gateway.simulation` runs only with the `stub` provider;
+- `gateway.context_tokens` is at most `gateway.context_window`;
 - the notifications have both their URL (http or https) and their secret (16 characters at least), or neither.
 
 ## Every key and its default
@@ -292,6 +325,9 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `gateway.upstream_model` | unset | a model name of the provider |
 | `gateway.models` | unset | one to eight model names; required with `openai-compatible` |
 | `gateway.session_header` | unset | a header name |
+| `gateway.reasoning_echo` | unset | `true` or `false`; unset follows the model at the provider and its host (see [the reasoning of the model](#the-reasoning-of-the-model)) |
+| `gateway.context_window` | `256000` | 64000 to 10000000 tokens: the window of the model (see [the context of the agents](#the-context-of-the-agents)); with a real model, the hub warns when it is not declared; the gateway takes conversations as large as it, within 16 MiB |
+| `gateway.context_tokens` | unset | 32000 to 10000000 tokens, at most `gateway.context_window`; unset is the whole window; a compaction point below 256 000 is accepted with a warning |
 | `gateway.timeout_seconds` | `600` | 10 to 3600 |
 | `gateway.simulation` | `false` | `true` or `false` |
 | `forge.provider` | `"none"` | `none`, `directory` or `github` |
@@ -312,6 +348,6 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 
 ## Versions
 
-1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029); 1.17.0 added `[tools]` and raised the bound of `verification.timeout_seconds` from 3 600 to 86 400 (ADR 0030).
+1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029); 1.17.0 added `[tools]` and raised the bound of `verification.timeout_seconds` from 3 600 to 86 400 (ADR 0030); 1.18.0 added `gateway.reasoning_echo` (ADR 0032), `gateway.context_window` and `gateway.context_tokens` (ADR 0033).
 
 Each addition has a default, except one: since 1.8.0, an `openai-compatible` provider needs `gateway.models`, so a file older than 1.8.0 that uses one must add it. Since 1.15.0, a file that binds the operator channel or the main-agent endpoint to `0.0.0.0` is refused: write `"core"` for a hub in a container. Any other 1.x file still reads.

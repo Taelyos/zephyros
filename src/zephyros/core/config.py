@@ -11,7 +11,15 @@ import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import urlsplit
 
+from zephyros.core.context import (
+    CONTEXT_FLOOR,
+    DEFAULT_CONTEXT,
+    DEFAULT_CONTEXT_WINDOW,
+    MINIMUM_CONTEXT_WINDOW,
+    AgentContext,
+)
 from zephyros.core.schema import (
     CORE_ADDRESS,
     Array,
@@ -27,7 +35,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.17.0"
+CONFIG_SCHEMA_VERSION = "1.18.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -497,6 +505,35 @@ def _gateway() -> Table:
                 default=None,
             ),
             Field(
+                "reasoning_echo",
+                Flag(),
+                "Send the reasoning of the model back to the provider with the conversation, on "
+                "every assistant message, when it is openai-compatible: a thinking model such "
+                "as DeepSeek refuses a conversation without it, a strict provider one with it. "
+                "Unset, it is true when the model at the provider (its name holds deepseek, kimi "
+                "or mimo) or its host is of a family that asks for it (DeepSeek, Kimi, MiMo), "
+                "false otherwise (ADR 0032)",
+                default=None,
+            ),
+            Field(
+                "context_window",
+                Integer(MINIMUM_CONTEXT_WINDOW, 10_000_000),
+                "The context window of the model the gateway serves, in tokens, as its provider "
+                "gives it: the agents work with all of it unless gateway.context_tokens says "
+                "less, and compact early enough that the provider never refuses a call for its "
+                "length (ADR 0033)",
+                default=DEFAULT_CONTEXT_WINDOW,
+            ),
+            Field(
+                "context_tokens",
+                Integer(32_000, 10_000_000),
+                "The context the agents work with, in tokens, when less than the window of the "
+                "model: for a model of a million tokens, 400 000 or 256 000. Below "
+                f"{CONTEXT_FLOOR} it is accepted with a warning at every start and in every "
+                "evidence report. Unset, the whole window",
+                default=None,
+            ),
+            Field(
                 "timeout_seconds",
                 Integer(10, 3600),
                 "How long the gateway waits for one answer of the provider, in seconds, when it is "
@@ -584,6 +621,47 @@ def _verification() -> Table:
 def _flag(table: Mapping[str, object], key: str) -> bool:
     value = table[key]
     return value if isinstance(value, bool) else False
+
+
+# The model families whose thinking mode wants its reasoning back, as the pinned Hermes Agent
+# knows them (ADR 0032): by a part of the model name at the provider, or by the provider's host.
+# Kimi by its name too, where Hermes goes by the host alone: some resellers of Kimi refuse the
+# field, and gateway.reasoning_echo = false is then the way.
+REASONING_ECHO_MODELS = ("deepseek", "kimi", "mimo")
+REASONING_ECHO_HOSTS = (
+    "api.deepseek.com",
+    "api.kimi.com",
+    "moonshot.ai",
+    "moonshot.cn",
+    "xiaomimimo.com",
+)
+
+
+def reasoning_echo_default(upstream_model: str, upstream_url: str | None) -> bool:
+    """Whether the provider wants the reasoning back when gateway.reasoning_echo is unset: the
+    name of the model at the provider, never the one instances ask for, or the host."""
+    model = upstream_model.lower()
+    host = (urlsplit(upstream_url).hostname or "") if upstream_url else ""
+    return any(part in model for part in REASONING_ECHO_MODELS) or any(
+        host == known or host.endswith("." + known) for known in REASONING_ECHO_HOSTS
+    )
+
+
+def _reasoning_echo(gateway: Mapping[str, object]) -> bool:
+    value = gateway.get("reasoning_echo")
+    if isinstance(value, bool):
+        return value
+    if gateway.get("provider") != "openai-compatible":
+        return False
+    upstream = gateway.get("upstream_model", gateway.get("model"))
+    url = gateway.get("upstream_url")
+    return reasoning_echo_default(str(upstream or ""), url if isinstance(url, str) else None)
+
+
+def _raw_table(data: object, key: str) -> Mapping[str, object]:
+    """A table as the file wrote it, before the defaults."""
+    table = data.get(key) if isinstance(data, Mapping) else None
+    return cast("Mapping[str, object]", table) if isinstance(table, Mapping) else {}
 
 
 def _int(table: Mapping[str, object], key: str) -> int:
@@ -686,6 +764,21 @@ def _rule_simulation(data: Mapping[str, object]) -> list[Problem]:
             Problem(
                 "gateway.simulation",
                 "runs only with the stub provider: a real provider is not a simulation",
+            )
+        ]
+    return []
+
+
+def _rule_context(data: Mapping[str, object]) -> list[Problem]:
+    """The agents cannot work with more context than the model has (ADR 0033)."""
+    gateway = _section(data, "gateway")
+    tokens, window = gateway.get("context_tokens"), gateway.get("context_window")
+    if isinstance(tokens, int) and isinstance(window, int) and tokens > window:
+        return [
+            Problem(
+                "gateway.context_tokens",
+                f"{tokens} is more than the window of the model (gateway.context_window, "
+                f"{window}): the provider would refuse the calls",
             )
         ]
     return []
@@ -859,6 +952,10 @@ SCHEMA = Schema(
             _rule_simulation,
         ),
         Rule(
+            "gateway.context_tokens is at most gateway.context_window",
+            _rule_context,
+        ),
+        Rule(
             "notifications.url and notifications.secret are set together, the url is http(s), "
             "and the secret is at least 16 characters",
             _rule_notifications,
@@ -944,6 +1041,16 @@ class GatewayConfig:
     session_header: str | None
     simulation: bool
     timeout_seconds: int = 600
+    reasoning_echo: bool = False
+    context: AgentContext = DEFAULT_CONTEXT
+    """The window of the model and the context the agents work with (ADR 0033)."""
+    context_declared: bool = False
+    """Whether the file names gateway.context_window: if not, the window is a guess."""
+
+    @property
+    def context_warnings(self) -> list[str]:
+        """What the operator is told about the context of the agents (ADR 0033)."""
+        return self.context.warnings(declared=self.context_declared, model=self.provider != "stub")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1102,6 +1209,12 @@ def parse_config(data: object) -> Config:
             credential_file=cast("str | None", gateway.get("credential_file")),
             session_header=cast("str | None", gateway.get("session_header")),
             timeout_seconds=_int(gateway, "timeout_seconds"),
+            reasoning_echo=_reasoning_echo(gateway),
+            context=AgentContext(
+                _int(gateway, "context_window"),
+                cast("int", gateway.get("context_tokens", gateway["context_window"])),
+            ),
+            context_declared="context_window" in _raw_table(data, "gateway"),
         ),
         forge=ForgeConfig(
             provider=cast("str", forge["provider"]),

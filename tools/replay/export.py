@@ -696,9 +696,17 @@ def _turn_side(actor: str, data: Mapping[str, Any]) -> str:
     return label(str(data.get("side") or actor))
 
 
+def _new_session(data: Mapping[str, Any]) -> str:
+    """Said of a turn the operator started in a new session of the instance (ADR 0016)."""
+    return ", in a new session" if data.get("session") == "new" else ""
+
+
 def _instance_start(actor: str, _outcome: str, data: dict[str, Any]) -> str:
     chars = plural(data.get("prompt_chars", "?"), "prompt char")
-    return f"{label(actor)} starts the {_turn_side(actor, data)} instance ({chars})"
+    return (
+        f"{label(actor)} starts the {_turn_side(actor, data)} instance ({chars}"
+        f"{_new_session(data)})"
+    )
 
 
 def _instance_stop(actor: str, _outcome: str, data: dict[str, Any]) -> str:
@@ -709,7 +717,7 @@ def _turn_start(actor: str, outcome: str, data: dict[str, Any]) -> str:
     if outcome == OUTCOME_ERROR:
         return f"{_turn_side(actor, data)} turn cannot start: {_failure(data)}"
     chars = plural(data.get("prompt_chars", "?"), "prompt char")
-    return f"{_turn_side(actor, data)} turn begins ({chars})"
+    return f"{_turn_side(actor, data)} turn begins ({chars}{_new_session(data)})"
 
 
 def _turn_end(actor: str, outcome: str, data: dict[str, Any]) -> str:

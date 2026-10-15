@@ -22,13 +22,36 @@ model = "served-model"                 # the name the instances ask for
 upstream_model = "deepseek-v4.1-flash" # what the gateway sends to the provider
 models = ["deepseek-v4.1-flash"]       # the models the gateway may send: this one alone
 session_header = "x-opencode-session"
+reasoning_echo = true                  # DeepSeek wants its reasoning back (see below)
+context_window = 1000000               # the window of the model, as the provider gives it
 simulation = false
 ```
+
+`context_window` is the context window of the model, as its provider gives it: the agents work
+with all of it, and compact a tenth before its end
+([the context of the agents](configuration.md#the-context-of-the-agents), [ADR 0033](decisions/0033-the-agents-work-with-the-context-of-the-model.md)).
+Declare the provider's figure. `context_tokens` gives the agents less of it (400 000 or 256 000
+for a model of a million tokens). Below 256 000 the hub accepts it and warns, at
+`deploy.sh up`, at every start and in each evidence report: below 256 000 tokens, a long task
+loses the thread of its work, as compactions repeat and the agent re-reads what it already knew.
+Without the line, the hub warns too: the window would be a guess.
 
 `session_header` names the session header the provider asks for — OpenCode Go refuses a call
 without `x-opencode-session` (HTTP 400), and the gateway sends one stable session name per
 process. A provider that asks for none: leave it unset. `timeout_seconds` (600 by default) is how
 long the gateway waits for one answer: a long answer of a real model takes minutes.
+
+`reasoning_echo` sends the reasoning of the model back to the provider with the conversation.
+DeepSeek in thinking mode refuses a conversation whose assistant message with tool calls comes
+without its reasoning (HTTP 400, "The `reasoning_content` in the thinking mode must be passed back
+to the API"); a strict provider refuses one that carries the field. Unset, the hub decides from
+the model at the provider and its host, never from the name the instances ask for: the table
+above would get `true` without the line, which says it in so many words. With it, the gateway
+pads an assistant message that has no reasoning with a single space, and every turn tells its
+engine (Hermes or OpenCode) to keep the reasoning of each answer, under any name
+([configuration](configuration.md#the-reasoning-of-the-model), [ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)).
+Before it, a real run lost every Owner turn whose model answered two tool calls without
+reasoning: the next call was refused, and the turn ended in an error.
 
 Rules the schema enforces: `upstream_url` and `credential_file` are set; the model the gateway
 sends is one of `gateway.models`; `simulation = true` runs only with the stub (a real provider is
@@ -124,6 +147,10 @@ instead, so the variables always resolve.
 5. **The Contractor side**: `instance.start` with `"side": "contractor"` and the task. From here
    the real agents work: they call the hub's tools (MCP), fetch the staging base, push a branch
    and declare the delivery.
+
+   Each turn of a side continues its conversation. If one has gone wrong, start the next turn of
+   that side in a new session: `"session": "new"` in `instance.start` (the operator alone; see
+   [running](running.md)).
 
 6. **The hub decides.** It replays the acceptance tests in a sandbox, computes the gate, writes
    the evidence report and opens the pull request on the forge. On GitHub, the pull request opens

@@ -6,6 +6,9 @@ these types and back. The provider never sees a project token.
 
 Version 0.x. No streaming: a provider answers whole, and the gateway streams a whole answer to
 a client that asks for a stream.
+
+Version 0.2: an assistant message can carry the reasoning of the model (`reasoning`), the text a
+thinking model gives before its answer, which some providers want back with the conversation.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-INTERFACE_VERSION = "0.1.0"
+INTERFACE_VERSION = "0.2.0"
 
 
 class ModelProviderError(Exception):
@@ -53,10 +56,14 @@ class ChatMessage:
     content: str | None = None
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    reasoning: str | None = None
+    """What a thinking model reasoned before this answer, when it says (assistant only)."""
 
     def __post_init__(self) -> None:
         if self.role is not Role.ASSISTANT and self.tool_calls:
             raise ValueError("only an assistant message can carry tool calls")
+        if self.role is not Role.ASSISTANT and self.reasoning is not None:
+            raise ValueError("only an assistant message carries the reasoning of the model")
         if self.role is Role.TOOL:
             if not self.tool_call_id or self.content is None:
                 raise ValueError("a tool message needs a tool call identifier and a content")

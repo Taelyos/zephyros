@@ -2,7 +2,9 @@
 
 An instance sends a chat conversation in the OpenAI wire format with its project token. The
 gateway checks the token's rights, translates the conversation into the types of the
-`ModelProvider` interface, asks the provider, and translates the answer back. The model
+`ModelProvider` interface, asks the provider, and translates the answer back. The reasoning of a
+thinking model (`reasoning_content`) goes both ways: to the instance with the answer, and back
+to the provider with the conversation, where the provider decides what to send (ADR 0032). The model
 credential lives behind the provider and nowhere else: it is never part of a request, an
 answer, an error or a log record. Every call leaves one record naming the instance, the model
 and the tokens used.
@@ -33,10 +35,48 @@ from zephyros.core.ports.model_provider import (
 )
 from zephyros.core.rights import decide
 
-MAX_MESSAGES = 1000
 MAX_TOOLS = 256
-MAX_CHARACTERS = 1_000_000
 REDACTED = "[redacted]"
+
+# How large a conversation the gateway takes follows the context window of the model (ADR 0033):
+# a conversation at the point where the engines compact must pass, and some more.
+BYTES_PER_TOKEN = 8
+"""The bytes of a request per token of the window: twice the 3.9 bytes per token measured on the
+JSON of a real conversation (152 calls of a Contractor, tool calls and their results), for
+text that takes more bytes (escaped, not ASCII) and for the reasoning sent back."""
+FIXED_BYTES = 1024 * 1024
+"""For the system prompt and the definitions of the tools: 55 000 bytes for the 25 tools of
+Hermes, measured; the rest is room."""
+MIN_BODY = 1024 * 1024
+MAX_BODY = 16 * 1024 * 1024
+"""The bound of memory, whatever the window: parsing a request takes about twice its size, and
+the hub (512 MiB) may serve both sides of several projects at once. It covers a window of about
+two million tokens."""
+TOKENS_PER_MESSAGE = 64
+"""The fewest tokens a message is counted for, to bound how many a conversation may hold."""
+MIN_MESSAGES, MAX_MESSAGES = 1000, 100_000
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayLimits:
+    """How large a chat request the gateway takes: its body, the characters of its messages
+    (contents, reasoning and the arguments of tool calls) and how many messages."""
+
+    body_bytes: int = MIN_BODY
+    characters: int = 1_000_000
+    messages: int = MIN_MESSAGES
+
+    @classmethod
+    def for_window(cls, window: int) -> GatewayLimits:
+        """Large enough for a conversation that fills a context window of `window` tokens,
+        within the bound of memory."""
+        body = min(MAX_BODY, max(MIN_BODY, window * BYTES_PER_TOKEN + FIXED_BYTES))
+        messages = min(MAX_MESSAGES, max(MIN_MESSAGES, window // TOKENS_PER_MESSAGE))
+        return cls(body_bytes=body, characters=body, messages=messages)
+
+
+DEFAULT_LIMITS = GatewayLimits()
+"""The limits of a gateway built without a window, as they were before ADR 0033."""
 
 
 class CredentialSource(Protocol):
@@ -114,6 +154,15 @@ def _tool_call(raw: object, where: str) -> ToolCall:
     return ToolCall(identifier, name, arguments)
 
 
+def _reasoning_of(raw: Mapping[str, object], where: str) -> str | None:
+    """The reasoning an assistant message carries back, if any. Another type is refused rather
+    than dropped: the provider that asks for the field would refuse the call for it anyway."""
+    reasoning = raw.get("reasoning_content")
+    if reasoning is None or isinstance(reasoning, str):
+        return reasoning
+    raise GatewayError(400, "invalid_message", f"{where}: reasoning_content is a text")
+
+
 _ROLES = {
     "system": Role.SYSTEM,
     "developer": Role.SYSTEM,
@@ -136,13 +185,15 @@ def _message(raw: object, index: int) -> ChatMessage:
         if role is Role.TOOL:
             return ChatMessage(role, content, tool_call_id=str(raw.get("tool_call_id") or ""))
         if role is Role.ASSISTANT:
-            return ChatMessage(role, content, calls)
+            return ChatMessage(role, content, calls, reasoning=_reasoning_of(raw, where))
         return ChatMessage(role, content)
     except ValueError as error:
         raise GatewayError(400, "invalid_message", f"{where}: {error}") from error
 
 
-def parse_chat_request(body: object, *, model: str) -> ModelRequest:
+def parse_chat_request(
+    body: object, *, model: str, limits: GatewayLimits = DEFAULT_LIMITS
+) -> ModelRequest:
     """The conversation of an OpenAI chat request. Unknown top-level fields are ignored; the
     structure of messages and tools is not."""
     if not isinstance(body, Mapping):
@@ -154,11 +205,14 @@ def parse_chat_request(body: object, *, model: str) -> ModelRequest:
     raw_messages = body.get("messages")
     if not isinstance(raw_messages, list) or not raw_messages:
         raise GatewayError(400, "invalid_request", "messages is a non-empty list")
-    if len(raw_messages) > MAX_MESSAGES:
-        raise GatewayError(400, "too_many_messages", f"at most {MAX_MESSAGES} messages")
+    if len(raw_messages) > limits.messages:
+        raise GatewayError(400, "too_many_messages", f"at most {limits.messages} messages")
     messages = tuple(_message(raw, index) for index, raw in enumerate(raw_messages))
-    size = sum(len(m.content or "") + sum(len(c.arguments) for c in m.tool_calls) for m in messages)
-    if size > MAX_CHARACTERS:
+    size = sum(
+        len(m.content or "") + len(m.reasoning or "") + sum(len(c.arguments) for c in m.tool_calls)
+        for m in messages
+    )
+    if size > limits.characters:
         raise GatewayError(413, "too_large", "the conversation is too large")
     raw_tools = body.get("tools") or []
     if not isinstance(raw_tools, list) or len(raw_tools) > MAX_TOOLS:
@@ -190,6 +244,8 @@ def render_chat_response(
 ) -> dict[str, Any]:
     message = response.message
     rendered: dict[str, Any] = {"role": "assistant", "content": message.content}
+    if message.reasoning:
+        rendered["reasoning_content"] = message.reasoning
     if message.tool_calls:
         rendered["tool_calls"] = [
             {
@@ -235,6 +291,8 @@ def render_stream(completion: Mapping[str, Any], *, include_usage: bool) -> list
 
     message = choice["message"]
     events = [event({"role": "assistant", "content": ""})]
+    if message.get("reasoning_content"):
+        events.append(event({"reasoning_content": message["reasoning_content"]}))
     if message.get("tool_calls"):
         events.append(
             event(
@@ -272,11 +330,14 @@ class GatewayService:
         provider: ModelProvider,
         model: str,
         credentials: CredentialSource | None = None,
+        limits: GatewayLimits = DEFAULT_LIMITS,
     ) -> None:
         self._audit = audit
         self._provider = provider
         self._model = model
         self._credentials = credentials
+        self.limits = limits
+        """How large a request it takes; the listener bounds the body with it."""
 
     def _secrets(self) -> list[str]:
         return self._credentials.secrets() if self._credentials is not None else []
@@ -305,7 +366,7 @@ class GatewayService:
                 403, "forbidden", "this caller has no access to the model gateway", decision.reason
             )
         try:
-            request = parse_chat_request(body, model=self._model)
+            request = parse_chat_request(body, model=self._model, limits=self.limits)
         except GatewayError as error:
             self._log(
                 caller, Outcome.REFUSED, error.reason, {"detail": str(error), "code": error.code}

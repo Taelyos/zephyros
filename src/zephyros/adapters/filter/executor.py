@@ -123,8 +123,23 @@ class Executor:
                 if secret:
                     message = message.replace(secret, "[redacted]")
             raise BrokerError("runtime_error", message) from None
-        self._journal.record("done", request.op.value, "ok", **self._subject(request))
+        self._journal.record(
+            "done", request.op.value, "ok", **self._subject(request), **self._applied(request)
+        )
         return result
+
+    def _applied(self, request: Request) -> dict[str, str]:
+        """For a turn, what the filter gave it from its own configuration and the request: the
+        log of the hub records what the hub meant, this what the turn got (ADR 0033)."""
+        if request.op is not Op.TURN_START:
+            return {}
+        context = self._policy.context
+        return {
+            "session": "new" if request.session == "new" else "continue",
+            "context_window": str(context.window),
+            "compaction_tokens": str(context.compaction),
+            "reasoning_echo": "true" if self._policy.reasoning_echo else "false",
+        }
 
     @staticmethod
     def _subject(request: Request) -> dict[str, str]:
@@ -329,6 +344,7 @@ class Executor:
             self._hub_address(project_id, side),
             str(request.token),
             str(request.prompt),
+            new_session=request.session == "new",
         )
         check_spec(spec, Role.TURN, self._policy)
         name = turn_name(project_id, side)

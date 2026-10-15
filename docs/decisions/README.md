@@ -19,7 +19,7 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0013 | [Tokens are opaque, bound to their instance and checked against server-side records](0013-opaque-server-side-tokens.md) | Accepted; in part replaced by 0016 |
 | 0014 | [The container filter is a typed broker, not a pass-through proxy](0014-container-filter-as-typed-broker.md) | Accepted |
 | 0015 | [Each instance has its own network and a network guard that enforces egress](0015-per-instance-networks-with-a-network-guard.md) | Accepted; revised by 0027 |
-| 0016 | [An instance is its network guard and its volumes; each agent container is one turn](0016-one-agent-container-per-turn.md) | Accepted |
+| 0016 | [An instance is its network guard and its volumes; each agent container is one turn](0016-one-agent-container-per-turn.md) | Accepted; amended (Proposed) for a new session |
 | 0017 | [A verification runner runs one verification kit; the method does not change with the project](0017-verification-runner-and-kits.md) | Accepted |
 | 0018 | [An instance resolves names through configured resolvers, never through the host's resolver chain](0018-instance-name-resolution.md) | Accepted |
 | 0019 | [An anchor for the log head, outside the store](0019-anchor-outside-the-store.md) | Accepted |
@@ -31,5 +31,8 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0026 | [A lifetime and a rotation for the operator and main-agent tokens](0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md) | Accepted |
 | 0027 | [The network guard runs without root; its one capability comes from nft](0027-the-network-guard-runs-without-root.md) | Accepted |
 | 0028 | [The contract of a project is stored in SQLite, as immutable versions](0028-the-contract-of-a-project-is-stored-in-sqlite.md) | Accepted |
-| 0029 | [The Contractor can be a third-party coding agent](0029-the-contractor-can-be-a-third-party-coding-agent.md) | Accepted |
+| 0029 | [The Contractor can be a third-party coding agent](0029-the-contractor-can-be-a-third-party-coding-agent.md) | Accepted; its compaction revised by 0033 |
 | 0030 | [The tools of a project are mounted read-only, on both sides and at the gate](0030-the-tools-of-a-project-are-mounted-read-only.md) | Accepted |
+| 0031 | [The agent has every power inside its instance](0031-the-agent-has-every-power-inside-its-instance.md) | Accepted |
+| 0032 | [The gateway carries the reasoning of the model, and the configuration says whether it goes back](0032-the-gateway-carries-the-reasoning-of-the-model.md) | Accepted |
+| 0033 | [The agents work with the context of the model](0033-the-agents-work-with-the-context-of-the-model.md) | Accepted |

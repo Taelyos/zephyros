@@ -351,3 +351,76 @@ def test_a_service_without_credentials_still_serves() -> None:
         run(service.complete(env.callers["owner_a"], {**HERMES_REQUEST, "stream": False})).stream
         is False
     )
+
+
+# ----------------------------------------------------------------------------- reasoning (ADR 0032)
+def test_the_reasoning_an_engine_sends_back_reaches_the_provider() -> None:
+    body = {
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "go"},
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "I should look.",
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "terminal"}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+            {"role": "assistant", "content": "done"},
+        ],
+    }
+    request = parse_chat_request(body, model=MODEL)
+    assert [m.reasoning for m in request.messages] == [None, "I should look.", None, None]
+
+
+def test_a_reasoning_that_is_not_a_text_is_refused() -> None:
+    body = {
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "x", "reasoning_content": {"text": "no"}},
+        ],
+    }
+    with pytest.raises(GatewayError) as caught:
+        parse_chat_request(body, model=MODEL)
+    assert caught.value.code == "invalid_message"
+
+
+def test_the_reasoning_counts_in_the_size_of_the_conversation() -> None:
+    body = {
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "x", "reasoning_content": "r" * 1_000_000},
+        ],
+    }
+    with pytest.raises(GatewayError) as caught:
+        parse_chat_request(body, model=MODEL)
+    assert caught.value.status == 413
+
+
+def test_the_reasoning_of_an_answer_reaches_the_instance_whole_and_streamed() -> None:
+    answer = ModelResponse(
+        MODEL,
+        ChatMessage(
+            Role.ASSISTANT, None, (ToolCall("c1", "terminal", "{}"),), reasoning="Look first."
+        ),
+        Usage(3, 4),
+    )
+    completion = render_chat_response(answer, created=1, identifier="chatcmpl-1")
+    assert completion["choices"][0]["message"]["reasoning_content"] == "Look first."
+    deltas = [
+        json.loads(event.removeprefix("data: "))["choices"][0]["delta"]
+        for event in render_stream(completion, include_usage=False)[:-1]
+    ]
+    assert {"reasoning_content": "Look first."} in deltas
+    assert [i for i, d in enumerate(deltas) if "reasoning_content" in d] < [
+        i for i, d in enumerate(deltas) if "tool_calls" in d
+    ]
+
+
+def test_an_answer_without_reasoning_carries_no_field() -> None:
+    answer = ModelResponse(MODEL, ChatMessage(Role.ASSISTANT, "hi"), Usage(1, 1))
+    completion = render_chat_response(answer, created=1, identifier="chatcmpl-1")
+    assert "reasoning_content" not in completion["choices"][0]["message"]
+    assert all("reasoning_content" not in e for e in render_stream(completion, include_usage=False))

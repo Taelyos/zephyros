@@ -55,18 +55,19 @@ def from_instance_network(request: Request, pool: str | None) -> bool:
     return address.version == network.version and address in network
 
 
-async def read_json(request: Request) -> object:
+async def read_json(request: Request, max_body: int = MAX_BODY) -> object:
+    """The JSON body of `request`, of `max_body` bytes at most."""
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
     if content_type != "application/json":
         shown = content_type[:40] if content_type.isascii() and content_type.isprintable() else "?"
         raise BodyError(415, f"the body must be application/json, not {shown or 'none'}")
     declared = request.headers.get("content-length")
-    if declared is not None and (not declared.isdigit() or int(declared) > MAX_BODY):
+    if declared is not None and (not declared.isdigit() or int(declared) > max_body):
         raise BodyError(413, "the body is too large")
     received = bytearray()
     async for chunk in request.stream():
         received.extend(chunk)
-        if len(received) > MAX_BODY:
+        if len(received) > max_body:
             raise BodyError(413, "the body is too large")
     try:
         return json.loads(bytes(received))

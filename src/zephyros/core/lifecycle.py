@@ -37,6 +37,7 @@ from zephyros.core.broker import Broker, BrokerError, ContainerInfo
 from zephyros.core.clock import Clock, format_time
 from zephyros.core.config import DEFAULT_EGRESS, Config
 from zephyros.core.containers import Role, VolumeKind, guard_address
+from zephyros.core.context import DEFAULT_CONTEXT, AgentContext
 from zephyros.core.continuity import RESTART, WAKE, Continuity
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import (
@@ -73,6 +74,8 @@ class Timing:
     pool: str
     prefix: int
     egress: str = DEFAULT_EGRESS
+    context: AgentContext = DEFAULT_CONTEXT
+    """The context the agents work with, recorded at each start of a turn (ADR 0033)."""
 
     @classmethod
     def from_config(cls, config: Config) -> Timing:
@@ -86,6 +89,7 @@ class Timing:
             pool=config.network.instance_pool,
             prefix=config.network.instance_prefix,
             egress=config.network.egress,
+            context=config.gateway.context,
         )
 
 
@@ -122,6 +126,7 @@ class _Job:
     kind: str
     key: Key
     prompt: str | None = field(default=None, repr=False)
+    new_session: bool = False
 
 
 class _CancelledError(Exception):
@@ -165,7 +170,9 @@ class InstanceManager:
         self._reconciled = False
 
     # ------------------------------------------------------------------ InstanceControl
-    def start(self, project_id: str, side: Side, prompt: str) -> InstanceInfo:
+    def start(
+        self, project_id: str, side: Side, prompt: str, *, new_session: bool = False
+    ) -> InstanceInfo:
         key = (project_id, side)
         with self._wake:
             if not self._reconciled:
@@ -181,7 +188,7 @@ class InstanceManager:
                 self._live[key] = live
             else:
                 live.phase = InstanceState.STARTING
-            self._jobs.append(_Job("start", key, prompt))
+            self._jobs.append(_Job("start", key, prompt, new_session))
             self._wake.notify()
             return self._info_locked(key)
 
@@ -256,7 +263,7 @@ class InstanceManager:
             if live.record is None:
                 live.created_here = True
                 self._bring_up(live)
-            self._begin_turn(live, job.prompt)
+            self._begin_turn(live, job.prompt, new_session=job.new_session)
         except _CancelledError:
             return
         except NoFreeSubnetError:
@@ -306,7 +313,7 @@ class InstanceManager:
                 raise BrokerError("guard_timeout", "the network guard did not become healthy")
             self._sleep(1.0)
 
-    def _begin_turn(self, live: _Live, prompt: str) -> None:
+    def _begin_turn(self, live: _Live, prompt: str, *, new_session: bool = False) -> None:
         project_id, side = live.key
         record = live.record
         assert record is not None  # noqa: S101  # reason: set by _bring_up or by an earlier start
@@ -315,7 +322,7 @@ class InstanceManager:
         # turn finds when it starts; nothing measures them again at its end (ADR 0030).
         tools = None if self._tools is None else self._tools.digest()
         secret = self._token_for_turn(live, record)
-        self._broker.start_turn(project_id, side, secret, prompt)
+        self._broker.start_turn(project_id, side, secret, prompt, new_session=new_session)
         with self._lock:
             live.turn_started = self._clock.now()
             if live.phase is InstanceState.STARTING:
@@ -334,6 +341,10 @@ class InstanceManager:
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
             **({} if engine is None else {"engine": engine.name, "engine_version": engine.version}),
             **({} if tools is None else {"tools": tools.fingerprint}),
+            session="new" if new_session else "continue",
+            context_window=self._timing.context.window,
+            context_tokens=self._timing.context.tokens,
+            compaction_tokens=self._timing.context.compaction,
         )
         if self._timing.egress == "open":
             # An exception the operator wrote down (ADR 0024): said again at every start.

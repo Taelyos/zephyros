@@ -327,6 +327,107 @@ def test_a_gateway_serving_a_named_model_starts() -> None:
     assert config.gateway.models == ("deepseek-v4.1-flash",)
 
 
+# ----------------------------------------------------------------------------- reasoning (ADR 0032)
+def openai_gateway(**keys: object) -> dict[str, Any]:
+    document = with_value("gateway.provider", "openai-compatible")
+    document["gateway"].update(
+        {
+            "upstream_url": "https://provider.example.test/v1",
+            "credential_file": "/t/key",
+            "model": "served-model",
+            "models": [str(keys.get("upstream_model", "served-model"))],
+            **keys,
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize(
+    ("keys", "echo"),
+    [
+        ({"upstream_model": "deepseek-v4.1-flash"}, True),
+        ({"upstream_model": "DeepSeek-V4-Pro"}, True),
+        ({"upstream_model": "mimo-v2.5-pro"}, True),
+        ({"upstream_model": "Kimi-K2-Thinking"}, True),
+        ({"upstream_model": "plain-model"}, False),
+        ({}, False),  # served-model goes to the provider as it is
+        ({"upstream_url": "https://api.deepseek.com/v1"}, True),
+        ({"upstream_url": "https://api.moonshot.ai/v1"}, True),
+        ({"upstream_url": "https://notmoonshot.ai/v1"}, False),
+        ({"upstream_model": "deepseek-v4.1-flash", "reasoning_echo": False}, False),
+        ({"upstream_model": "plain-model", "reasoning_echo": True}, True),
+    ],
+)
+def test_the_reasoning_goes_back_to_a_provider_of_a_family_that_asks_for_it(
+    keys: dict[str, object], echo: bool
+) -> None:
+    """Unset, gateway.reasoning_echo follows the model at the provider or its host, never the
+    name instances ask for (served-model); set, it is what the file says."""
+    config = parse_config(openai_gateway(**keys))
+    assert config.gateway.model == "served-model"
+    assert config.gateway.reasoning_echo is echo
+
+
+def test_the_stub_takes_no_reasoning_back_unless_the_file_says_so() -> None:
+    assert parse_config(minimal()).gateway.reasoning_echo is False
+    named = with_value("gateway.model", "deepseek-v4-flash")
+    assert parse_config(named).gateway.reasoning_echo is False
+    assert parse_config(with_value("gateway.reasoning_echo", True)).gateway.reasoning_echo is True
+
+
+def test_the_reasoning_key_is_true_or_false() -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value("gateway.reasoning_echo", "yes"))
+    assert [problem.key for problem in caught.value.problems] == ["gateway.reasoning_echo"]
+
+
+# ----------------------------------------------------------------------------- context (ADR 0033)
+def test_the_agents_work_with_the_whole_declared_window() -> None:
+    config = parse_config(with_value("gateway.context_window", 1_000_000))
+    assert (config.gateway.context.window, config.gateway.context.tokens) == (1_000_000,) * 2
+    assert config.gateway.context.compaction == 900_000
+
+
+def test_without_a_declared_window_the_agents_have_256_000_tokens() -> None:
+    context = parse_config(minimal()).gateway.context
+    assert (context.window, context.tokens, context.compaction) == (256_000, 256_000, 224_000)
+
+
+def test_the_operator_may_give_the_agents_less_than_the_window() -> None:
+    document = with_value("gateway.context_window", 1_000_000)
+    document["gateway"]["context_tokens"] = 400_000
+    context = parse_config(document).gateway.context
+    assert (context.tokens, context.compaction) == (400_000, 400_000)
+
+
+def test_a_context_below_the_floor_is_accepted() -> None:
+    """Accepted, with a warning on every surface (tests/unit/app/test_context_warning.py)."""
+    document = with_value("gateway.context_window", 1_000_000)
+    document["gateway"]["context_tokens"] = 80_000
+    assert parse_config(document).gateway.context.below_floor
+
+
+def test_the_agents_cannot_have_more_than_the_window() -> None:
+    document = with_value("gateway.context_window", 128_000)
+    document["gateway"]["context_tokens"] = 256_000
+    with pytest.raises(ConfigError) as caught:
+        parse_config(document)
+    assert [str(problem) for problem in caught.value.problems] == [
+        "gateway.context_tokens: 256000 is more than the window of the model "
+        "(gateway.context_window, 128000): the provider would refuse the calls"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("context_window", 63_999), ("context_tokens", 31_999), ("context_window", "1M")],
+)
+def test_the_context_keys_are_token_counts_in_bounds(key: str, value: object) -> None:
+    with pytest.raises(ConfigError) as caught:
+        parse_config(with_value(f"gateway.{key}", value))
+    assert [problem.key for problem in caught.value.problems] == [f"gateway.{key}"]
+
+
 def test_the_notifications_are_read_as_written() -> None:
     document = with_value("notifications.url", "https://main.example.test/zephyros")
     document["notifications"]["secret"] = NOTIFICATION_SECRET
@@ -391,7 +492,7 @@ def test_the_published_schema_matches_the_specification() -> None:
     assert exported["x-zephyros-schema-version"] == CONFIG_SCHEMA_VERSION
     assert exported["required"] == ["schema_version", "images"]
     assert exported["additionalProperties"] is False
-    assert len(exported["x-zephyros-rules"]) == 11  # type: ignore[arg-type]  # reason: the export holds a list
+    assert len(exported["x-zephyros-rules"]) == 12  # type: ignore[arg-type]  # reason: the export holds a list
 
 
 def test_the_defaults_do_not_alias_the_schema() -> None:

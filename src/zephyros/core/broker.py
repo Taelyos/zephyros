@@ -62,6 +62,8 @@ class Request:
     token: str | None = field(default=None, repr=False)
     prompt: str | None = field(default=None, repr=False)
     since: int | None = None
+    session: str | None = None
+    """For a turn: "new" starts a new session of the instance; unset or "continue" goes on."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +131,11 @@ _SPECS: dict[Op, Table] = {
             Text(min_length=1, max_length=MAX_PROMPT, multiline=True),
             "The first prompt",
             required=True,
+        ),
+        Field(
+            "session",
+            Choice(("continue", "new")),
+            "Continue the session of the instance, or start a new one",
         ),
     ),
     Op.TURN_STOP: _op(Op.TURN_STOP, _PROJECT, _SIDE),
@@ -240,13 +247,14 @@ def parse_request(data: Mapping[str, Any]) -> Request:
         token=data.get("token"),
         prompt=data.get("prompt"),
         since=data.get("since"),
+        session=data.get("session"),
     )
 
 
 def request_to_json(request: Request) -> dict[str, Any]:
     """The body for a request, as the hub sends it."""
     body: dict[str, Any] = {"op": request.op.value}
-    for name in ("project_id", "subnet", "token", "prompt", "since"):
+    for name in ("project_id", "subnet", "token", "prompt", "since", "session"):
         value = getattr(request, name)
         if value is not None:
             body[name] = value
@@ -328,7 +336,9 @@ class Broker(Protocol):
 
     def stop_guard(self, project_id: str, side: Side) -> None: ...
 
-    def start_turn(self, project_id: str, side: Side, token: str, prompt: str) -> None: ...
+    def start_turn(
+        self, project_id: str, side: Side, token: str, prompt: str, *, new_session: bool = False
+    ) -> None: ...
 
     def stop_turn(self, project_id: str, side: Side) -> None: ...
 

@@ -108,8 +108,19 @@ class FilterClient:
     def stop_guard(self, project_id: str, side: Side) -> None:
         self._send(Request(Op.GUARD_STOP, project_id, side))
 
-    def start_turn(self, project_id: str, side: Side, token: str, prompt: str) -> None:
-        self._send(Request(Op.TURN_START, project_id, side, token=token, prompt=prompt))
+    def start_turn(
+        self, project_id: str, side: Side, token: str, prompt: str, *, new_session: bool = False
+    ) -> None:
+        self._send(
+            Request(
+                Op.TURN_START,
+                project_id,
+                side,
+                token=token,
+                prompt=prompt,
+                session="new" if new_session else None,
+            )
+        )
 
     def stop_turn(self, project_id: str, side: Side) -> None:
         self._send(Request(Op.TURN_STOP, project_id, side))

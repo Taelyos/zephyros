@@ -360,6 +360,29 @@ def test_the_journal_records_each_request_without_a_token_or_a_prompt(world: Wor
     assert PROJECT in text
 
 
+def test_the_journal_records_what_a_turn_was_given(world: World) -> None:
+    """ADR 0033 and ADR 0016: what the filter applied, from its own configuration, beside what
+    the hub records in its log; a turn in a new session says so."""
+    world.up()
+    world.do(Op.TURN_START, project_id=PROJECT, side=Side.CONTRACTOR, token=TOKEN, prompt="a")
+    world.do(Op.TURN_STOP, project_id=PROJECT, side=Side.CONTRACTOR)
+    world.do(
+        Op.TURN_START,
+        project_id=PROJECT,
+        side=Side.CONTRACTOR,
+        token=TOKEN,
+        prompt="b",
+        session="new",
+    )
+    starts = [line for line in world.journal.lines if line["op"] == "turn.start"]
+    assert [line["session"] for line in starts] == ["continue", "new"]
+    assert starts[0]["context_window"] == str(POLICY.context.window)
+    assert starts[0]["compaction_tokens"] == str(POLICY.context.compaction)
+    assert starts[0]["reasoning_echo"] == "false"
+    other = [line for line in world.journal.lines if line["op"] == "turn.stop"]
+    assert all("session" not in line for line in other)
+
+
 def test_a_policy_violation_is_a_refusal_not_a_crash(world: World) -> None:
     assert (
         code_of(

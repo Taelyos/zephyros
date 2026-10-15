@@ -66,8 +66,11 @@ def test_every_call_is_one_post_of_a_request_the_filter_accepts() -> None:
     assert client.inspect(Role.GUARD, PROJECT, Side.OWNER) is None
     assert [c.address for c in client.list_containers()] == ["10.200.0.18"]
     assert client.events(5) == []
+    client.start_turn(PROJECT, Side.OWNER, TOKEN, "again", new_session=True)
     assert {(r.method, r.url.path) for r in seen} == {("POST", "/operation")}
-    assert len(seen) == 13
+    assert len(seen) == 14
+    turns = [json.loads(r.content) for r in seen if json.loads(r.content)["op"] == "turn.start"]
+    assert [turn.get("session") for turn in turns] == [None, "new"]
 
 
 def test_an_inspected_container_is_returned_as_data() -> None:

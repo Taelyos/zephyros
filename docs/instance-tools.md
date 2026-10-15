@@ -25,6 +25,8 @@ The instance image runs the pinned Hermes Agent (see ADR 0001 and the pin in `im
 
 The seed configuration disables tool search; no plugin, no kanban toolset, no shell hook and no MCP server other than the hub is configured. An instance may still install an extension of its own inside its container (ATK-77): that stays inside the container, and none of it is part of this list.
 
+Every tool runs without asking and without being refused ([ADR 0031](decisions/0031-the-agent-has-every-power-inside-its-instance.md)): a turn is a one-shot chat that nobody answers, and what protects is around the agent, not in it. The managed scope of the image (`images/instance/managed.yaml`, which the agent's own configuration cannot override) turns the approvals of Hermes off in every context a turn can be in: a command Hermes would flag (`python3 -c`, a here-document, `curl | sh`, a recursive delete), `execute_code`, and the writes of the file tools, `AGENTS.md` and `CLAUDE.md` included. The image also lets the file tools write outside the home of Hermes (`HERMES_WRITE_SAFE_ROOT` empty), so they write the work directory. What Hermes still refuses whatever its configuration: a few catastrophic commands (a recursive delete of `/`, of a system directory or of the home, formatting a file system, a fork bomb, stopping the machine), the deletion of its own interpreter, and a write by its file tools to its own configuration or to a system path; the shell can still do the last two where the user of the instance may write.
+
 To reproduce the list for a given instance image, run the engine's own offline report (no network call, no model):
 
 ```bash

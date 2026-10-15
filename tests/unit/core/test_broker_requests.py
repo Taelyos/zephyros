@@ -72,6 +72,21 @@ def test_values_become_typed() -> None:
     assert "zph_" not in repr(request)  # a token and a prompt stay out of a repr
 
 
+def test_a_turn_may_ask_for_a_new_session_and_nothing_else() -> None:
+    """ADR 0016: `session` is optional, "continue" or "new"; it survives the round trip."""
+    for session in ("new", "continue"):
+        request = parse_request({**body("turn.start"), "session": session})
+        assert request.session == session
+        assert parse_request(json.loads(json.dumps(request_to_json(request)))) == request
+    assert parse_request(body("turn.start")).session is None
+    wrong: tuple[object, ...] = ("fresh", "", 1, None)
+    for value in wrong:
+        with pytest.raises(BrokerError):
+            parse_request({**body("turn.start"), "session": value})
+    with pytest.raises(BrokerError):
+        parse_request({**body("turn.stop"), "session": "new"})
+
+
 @pytest.mark.parametrize("op", sorted(VALID))
 def test_a_missing_field_or_an_extra_field_is_refused(op: str) -> None:
     for name in VALID[op]:

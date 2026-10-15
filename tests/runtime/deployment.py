@@ -93,7 +93,26 @@ class Deployment:
                 docker("network", "rm", network_name(project, side), check=False)
                 for kind in VolumeKind:
                     docker("volume", "rm", volume_name(project, side, kind), check=False)
-        self.script("down", "--volumes", timeout=300)
+        # Its own compose project only: `deploy.sh down` also removes every container labelled
+        # as Zephyros's on the machine, the hub of another deployment among them.
+        state = Path(self.env["ZEPHYROS_STATE"])
+        compose = ["docker", "compose", "-f", str(ROOT / "deploy" / "compose.yaml")]
+        subprocess.run(  # noqa: S603  # reason: the compose file of the repository
+            [*compose, "down", "--volumes"],
+            env={
+                **self.env,
+                "ZEPHYROS_IMAGE": "unused",
+                "ZEPHYROS_CONFIG": "/dev/null",
+                "ZEPHYROS_FORGE_DIR": str(state),
+                "ZEPHYROS_GATEWAY_KEY_FILE": "/dev/null",
+                "ZEPHYROS_FORGE_TOKEN_FILE": "/dev/null",
+                "ZEPHYROS_TOOLS_DIR": str(state),
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
 
     def _wait_hub_healthy(self, seconds: float = 120) -> None:
         deadline = time.monotonic() + seconds
@@ -157,9 +176,24 @@ class Deployment:
         return [json.loads(line) for line in lines]
 
     # ------------------------------------------------------------------ turns
-    def turn(self, project_id: str, side: Side, prompt: str, seconds: float = 240) -> str:
-        """Start a turn and wait for its end. Returns how it ended."""
-        self.data("instance.start", project_id=project_id, side=side.value, prompt=prompt)
+    def turn(
+        self,
+        project_id: str,
+        side: Side,
+        prompt: str,
+        seconds: float = 240,
+        *,
+        session: str | None = None,
+    ) -> str:
+        """Start a turn, in a new session when `session` is "new", and wait for its end.
+        Returns how it ended."""
+        self.data(
+            "instance.start",
+            project_id=project_id,
+            side=side.value,
+            prompt=prompt,
+            **({} if session is None else {"session": session}),
+        )
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             status = self.data("instance.status", project_id=project_id, side=side.value)

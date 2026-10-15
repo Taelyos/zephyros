@@ -10,6 +10,12 @@ limit or file.
 
 Version 0.2: a turn takes its configuration from the image and its first prompt on the command
 line, as the pinned Hermes Agent does; the files of version 0.1 are gone.
+
+Version 0.3: a request says whether the model wants its reasoning back (`reasoning_echo`, from
+`gateway.reasoning_echo`), so that the engine keeps the reasoning of each answer in the
+conversation it sends again, whatever name the model has behind the gateway (ADR 0032); the
+context window of the model and the point where the engine compacts (ADR 0033); and whether
+the turn starts a new session of the instance instead of continuing the last one (ADR 0016).
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
-INTERFACE_VERSION = "0.2.0"
+INTERFACE_VERSION = "0.3.0"
 MAX_PROMPT = 4000
 
 
@@ -43,11 +49,22 @@ class TurnRequest:
     """The name of the model the instance asks the gateway for."""
     token: str = field(repr=False)
     prompt: str = field(repr=False)
+    reasoning_echo: bool = False
+    """Whether the model wants the reasoning of its answers back with the conversation."""
+    context_window: int = 256_000
+    """The context window of the model, in tokens."""
+    compaction_tokens: int = 224_000
+    """Where the engine compacts the conversation, in tokens: below the window."""
+    new_session: bool = False
+    """The turn starts a new session of the instance; the earlier ones stay, no longer
+    continued."""
 
     def __post_init__(self) -> None:
         for name in ("project_id", "agent_endpoint", "model", "token", "prompt"):
             if not getattr(self, name):
                 raise ValueError(f"{name} must not be empty")
+        if not 0 < self.compaction_tokens < self.context_window:
+            raise ValueError("the compaction comes before the end of the context window")
         if len(self.prompt) > MAX_PROMPT or "\x00" in self.prompt:
             raise ValueError("the prompt is too long or holds a NUL")
 

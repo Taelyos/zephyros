@@ -26,7 +26,7 @@ from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.clock import Clock, format_time
@@ -835,6 +835,7 @@ class DeliveryService:
             tools_of_turns=(
                 () if tools is None else self._tools_of_turns(project_id, record.delivery_id)
             ),
+            context_of_turns=self._context_of_turns(project_id, record.delivery_id),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)
@@ -994,6 +995,29 @@ class DeliveryService:
                 label = found if isinstance(found, str) and found else "none"
                 turns[label] = turns.get(label, 0) + 1
         return tuple(turns.items())
+
+    def _context_of_turns(
+        self, project_id: str, delivery_id: str
+    ) -> tuple[tuple[int, int, int, int], ...]:
+        """The context of the agents in the turns of both sides started before the delivery came
+        in (ADR 0033), each (context, window, compaction point, turns); a start that recorded
+        none is left out. Read from the first READ_RECORDS records of the log, as the cost is."""
+        turns: dict[tuple[int, int, int], int] = {}
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
+            if item.outcome is not Outcome.OK:
+                continue
+            parameters = json.loads(item.parameters)
+            if item.action is Action.DELIVERY_PUSH and parameters.get("delivery_id") == delivery_id:
+                break
+            if item.action is Action.TURN_START and item.principal == SYSTEM_PRINCIPAL:
+                figures = tuple(
+                    parameters.get(name)
+                    for name in ("context_tokens", "context_window", "compaction_tokens")
+                )
+                if all(isinstance(figure, int) for figure in figures):
+                    key = cast("tuple[int, int, int]", figures)
+                    turns[key] = turns.get(key, 0) + 1
+        return tuple((*key, count) for key, count in turns.items())
 
     def _record_event(
         self,

@@ -10,10 +10,15 @@ class FakeInstanceControl:
     def __init__(self) -> None:
         self._states: dict[tuple[str, Side], InstanceState] = {}
         self.prompts: list[tuple[str, Side, str]] = []
+        self.new_sessions: list[tuple[str, Side]] = []
 
-    def start(self, project_id: str, side: Side, prompt: str) -> InstanceInfo:
+    def start(
+        self, project_id: str, side: Side, prompt: str, *, new_session: bool = False
+    ) -> InstanceInfo:
         self._states[(project_id, side)] = InstanceState.TURN
         self.prompts.append((project_id, side, prompt))
+        if new_session:
+            self.new_sessions.append((project_id, side))
         return self.status(project_id, side)
 
     def stop(self, project_id: str, side: Side) -> InstanceInfo:

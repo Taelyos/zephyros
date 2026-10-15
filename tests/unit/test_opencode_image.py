@@ -24,6 +24,12 @@ FLAT = DOCKERFILE.replace("\\\n", " ")
 HUB = "http://10.200.0.19:8080"
 TOKEN = "zph_c_" + "T" * 43
 TURN = {"ZEPHYROS_HUB_URL": HUB, "ZEPHYROS_MODEL": "deepseek-v4.1-flash", "ZEPHYROS_TOKEN": TOKEN}
+ENTRYPOINT_SETS = {
+    "ZEPHYROS_REASONING_FIELD": "",
+    "ZEPHYROS_CONTEXT_WINDOW": "256000",
+    "ZEPHYROS_OPENCODE_INPUT": "240000",
+}
+"""What the entrypoint of the image sets, with the defaults of the hub (ADR 0032, ADR 0033)."""
 ENV = re.compile(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -33,6 +39,7 @@ def raw() -> str:
 
 
 def resolved(environment: dict[str, str]) -> dict[str, Any]:
+    environment = {**ENTRYPOINT_SETS, **environment}
     text = ENV.sub(lambda m: environment.get(m[1], ""), raw())
     found: dict[str, Any] = json.loads(text)
     return found
@@ -104,8 +111,32 @@ def test_what_opencode_would_fetch_or_send_by_itself_is_off(flag: str) -> None:
 
 
 # ----------------------------------------------------------------------------- the configuration
-def test_the_configuration_reads_three_variables_of_the_turn_and_no_other() -> None:
-    assert set(ENV.findall(raw())) == set(TURN)
+def test_the_configuration_reads_three_variables_of_the_turn_and_those_of_the_entrypoint() -> None:
+    assert set(ENV.findall(raw())) == {*TURN, *ENTRYPOINT_SETS}
+
+
+def test_the_model_has_the_window_of_the_hub_and_compacts_where_hermes_does() -> None:
+    """ADR 0033: OpenCode compacts at its input limit less the 16 000 tokens of the answer."""
+    config = resolved(
+        {
+            **TURN,
+            "ZEPHYROS_CONTEXT_WINDOW": "1000000",
+            "ZEPHYROS_OPENCODE_INPUT": str(900_000 + 16_000),
+        }
+    )
+    limit = config["provider"]["zephyros"]["models"]["deepseek-v4.1-flash"]["limit"]
+    assert limit == {"context": 1_000_000, "input": 916_000, "output": 16_000}
+
+
+@pytest.mark.parametrize("model", ["deepseek-v4.1-flash", "served-model"])
+def test_the_reasoning_goes_back_in_its_field_when_the_entrypoint_names_it(model: str) -> None:
+    """ADR 0032: OpenCode keeps the reasoning of each answer in the field the gateway carries,
+    whatever the model is named; an empty field keeps none, where OpenCode would otherwise
+    decide from a name that holds "deepseek"."""
+    turn = {**TURN, "ZEPHYROS_MODEL": model}
+    for field, expected in (("reasoning_content", "reasoning_content"), ("", "")):
+        config = resolved({**turn, "ZEPHYROS_REASONING_FIELD": field})
+        assert config["provider"]["zephyros"]["models"][model]["interleaved"] == expected
 
 
 def test_the_model_goes_to_the_gateway_of_the_hub_with_the_project_token() -> None:
@@ -190,5 +221,11 @@ def test_the_hub_address_of_a_real_turn_fills_the_configuration() -> None:
     )
     environment = dict(entry.split("=", 1) for entry in spec["Env"])
     assert set(TURN) <= set(environment)
-    assert set(environment) - set(TURN) == set(proxy_environment(policy, "10.200.0.19", TOKEN))
+    assert set(environment) - set(TURN) == {
+        *proxy_environment(policy, "10.200.0.19", TOKEN),
+        "ZEPHYROS_REASONING_ECHO",  # read by the entrypoint, which sets the field
+        "ZEPHYROS_CONTEXT_WINDOW",
+        "ZEPHYROS_COMPACTION_TOKENS",  # read by the entrypoint, which sets the input limit
+        "ZEPHYROS_SESSION",  # read by the entrypoint
+    }
     assert resolved(environment) == resolved(TURN)
