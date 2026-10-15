@@ -66,6 +66,8 @@ select = [
 # The pytest plugin of the "tests" kit: pytest hooks have a fixed signature, and the outcomes
 # line is printed for the filter to read.
 "images/kit-tests/**" = ["ARG001", "T201"]
+# The entrypoint of the OpenCode image reads the session that its helper prints.
+"images/instance-opencode/**" = ["T201"]
 # The runtime tests name paths inside containers, listen on every interface of a fixture, and
 # print what the runtime alone does (information for the threat model).
 "tests/runtime/**" = ["S104", "S108", "T201"]

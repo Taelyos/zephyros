@@ -28,7 +28,7 @@ import secrets
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -88,6 +88,15 @@ class Timing:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class TurnEngine:
+    """The agent engine a side runs, as each start of a turn records it (ADR 0029): the name the
+    configuration gives and the version the image pins."""
+
+    name: str
+    version: str
+
+
 @dataclass(slots=True)
 class _Live:
     project_id: str
@@ -132,6 +141,7 @@ class InstanceManager:
         new_instance_id: Callable[[], str] | None = None,
         continuity: Continuity | None = None,
         notifier: Notifier | None = None,
+        engines: Mapping[Side, TurnEngine] | None = None,
     ) -> None:
         self._broker = broker
         self._store = store
@@ -143,6 +153,7 @@ class InstanceManager:
         self._new_instance_id = new_instance_id or (lambda: "i_" + secrets.token_hex(6))
         self._continuity = continuity
         self._notifier = notifier
+        self._engines = dict(engines or {})
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._live: dict[Key, _Live] = {}
@@ -303,6 +314,7 @@ class InstanceManager:
                 self._outcomes.pop(live.key, None)
             # else a stop arrived meanwhile: the container did start, and the job of the stop
             # takes it down and logs the end of the turn
+        engine = self._engines.get(side)
         self._record(
             project_id,
             Action.TURN_START,
@@ -310,6 +322,7 @@ class InstanceManager:
             side=side.value,
             prompt_chars=len(prompt),
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
+            **({} if engine is None else {"engine": engine.name, "engine_version": engine.version}),
         )
         if self._timing.egress == "open":
             # An exception the operator wrote down (ADR 0024): said again at every start.

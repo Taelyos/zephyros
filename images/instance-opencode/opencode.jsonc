@@ -17,7 +17,13 @@
       "name": "Zephyros model gateway",
       "options": {
         "baseURL": "{env:ZEPHYROS_HUB_URL}/v1",
-        "apiKey": "{env:ZEPHYROS_TOKEN}"
+        "apiKey": "{env:ZEPHYROS_TOKEN}",
+        // The gateway answers once the provider has answered whole (gateway.timeout_seconds,
+        // 3600 s at most), so the headers of a long answer come late. OpenCode would give up
+        // after 300 s and ask again, and the provider would be paid twice: the gateway's
+        // limit is the one that holds, these wait one minute longer.
+        "headerTimeout": 3660000,
+        "chunkTimeout": 3660000
       },
       "models": {
         "{env:ZEPHYROS_MODEL}": {

@@ -14,10 +14,14 @@ import httpx
 import pytest
 
 from tests.support.sockets import socket_path
+from zephyros.adapters.hermes.engine import HERMES_VERSION
+from zephyros.adapters.opencode.engine import OPENCODE_VERSION
 from zephyros.app import hub as program
 from zephyros.app.cli import main as cli_main
 from zephyros.app.hub import main, run
 from zephyros.core.config import Config, parse_config
+from zephyros.core.lifecycle import TurnEngine
+from zephyros.core.ports.agent_engine import Side
 
 DIGEST = "ghcr.io/example/app@sha256:" + "e" * 64
 
@@ -183,3 +187,21 @@ def test_a_hub_that_cannot_keep_its_channels_off_the_instances_does_not_start(
     assert main(["--config", str(tmp_path / "z.toml")]) == 2
     assert "refused to start" in capsys.readouterr().err
     assert not Path(config.paths.data_dir).exists()
+
+
+# ----------------------------------------------------------------------------- ADR 0029
+def test_the_turns_record_the_engine_each_side_runs_with_its_pinned_version(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+    hermes = TurnEngine("hermes", HERMES_VERSION)
+    assert program.turn_engines(config) == {Side.OWNER: hermes, Side.CONTRACTOR: hermes}
+    config = replace(
+        config,
+        images=replace(config.images, opencode=DIGEST),
+        instances=replace(config.instances, contractor_engine="opencode"),
+    )
+    assert program.turn_engines(config) == {
+        Side.OWNER: hermes,
+        Side.CONTRACTOR: TurnEngine("opencode", OPENCODE_VERSION),
+    }

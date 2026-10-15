@@ -44,7 +44,7 @@ The filter checks every description before using it, as if it came from outside:
 
 What the suite checks: the major version; a non-empty engine version; a non-empty command with no empty word; the same request gives the same description; the token reaches the turn through exactly one environment variable and never on the command line; a new token replaces the old one; the agent endpoint and the model reach the turn; a hostile prompt stays whole in one word of the command; portable variable names and no NUL.
 
-Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (`hermes chat --query=<prompt> --oneshot --continue=zephyros --create-if-missing --quiet`: a one-shot chat in the named session of the instance, created by the first turn) and `OpenCodeEngine` (`turn <prompt>`: the entrypoint of `images/instance-opencode` runs `opencode run --continue` with the prompt on its standard input, in the last session of the work directory, created by the first turn).
+Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (`hermes chat --query=<prompt> --oneshot --continue=zephyros --create-if-missing --quiet`: a one-shot chat in the named session of the instance, created by the first turn) and `OpenCodeEngine` (`turn <prompt>`: the entrypoint of `images/instance-opencode` runs `opencode run` with the prompt on its standard input, in the one session of the instance, found in OpenCode's database whatever repository the work directory holds, and created by the first turn).
 
 Changes from 0.1: `describe_instance` became `describe_turn`; the image is configured, not described; the files are gone (the configuration of Hermes is in the instance image, seeded from the environment at each start).
 

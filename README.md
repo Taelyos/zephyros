@@ -9,8 +9,9 @@ replays the Owner's tests on every delivery in a sandbox, applies fixed rules, a
 request with an evidence report. A human merges.
 
 Built on [Hermes Agent](https://github.com/NousResearch/hermes-agent); the Contractor can also be
-a third-party coding agent such as OpenCode, under the same guarantees. Version 0.2.0:
-experimental, one machine, Linux or macOS with Docker.
+a third-party coding agent such as OpenCode, under the same guarantees (so far run with a scripted
+model only, not yet a real one). Version 0.2.0: experimental, one machine, Linux or macOS with
+Docker.
 
 The **operator** is the person who runs Zephyros: they write the requirements, approve what only
 they may approve, and merge. The **main agent** is the agent that talks to the hub on their

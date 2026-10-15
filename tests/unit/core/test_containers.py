@@ -540,6 +540,27 @@ def test_check_spec_holds_each_side_to_the_image_of_its_engine() -> None:
         check_spec(unlabelled, Role.TURN, OPENCODE)
 
 
+def test_check_spec_holds_a_turn_to_the_guard_and_volumes_of_the_side_it_names() -> None:
+    """A turn labelled Owner, so that it runs the Hermes image, may not take the guard or the
+    volumes of the Contractor, nor those of another project."""
+    owner = opencode_turn(Side.OWNER)
+    contractor = opencode_turn()
+    other = turn_spec(
+        OPENCODE, OpenCodeEngine(), "p_00000000", Side.OWNER, "10.200.0.19", TOKEN, "x"
+    )
+    for key in ("NetworkMode", "Mounts"):
+        for source in (contractor, other):
+            mixed = copy.deepcopy(owner)
+            mixed["HostConfig"][key] = copy.deepcopy(source["HostConfig"][key])
+            with pytest.raises(SpecError, match="instance it names"):
+                check_spec(mixed, Role.TURN, OPENCODE)
+    swapped = copy.deepcopy(owner)
+    home, work = swapped["HostConfig"]["Mounts"]
+    home["Target"], work["Target"] = work["Target"], home["Target"]
+    with pytest.raises(SpecError, match="instance it names"):
+        check_spec(swapped, Role.TURN, OPENCODE)
+
+
 def test_a_policy_that_runs_opencode_without_its_image_builds_no_turn() -> None:
     policy = replace(POLICY, contractor_engine="opencode")
     with pytest.raises(SpecError, match="no image"):

@@ -46,6 +46,21 @@ RUN python3 -m pip install --no-cache-dir --no-deps --only-binary :all: \
 # root file system is read-only in a turn, so the agent cannot change it, even inside its turn.
 COPY --chmod=0644 opencode.jsonc /etc/opencode/opencode.jsonc
 COPY --chmod=0755 entrypoint.sh /opt/zephyros/entrypoint.sh
+COPY --chmod=0644 session.py /opt/zephyros/session.py
+
+# Where OpenCode looks for the configuration of its user (~/.config/opencode) and for a ".opencode"
+# directory in its home: two empty directories of the read-only root, not the home volume. There,
+# the agent of one turn could leave instructions, agents, commands, skills, MCP servers or plugins
+# that every later turn would load; OpenCode adds them to the managed configuration rather than
+# replace it (lists such as "instructions" are joined), so the managed scope alone cannot refuse
+# them. Hermes turns off its background review for the same reason (images/instance/seed.yaml).
+# XDG_CONFIG_HOME and OPENCODE_TEST_HOME, below, point there. OpenCode alone reads the second one
+# (its own name for its home), so the commands of the agent keep /opt/data as their home; with
+# the first, the user configuration of the other programs of a turn (git, pip) is empty too.
+# OpenCode writes a .gitignore in its configuration directory when there is none, and stops on a
+# read-only file system: an empty one is there already.
+RUN mkdir -p /opt/opencode/config/opencode /opt/opencode/home \
+    && touch /opt/opencode/config/opencode/.gitignore
 
 # The home and the work volumes. A new named volume mounted here takes this owner, so the turn
 # can write it. The home holds what OpenCode keeps from turn to turn (its sessions, under
@@ -59,6 +74,8 @@ RUN mkdir -p /opt/data /work && chown 10000:10000 /opt/data /work && chmod 0700 
 # the network guard holds whatever OpenCode tries (ADR 0024); these keep a turn from trying.
 ENV HOME=/opt/data \
     TMPDIR=/tmp \
+    XDG_CONFIG_HOME=/opt/opencode/config \
+    OPENCODE_TEST_HOME=/opt/opencode/home \
     OPENCODE_DISABLE_AUTOUPDATE=1 \
     OPENCODE_DISABLE_MODELS_FETCH=1 \
     OPENCODE_DISABLE_SHARE=1 \

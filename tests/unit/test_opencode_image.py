@@ -73,6 +73,18 @@ def test_the_image_runs_unprivileged_with_the_configuration_out_of_its_reach() -
     assert "HOME=/opt/data" in FLAT
 
 
+def test_the_configuration_of_the_agent_is_read_from_empty_directories_of_the_root() -> None:
+    """The configuration of OpenCode's user and the ".opencode" of its home are never on the
+    home volume, where a turn could leave what the next one loads."""
+    assert "XDG_CONFIG_HOME=/opt/opencode/config" in FLAT
+    assert "OPENCODE_TEST_HOME=/opt/opencode/home" in FLAT
+    assert "mkdir -p /opt/opencode/config/opencode /opt/opencode/home" in FLAT
+    assert "touch /opt/opencode/config/opencode/.gitignore" in FLAT
+    assert "COPY --chmod=0644 session.py /opt/zephyros/session.py" in DOCKERFILE
+    instructions = [line for line in FLAT.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in instructions if "chown" in line and "/opt/opencode" in line]
+
+
 @pytest.mark.parametrize(
     "flag",
     [
@@ -102,7 +114,10 @@ def test_the_model_goes_to_the_gateway_of_the_hub_with_the_project_token() -> No
     assert list(config["provider"]) == ["zephyros"]
     provider = config["provider"]["zephyros"]
     assert provider["npm"] == "@ai-sdk/openai-compatible"  # bundled in OpenCode: no install
-    assert provider["options"] == {"baseURL": f"{HUB}/v1", "apiKey": TOKEN}
+    assert {k: provider["options"][k] for k in ("baseURL", "apiKey")} == {
+        "baseURL": f"{HUB}/v1",
+        "apiKey": TOKEN,
+    }
     assert list(provider["models"]) == ["deepseek-v4.1-flash"]
     assert config["model"] == config["small_model"] == "zephyros/deepseek-v4.1-flash"
 
@@ -129,6 +144,19 @@ def test_the_token_is_the_one_secret_and_goes_to_the_hub_only() -> None:
     assert [url for url in urls if url.startswith("https://opencode.ai/")] == [
         "https://opencode.ai/config.json"  # the name of the schema, never fetched
     ]
+
+
+def test_a_long_answer_of_the_gateway_is_waited_for_and_never_asked_twice() -> None:
+    """The gateway answers once the provider has answered whole, and gives up after
+    gateway.timeout_seconds: OpenCode waits longer than the longest the schema allows, so a call
+    the gateway is still carrying is never abandoned and asked again (paid twice). OpenCode
+    1.19.0 sets no limit on a whole request unless `timeout` says one."""
+    schema = json.loads((ROOT / "schemas" / "configuration.schema.json").read_text("utf-8"))
+    longest = schema["properties"]["gateway"]["properties"]["timeout_seconds"]["maximum"]
+    options = resolved(TURN)["provider"]["zephyros"]["options"]
+    assert options["headerTimeout"] > longest * 1000
+    assert options["chunkTimeout"] > longest * 1000
+    assert "timeout" not in options
 
 
 def test_every_tool_is_allowed_and_nothing_is_shared_updated_or_added() -> None:

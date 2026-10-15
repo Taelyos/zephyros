@@ -604,6 +604,15 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
         writable = {"/tmp"}  # noqa: S108  # reason: a container path
         if set(host.get("Tmpfs", {})) != writable:
             raise SpecError("the temporary file system is /tmp")
+        # The side whose image was checked above is the side whose guard and volumes it takes.
+        side = _turn_side(spec)
+        project_id = str(labels_.get(LABEL_PROJECT, ""))
+        held = {(str(m.get("Source", "")), str(m.get("Target", ""))) for m in mounts}
+        if mode != f"container:{guard_name(project_id, side)}" or held != {
+            (volume_name(project_id, side, VolumeKind.HOME), HOME_PATH),
+            (volume_name(project_id, side, VolumeKind.WORK), WORK_PATH),
+        }:
+            raise SpecError("a turn takes the guard and the volumes of the instance it names")
     for item in spec.get("Env", []):
         if "docker.sock" in str(item):
             raise SpecError("no runtime socket")

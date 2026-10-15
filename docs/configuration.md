@@ -77,7 +77,9 @@ opencode = "sha256:…"
 engine = "opencode"
 ```
 
-What holds does not depend on the choice: the agent reaches the model through the gateway of the hub alone, with the project token, and never sees the provider key; it acts on the hub through the same tools and rights, so it can neither write the contract nor change a test; and it runs under the same container template, network guard and level, sandbox and gate. What differs is the image, the command of a turn (`opencode run`, continuing the last session of the instance from one turn to the next), how the agent compacts its context, and what it keeps on its home volume. A change of engine takes effect at the next turn; the home volume keeps what the former engine wrote there, and the new one ignores it.
+What holds does not depend on the choice: the agent reaches the model through the gateway of the hub alone, with the project token, and never sees the provider key; it acts on the hub through the same tools and rights, so it can neither write the contract nor change a test; and it runs under the same container template, network guard and level, sandbox and gate. What differs is the image, the command of a turn (`opencode run`, continuing the one session of the instance from one turn to the next), how the agent compacts its context, and what it keeps on its home volume. A change of engine takes effect at the next turn; the home volume keeps what the former engine wrote there, and the new one ignores it. Each start of a turn records the engine and its version in the log, and the evidence report of a delivery names the engines of the Contractor turns before it.
+
+OpenCode has been run only with the obedient stub, a scripted model, not yet with a real one: how a real model works through it, and what a turn costs, remain to be measured. Known limits of OpenCode 1.19.0 here: it does not read the `AGENTS.md` of the work directory as instructions (the agent can still read the file); it asks the model for the title of a new session, one more counted call; and it retries a failed model call for about a minute before the turn ends with an error.
 
 ## What an instance reaches
 

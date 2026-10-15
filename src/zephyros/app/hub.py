@@ -25,6 +25,7 @@ from pathlib import Path
 from zephyros import __version__
 from zephyros.adapters.config_file import load_config
 from zephyros.adapters.dummy.obedient_stub import ObedientStubProvider
+from zephyros.adapters.engines import ENGINES
 from zephyros.adapters.filter.client import FilterClient
 from zephyros.adapters.git.delivery import GitDeliveryArea
 from zephyros.adapters.git.forge import DirectoryForge
@@ -60,6 +61,7 @@ from zephyros.app.channel_tokens import ChannelTokens, build_control_app
 from zephyros.core.audit import AuditLog
 from zephyros.core.clock import Clock
 from zephyros.core.config import Config, ConfigError
+from zephyros.core.containers import Policy
 from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.contract import ContractService
@@ -68,8 +70,9 @@ from zephyros.core.egress import GITHUB_HOST, EgressPolicy, EgressRefusal, host_
 from zephyros.core.gateway import CredentialSource, GatewayService
 from zephyros.core.hub import Hub
 from zephyros.core.instances import InstanceControl
-from zephyros.core.lifecycle import InstanceManager, Timing
+from zephyros.core.lifecycle import InstanceManager, Timing, TurnEngine
 from zephyros.core.notifications import Notifier, Send
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.forge import Forge
 from zephyros.core.ports.model_provider import ModelProvider
 from zephyros.core.ports.verification import INTERFACE_VERSION as VERIFICATION_VERSION
@@ -154,6 +157,16 @@ class NoRunner:
     def run(self, request: VerificationRequest) -> VerificationResult:
         del request
         raise VerificationError("no verification runner is configured (verification.runner)")
+
+
+def turn_engines(config: Config) -> dict[Side, TurnEngine]:
+    """The agent engine of each side, as each start of a turn records it (ADR 0029). The filter
+    reads the same configuration, and holds each side to the image of this engine."""
+    policy = Policy.from_config(config)
+    return {
+        side: TurnEngine(policy.engine(side), ENGINES[policy.engine(side)]().engine_version)
+        for side in Side
+    }
 
 
 def build_egress(config: Config) -> EgressPolicy:
@@ -334,6 +347,7 @@ async def run(
                 Timing.from_config(config),
                 continuity=continuity,
                 notifier=notifier,
+                engines=turn_engines(config),
             )
 
     forge, forge_credentials = build_forge(config)

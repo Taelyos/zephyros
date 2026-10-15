@@ -14,10 +14,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from zephyros.adapters.docker.api import DockerApi, DockerError
+from zephyros.adapters.engines import ENGINES
 from zephyros.adapters.filter.journal import Journal
 from zephyros.adapters.filter.sandbox import run_sandbox
-from zephyros.adapters.hermes.engine import HermesEngine
-from zephyros.adapters.opencode.engine import OpenCodeEngine
 from zephyros.core.broker import (
     BrokerError,
     ContainerInfo,
@@ -55,11 +54,6 @@ STOP_SECONDS = 2
 WATCHED_ACTIONS = ("start", "die", "kill", "oom", "stop", "destroy")
 MANAGED_FILTER = f"{LABEL_MANAGED}=true"
 HUB_ROLE = "hub"
-ENGINES: Mapping[str, Callable[[], AgentEngine]] = {
-    "hermes": HermesEngine,
-    "opencode": OpenCodeEngine,
-}
-"""The agent engines a turn can run, by the name the configuration gives (ADR 0029)."""
 
 
 def _labels(data: Mapping[str, Any]) -> Mapping[str, str]:
