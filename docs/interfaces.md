@@ -6,7 +6,7 @@ The hub reaches the agent engine, the model provider, the forge, the delivery ar
 
 All five interfaces are at version 0.x. Until 1.0, a change can break an implementation, and the change is announced in the [CHANGELOG](../CHANGELOG.md).
 
-- **AgentEngine** (0.2.0) starts a turn with the configuration of the instance image and the first prompt on the command line, as the pinned Hermes Agent takes them. **ModelProvider** answers a call whole, without streaming; the gateway turns a whole answer into a stream for a client that asks for one. Either may change when another engine or provider is supported.
+- **AgentEngine** (0.2.0) starts a turn with the configuration of the instance image and the first prompt on the command line, as the pinned Hermes Agent takes them; the image of OpenCode passes that word on to OpenCode's standard input. **ModelProvider** answers a call whole, without streaming; the gateway turns a whole answer into a stream for a client that asks for one. Either may change when another engine or provider is supported.
 - **The model of the contract's objects** that the hub's API reads and writes (requirements, constraints, stories, criteria, links, notes, and the contract schema that describes them) and **the events schema** of the notifications are unstable too until 1.0: an incompatible change remains possible in 0.x, and is always announced in the CHANGELOG with the new version of the schema.
 - **Forge**, **DeliveryArea** and **VerificationRunner** carry the delivery loop. They will grow with it: more kits, more evidence from a kit. A project source must be one the hub accepts (`core/sources.py`, EXG-44).
 
@@ -30,7 +30,7 @@ class TestMyForge(ForgeConformance):
 
 Version: `0.2.0`
 
-The agent engine is the software that runs an agent in an instance (Hermes Agent in version 1). Each piece of work is one *turn*: one container started from the configured instance image, in the network namespace of the instance's guard, with the instance's two volumes (ADR 0016). The container filter builds that container from its own templates (ADR 0014); the engine only says which command and which environment start a turn. A description therefore holds no image, user, mount, capability, network, limit or file.
+The agent engine is the software that runs an agent in an instance: Hermes Agent, or for the Contractor a third-party coding agent such as OpenCode ([ADR 0029](decisions/0029-the-contractor-can-be-a-third-party-coding-agent.md)); the configuration chooses, and each engine has its own instance image. Each piece of work is one *turn*: one container started from the configured instance image, in the network namespace of the instance's guard, with the instance's two volumes (ADR 0016). The container filter builds that container from its own templates (ADR 0014); the engine only says which command and which environment start a turn. A description therefore holds no image, user, mount, capability, network, limit or file.
 
 | Operation | Meaning |
 | --- | --- |
@@ -44,7 +44,7 @@ The filter checks every description before using it, as if it came from outside:
 
 What the suite checks: the major version; a non-empty engine version; a non-empty command with no empty word; the same request gives the same description; the token reaches the turn through exactly one environment variable and never on the command line; a new token replaces the old one; the agent endpoint and the model reach the turn; a hostile prompt stays whole in one word of the command; portable variable names and no NUL.
 
-Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (`hermes chat --query=<prompt> --oneshot --continue=zephyros --create-if-missing --quiet`: a one-shot chat in the named session of the instance, created by the first turn).
+Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (`hermes chat --query=<prompt> --oneshot --continue=zephyros --create-if-missing --quiet`: a one-shot chat in the named session of the instance, created by the first turn) and `OpenCodeEngine` (`turn <prompt>`: the entrypoint of `images/instance-opencode` runs `opencode run` with the prompt on its standard input, in the one session of the instance, found in OpenCode's database whatever repository the work directory holds, and created by the first turn).
 
 Changes from 0.1: `describe_instance` became `describe_turn`; the image is configured, not described; the files are gone (the configuration of Hermes is in the instance image, seeded from the environment at each start).
 

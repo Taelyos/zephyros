@@ -7,12 +7,12 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.15.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.16.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
 ```toml
-schema_version = "1.15.0"
+schema_version = "1.16.0"
 
 [images]
 instance = "registry.example/zephyros-instance@sha256:…"   # by digest, always
@@ -28,7 +28,8 @@ On one machine, `scripts/deploy.sh up` writes the file (`deploy/state/zephyros.t
 | `[hub]` | The listeners: the agent endpoint (the hub destination open to every instance), the egress proxy (open to a `regulated` instance only), the operator channel and the main-agent endpoint. The last two never listen on an instance network: a wildcard address and an address of the instance pool are refused, and `"core"` (what `scripts/deploy.sh` writes) makes the hub in its container listen on its address of the core network, the one its ports are published on, and on its own loopback. An instance reaches neither, whether its guard runs or not ([ADR 0025](decisions/0025-operator-and-main-agent-off-the-instance-networks.md)) |
 | `[paths]` | The data directory, the Unix socket of the container filter, the files that hold the operator and main-agent tokens, and the control socket on which `zephyros hub rotate-token` asks the hub for a new one |
 | `[runtime]` | The name of the core network and of the hub container; how long the hub waits for a network guard to report healthy, and how often it looks at its instances |
-| `[images]` | The instance image and the network guard image, by registry digest (`name@sha256:…`) or by local identifier (`sha256:…`) (required) |
+| `[images]` | The instance image and the network guard image, by registry digest (`name@sha256:…`) or by local identifier (`sha256:…`) (required); the image of an instance that runs OpenCode (`opencode`), when one does |
+| `[instances]` | The agent engine of the Contractor instance of each project: `hermes` (the default) or `opencode`, a third-party coding agent (see below). The Owner instance runs Hermes |
 | `[network]` | The range the subnets of the instance networks are taken from, their prefix length, and the name resolvers an `open` instance uses (one to four public addresses; the default is `9.9.9.9`, Quad9; a `regulated` or `sealed` instance sends no query: the egress proxy resolves for it). A resolver inside a protected network is refused at startup, because the network guard blocks it ([ADR 0018](decisions/0018-instance-name-resolution.md)). What an instance reaches besides the hub (`egress`, see below) and the hosts a `regulated` instance reaches (`allowed_hosts`) |
 | `[limits]` | CPUs, memory and process count of an agent container, memory of a guard, the longest duration of a turn, how long a turn may go without calling the hub before it is stopped, and how many refused actions of one instance in a minute make the hub answer without doing the work (`refusals_per_minute`, ATK-71) |
 | `[tokens]` | The lifetime of a project token and how long before its expiry a new turn gets a new one; the lifetime of the operator and main-agent tokens (`channel_lifetime_days`, 90 days by default, see below) |
@@ -61,6 +62,24 @@ gateway.upstream_model: 'claude-opus-5-5' is not one of gateway.models (deepseek
 ```
 
 The policy holds only as long as nobody else edits the table: keep it in a file that only you can change, outside the repository ([a run with real models](real-test.md)).
+
+## The agent of the Contractor
+
+`instances.contractor.engine` chooses the coding agent that runs in the Contractor instance of every project ([ADR 0029](decisions/0029-the-contractor-can-be-a-third-party-coding-agent.md)): `hermes`, the default, in `images.instance`, or `opencode`, OpenCode 1.19.0, in `images.opencode` (built from `images/instance-opencode`; `scripts/deploy.sh` builds it when `ZEPHYROS_CONTRACTOR_ENGINE=opencode`). The Owner instance runs Hermes.
+
+```toml
+[images]
+instance = "sha256:…"
+guard = "sha256:…"
+opencode = "sha256:…"
+
+[instances.contractor]
+engine = "opencode"
+```
+
+What holds does not depend on the choice: the agent reaches the model through the gateway of the hub alone, with the project token, and never sees the provider key; it acts on the hub through the same tools and rights, so it can neither write the contract nor change a test; and it runs under the same container template, network guard and level, sandbox and gate. What differs is the image, the command of a turn (`opencode run`, continuing the one session of the instance from one turn to the next), how the agent compacts its context, and what it keeps on its home volume. A change of engine takes effect at the next turn; the home volume keeps what the former engine wrote there, and the new one ignores it. Each start of a turn records the engine and its version in the log, and the evidence report of a delivery names the engines of the Contractor turns before it.
+
+OpenCode has been run only with the obedient stub, a scripted model, not yet with a real one: how a real model works through it, and what a turn costs, remain to be measured. Known limits of OpenCode 1.19.0 here: it does not read the `AGENTS.md` of the work directory as instructions (the agent can still read the file); it asks the model for the title of a new session, one more counted call; and it retries a failed model call for about a minute before the turn ends with an error.
 
 ## What an instance reaches
 
@@ -129,6 +148,7 @@ The schema document lists them (`x-zephyros-rules`):
 - a `github` forge has its `token_file`;
 - an `openai-compatible` provider has its `upstream_url` and its `credential_file`, and the model it sends is one of `gateway.models`;
 - a `sandbox` runner has its `kit_image`;
+- a Contractor that runs `opencode` has its image, `images.opencode`;
 - `gateway.simulation` runs only with the `stub` provider;
 - the notifications have both their URL (http or https) and their secret (16 characters at least), or neither.
 
@@ -156,6 +176,8 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `runtime.poll_seconds` | `5` | 1 to 60 |
 | `images.instance` | required | an image, by digest or local identifier |
 | `images.guard` | required | an image, by digest or local identifier |
+| `images.opencode` | unset | an image, by digest or local identifier; required when `instances.contractor.engine` is `opencode` |
+| `instances.contractor.engine` | `"hermes"` | `hermes` or `opencode` |
 | `network.instance_pool` | `"10.200.0.0/16"` | an IPv4 network |
 | `network.instance_prefix` | `28` | 24 to 30 |
 | `network.resolvers` | `["9.9.9.9"]` | one to four IPv4 addresses, none in a protected network; used by `open` |
@@ -197,6 +219,6 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 
 ## Versions
 
-1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026).
+1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029).
 
 Each addition has a default, except one: since 1.8.0, an `openai-compatible` provider needs `gateway.models`, so a file older than 1.8.0 that uses one must add it. Since 1.15.0, a file that binds the operator channel or the main-agent endpoint to `0.0.0.0` is refused: write `"core"` for a hub in a container. Any other 1.x file still reads.

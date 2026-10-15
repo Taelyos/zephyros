@@ -25,6 +25,7 @@ from tests.unit.conformance.test_real_implementations_conform import (
     TestGitHubForge,
     TestHermesEngine,
     TestOpenAiCompatibleProvider,
+    TestOpenCodeEngine,
 )
 from zephyros.adapters.dummy import DummyAgentEngine, InMemoryForge, ScriptedModelProvider
 from zephyros.adapters.dummy.delivery import InMemoryDeliveryArea
@@ -34,6 +35,7 @@ from zephyros.adapters.git.delivery import GitDeliveryArea
 from zephyros.adapters.git.forge import DirectoryForge
 from zephyros.adapters.github.forge import GitHubForge
 from zephyros.adapters.hermes.engine import HermesEngine
+from zephyros.adapters.opencode.engine import OpenCodeEngine
 from zephyros.adapters.providers.openai_compatible import OpenAiCompatibleProvider
 from zephyros.adapters.sandbox_runner import SandboxRunner
 
@@ -45,6 +47,7 @@ CHECKED: Mapping[type, type] = {
     ObedientStubProvider: TestObedientStubProvider,
     OpenAiCompatibleProvider: TestOpenAiCompatibleProvider,
     HermesEngine: TestHermesEngine,
+    OpenCodeEngine: TestOpenCodeEngine,
     InMemoryDeliveryArea: TestInMemoryDeliveryArea,
     AssertionRunner: TestAssertionRunner,
     GitDeliveryArea: TestGitDeliveryArea,

@@ -8,7 +8,35 @@ version. Each schema carries its own version number.
 
 ## [Unreleased]
 
-Nothing yet.
+| Surface | 0.2.0 | Unreleased |
+| --- | --- | --- |
+| Configuration schema | 1.15.0 | 1.16.0 |
+| Agent engine interface | 0.2.0 | 0.2.0 (a second real implementation) |
+
+### Added
+- The Contractor can be a third-party coding agent (ADR 0029). `instances.contractor.engine`
+  chooses `hermes` (the default) or `opencode`, OpenCode 1.19.0 in its own image
+  (`images/instance-opencode`, `images.opencode`): pinned and checked by its SHA-512, configured
+  in its read-only managed scope with the gateway and the MCP server of the hub and the project
+  token, nothing shared, updated or fetched by itself. A turn runs `opencode run` with the prompt
+  on its standard input, in the one session of the instance, whatever repository `/work` holds.
+  What a turn leaves in its home is not loaded by the next: OpenCode reads the configuration of
+  its user from an empty directory of the read-only root. A long answer of the gateway is waited
+  for (3 660 s), never abandoned and asked again. The guarantees do not change with the engine:
+  no provider key in the instance, the same rights, guard, level, sandbox and gate; the filter
+  holds each side to the image of its engine, and a turn to the guard and the volumes of its
+  side. The Owner runs Hermes. `scripts/deploy.sh` builds the image when
+  `ZEPHYROS_CONTRACTOR_ENGINE=opencode`.
+- Each start of a turn records the agent engine and its version in the log (`turn.start`:
+  `engine`, `engine_version`), and the evidence report of a delivery names the engines of the
+  Contractor turns before it ("Built by the agent of the Contractor").
+
+### Known limits
+- OpenCode has been run with the obedient stub, a scripted model, not yet with a real model: its
+  behaviour with one, and the measures of a turn, remain to be shown. It does not read the
+  `AGENTS.md` of the work directory as instructions, asks the model for a session title (one more
+  counted call), and retries a failed model call for about a minute before the turn ends with an
+  error.
 
 ## [0.2.0] - 2026-10-14
 

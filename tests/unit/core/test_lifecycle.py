@@ -7,6 +7,7 @@ so what these tests see is what a runtime would be asked to do.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -32,7 +33,7 @@ from zephyros.core.continuity import Continuity, TaskState
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import InstanceState as State
-from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing
+from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing, TurnEngine
 from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
@@ -113,6 +114,7 @@ class Rig:
         *,
         continuity: Continuity | None = None,
         notify: Any = None,
+        engines: Mapping[Side, TurnEngine] | None = None,
     ) -> InstanceManager:
         self.notifier = Notifier(self.audit, notify)
         return InstanceManager(
@@ -125,6 +127,7 @@ class Rig:
             sleep=self.clock.advance,
             continuity=continuity,
             notifier=self.notifier,
+            engines=engines,
         )
 
     # -- driving
@@ -865,6 +868,30 @@ def test_an_alert_refused_by_the_egress_policy_is_logged(rig: Rig) -> None:
     sent = [r for r in records if r.action is Action.NOTIFICATION]
     assert sent
     assert sent[-1].outcome is Outcome.ERROR
+
+
+# ----------------------------------------------------------------------------- engine (ADR 0029)
+def test_each_start_of_a_turn_records_the_engine_of_its_side_and_its_version(rig: Rig) -> None:
+    rig.manager = rig.make_manager(
+        engines={
+            Side.OWNER: TurnEngine("hermes", "0.21.6 (818c13be)"),
+            CONTRACTOR: TurnEngine("opencode", "1.19.0"),
+        }
+    )
+    rig.manager.reconcile()
+    rig.start()
+    rig.manager.stop(PROJECT, CONTRACTOR)
+    rig.run_jobs()
+    rig.start(side=Side.OWNER)
+    starts = [
+        json.loads(r.parameters)
+        for r in rig.records()
+        if (r.action, r.outcome) == (Action.TURN_START, Outcome.OK)
+    ]
+    assert [(s["side"], s["engine"], s["engine_version"]) for s in starts] == [
+        ("contractor", "opencode", "1.19.0"),
+        ("owner", "hermes", "0.21.6 (818c13be)"),
+    ]
 
 
 # ----------------------------------------------------------------------------- egress (ADR 0024)

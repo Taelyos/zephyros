@@ -39,6 +39,7 @@ from zephyros.core.gate import (
     compute_gate,
     every_acceptance_test,
 )
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery, DeliveryArea, DeliveryError
 from zephyros.core.ports.forge import Forge, ForgeError, PullRequestRequest, RepositoryRef
 from zephyros.core.ports.verification import (
@@ -798,6 +799,7 @@ class DeliveryService:
             never_run_tests=never_run,
             missing_acceptance_files=missing,
             set_aside_paths=set_aside,
+            built_by=self._built_by(project_id, record.delivery_id),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)
@@ -908,6 +910,27 @@ class DeliveryService:
                 prompt += int(parameters.get("prompt_tokens", 0))
                 completion += int(parameters.get("completion_tokens", 0))
         return Cost(calls, prompt, completion)
+
+    def _built_by(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
+        """The agent engines of the Contractor's turns started before the delivery came in, read
+        from the log as the cost is (ADR 0029): each with its version, and how many turns it
+        ran. A start recorded before the hub recorded engines counts as "not recorded"."""
+        turns: dict[str, int] = {}
+        for item in self._audit.read(project_id, 0, 100_000):
+            if item.outcome is not Outcome.OK:
+                continue
+            parameters = json.loads(item.parameters)
+            if item.action is Action.DELIVERY_PUSH and parameters.get("delivery_id") == delivery_id:
+                break
+            if (
+                item.action is Action.TURN_START
+                and item.principal == SYSTEM_PRINCIPAL
+                and parameters.get("side") == Side.CONTRACTOR.value
+            ):
+                engine, version = parameters.get("engine"), parameters.get("engine_version")
+                label = f"{engine} {version}" if engine and version else "not recorded"
+                turns[label] = turns.get(label, 0) + 1
+        return tuple(turns.items())
 
     def _record_event(
         self,

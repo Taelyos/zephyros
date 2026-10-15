@@ -59,6 +59,9 @@ class ReportInput:
     """The files a criterion names that neither the Owner side nor the base holds (ATK-16)."""
     set_aside_paths: tuple[str, ...] = ()
     """Those of the missing files the delivery brought: its versions were set aside, unrun."""
+    built_by: tuple[tuple[str, int], ...] = ()
+    """The agent engines of the Contractor's turns recorded before the delivery came in, each
+    with its version and how many turns it ran (ADR 0029)."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -108,6 +111,14 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
         f"- Branch: {_code(delivery.branch)}",
         f"- Base: {_code(delivery.base[:12])}, head: {_code(delivery.head[:12])}",
         f"- Contract: version {report.contract_version} ({_code(report.contract_hash[:12])})",
+        "- Built by the agent of the Contractor: "
+        + (
+            ", ".join(
+                f"{_code(engine)} ({turns} turn{'' if turns == 1 else 's'})"
+                for engine, turns in report.built_by
+            )
+            or "no turn of the Contractor recorded"
+        ),
         f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(

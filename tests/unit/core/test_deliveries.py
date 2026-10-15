@@ -263,6 +263,54 @@ def test_the_cost_in_the_report_is_the_gateway_usage_of_the_project() -> None:
     assert "2 model calls, 350 prompt tokens, 20 completion tokens." in report
 
 
+def test_the_report_names_the_engines_of_the_contractor_turns_before_the_delivery() -> None:
+    """ADR 0029: read from the starts of turn in the log, up to the push of the delivery. The
+    Owner's turns, and those after the push, did not build it."""
+    made, project, audit, _store = service()
+    ready(made, project)
+
+    def turn(side: str, **engine: str) -> None:
+        audit.append(
+            AuditEvent(
+                project, "hub", Action.TURN_START, Outcome.OK, parameters={"side": side, **engine}
+            )
+        )
+
+    opencode = {"engine": "opencode", "engine_version": "1.19.0"}
+    turn("contractor")  # recorded before the hub recorded engines
+    turn("owner", engine="hermes", engine_version="0.21.6 (818c13be)")
+    turn("contractor", **opencode)
+    turn("contractor", **opencode)
+    record = made.push(project, make_package({**BASE, "calc.py": b"x = 1\n"}, state_id(BASE)), "w")
+    audit.append(
+        AuditEvent(
+            project,
+            f"contractor:{project}",
+            Action.DELIVERY_PUSH,
+            Outcome.OK,
+            parameters={"delivery_id": record.delivery_id},
+        )
+    )
+    turn("contractor", engine="hermes", engine_version="0.21.6 (818c13be)")
+    made.declare(project, record.delivery_id)
+    while made.step():
+        pass
+    report = made.status(project, record.delivery_id).report
+    assert report is not None
+    assert (
+        "- Built by the agent of the Contractor: `not recorded` (1 turn), "
+        "`opencode 1.19.0` (2 turns)"
+    ) in report.splitlines()
+
+
+def test_a_report_without_a_contractor_turn_says_so() -> None:
+    made, project, _audit, _store = service()
+    ready(made, project)
+    report = made.status(project, delivered(made, project)).report
+    assert report is not None
+    assert "- Built by the agent of the Contractor: no turn of the Contractor recorded" in report
+
+
 def test_a_delivery_declared_before_the_contract_runs_nothing_and_never_passes() -> None:
     """T10: it passed for want of anything to judge. The runner would fail if it ran."""
     made, project, _audit, _store = service(runner=Exploding(), specs=())

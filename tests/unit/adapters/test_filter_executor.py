@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -374,3 +375,28 @@ def test_a_policy_violation_is_a_refusal_not_a_crash(world: World) -> None:
     )
     refused = [(line["outcome"], line["op"], line["code"]) for line in world.journal.lines]
     assert ("refused", "network.create", "policy") in refused
+
+
+# ----------------------------------------------------------------------------- ADR 0029
+def test_each_side_runs_the_engine_and_the_image_the_policy_names() -> None:
+    opencode = "ghcr.io/example/opencode@sha256:" + "c" * 64
+    policy = replace(POLICY, contractor_engine="opencode", opencode_image=opencode)
+    docker = FakeDocker()
+    docker.add_hub()
+    executor = Executor(docker.api(), policy, MemoryJournal(), clock=lambda: 1_000_500)
+    for side in Side:
+        executor.perform(Request(Op.NETWORK_CREATE, project_id=PROJECT, side=side, subnet=SUBNET))
+        executor.perform(Request(Op.HUB_CONNECT, project_id=PROJECT, side=side))
+        for kind in VolumeKind:
+            executor.perform(Request(Op.VOLUME_CREATE, project_id=PROJECT, side=side, volume=kind))
+        executor.perform(Request(Op.GUARD_START, project_id=PROJECT, side=side, subnet=SUBNET))
+        executor.perform(
+            Request(Op.TURN_START, project_id=PROJECT, side=side, token=TOKEN, prompt="Work.")
+        )
+    contractor = docker.containers[turn_name(PROJECT, Side.CONTRACTOR)]["Config"]
+    owner = docker.containers[turn_name(PROJECT, Side.OWNER)]["Config"]
+    assert (contractor["Image"], contractor["Cmd"]) == (opencode, ["turn", "Work."])
+    assert (owner["Image"], owner["Cmd"]) == (
+        POLICY.instance_image,
+        ["chat", "--query=Work.", *HERMES_TAIL],
+    )

@@ -37,6 +37,21 @@ ZEPHYROS_TOKEN=zph_c_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
 
 `tests/runtime/test_hermes.py` runs this report against the image built by `scripts/deploy.sh` and fails when its result differs from the table above, so the list cannot drift silently.
 
+### A Contractor that runs OpenCode
+
+When `instances.contractor.engine` is `opencode` ([ADR 0029](decisions/0029-the-contractor-can-be-a-third-party-coding-agent.md)), the Contractor instance runs OpenCode 1.19.0 (`images/instance-opencode`) with the managed configuration of `images/instance-opencode/opencode.jsonc`. Its agent `build`, the one a turn runs, offers the model **11 tools**: `bash`, `edit`, `glob`, `grep`, `question`, `read`, `skill`, `task`, `todowrite`, `webfetch`, `write`. Every one is allowed without asking, save `question`, which a session of `opencode run` denies: nobody is there to answer. The hub's tools come from the one MCP server of the configuration and reach the model as `zephyros_<tool>` (`zephyros_contract_read`, `zephyros_delivery_declare`, …). No plugin, no language server and no other MCP server is configured, and neither the configuration of a delivered repository nor what a turn leaves in its home is read: OpenCode reads the configuration of its user from an empty directory of the read-only root.
+
+To reproduce the list (no network call, no model):
+
+```bash
+docker run --rm --network none \
+  -e ZEPHYROS_HUB_URL=http://10.0.0.3:8080 -e ZEPHYROS_MODEL=m \
+  -e ZEPHYROS_TOKEN=zph_c_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+  <opencode image> debug agent build
+```
+
+`tests/runtime/test_opencode.py` runs it against the image built by `scripts/deploy.sh` and fails when its result differs from this list. The attack of ATK-08, every tool invoked with the path of the contract, runs against Hermes; against OpenCode, the runtime tests run its shell and the hub's tools, and the guarantees below do not depend on which engine holds the tools.
+
 ## What an instance reaches on the network
 
 The level is the operator's choice, `network.egress` in the [configuration](configuration.md) ([ADR 0024](decisions/0024-three-levels-of-network-access.md)); the network guard of the instance enforces it, below the agent, and the agent cannot change it.
@@ -51,7 +66,7 @@ No level reaches a protected network. A tool whose HTTP client follows `HTTPS_PR
 
 ## Python and pytest
 
-`python3`, `python` and `pytest` on the `PATH` of a turn are the image's own Python (3.14) with pytest and its wheels preinstalled, at the versions and hashes of the `tests` verification kit (`images/instance/requirements-tests.txt`, kept equal to the kit's by a unit test). They work offline, so a `sealed` instance runs the tests it writes. The kit runs Python 3.12: a test that depends on the minor version of Python may behave differently in the instance and in the sandbox. Hermes itself runs from its own virtual environment, which this does not touch.
+`python3`, `python` and `pytest` on the `PATH` of a turn are the image's own Python (3.14) with pytest and its wheels preinstalled, at the versions and hashes of the `tests` verification kit (`images/instance/requirements-tests.txt`, kept equal to the kit's by a unit test). They work offline, so a `sealed` instance runs the tests it writes. The kit runs Python 3.12: a test that depends on the minor version of Python may behave differently in the instance and in the sandbox. Hermes itself runs from its own virtual environment, which this does not touch. The OpenCode image is built on the same Python 3.12 as the kit, with the same pinned wheels (`images/instance-opencode/requirements-tests.txt`).
 
 ## The hub surface
 
