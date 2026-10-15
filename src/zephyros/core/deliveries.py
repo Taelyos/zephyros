@@ -61,6 +61,7 @@ from zephyros.core.report import (
     render,
     with_addendum,
 )
+from zephyros.core.tools import ToolsDigest, ToolsError, ToolsProbe
 
 SYSTEM_PRINCIPAL = "hub"
 MAX_ACCEPTANCE_FILE = 64 * 1024
@@ -251,6 +252,7 @@ class DeliveryService:
         events: Callable[[str, Mapping[str, object]], None] | None = None,
         rejections_alert: int | None = None,
         simulation: bool = False,
+        tools: ToolsProbe | None = None,
     ) -> None:
         self._area = area
         self._runner = runner
@@ -269,6 +271,7 @@ class DeliveryService:
         self._events = events or (lambda _event, _payload: None)
         self._rejections_alert = rejections_alert
         self._simulation = simulation
+        self._tools = tools
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._jobs: deque[_Job] = deque()
@@ -753,10 +756,18 @@ class DeliveryService:
         outcomes: dict[str, Any] = {}
         log = ""
         never_run: tuple[str, ...] = ()
+        # The tools the sandbox mounts, measured before the run and after it (ADR 0030): a
+        # verdict names the tools it was reached with, and none is reached with tools that
+        # changed under it.
+        tools = self._measure_tools()
         if tests:
             result = self._runner.run(
                 VerificationRequest(project_id, self._kit, files, tests, self._timeout)
             )
+            if tools is not None and self._measure_tools() != tools:
+                raise VerificationError(
+                    "the tools changed during the verification: its results are not kept"
+                )
             outcomes = dict(result.outcomes)
             log = result.log
             never_run = deselected_tests(result, tests)
@@ -764,11 +775,13 @@ class DeliveryService:
             project_id,
             Action.VERIFICATION_RUN,
             Outcome.OK,
+            Reason.NONE,
             delivery=record.delivery_id,
             kit=self._kit,
             tests=len(tests),
             passed=sum(1 for o in outcomes.values() if o.value == "passed"),
             never_run=len(never_run),
+            **({} if tools is None else {"tools": tools.fingerprint}),
         )
         gate = compute_gate(objects, outcomes)
         self._record_event(
@@ -800,6 +813,10 @@ class DeliveryService:
             missing_acceptance_files=missing,
             set_aside_paths=set_aside,
             built_by=self._built_by(project_id, record.delivery_id),
+            tools=tools,
+            tools_of_turns=(
+                () if tools is None else self._tools_of_turns(project_id, record.delivery_id)
+            ),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)
@@ -929,6 +946,32 @@ class DeliveryService:
             ):
                 engine, version = parameters.get("engine"), parameters.get("engine_version")
                 label = f"{engine} {version}" if engine and version else "not recorded"
+                turns[label] = turns.get(label, 0) + 1
+        return tuple(turns.items())
+
+    def _measure_tools(self) -> ToolsDigest | None:
+        if self._tools is None:
+            return None
+        try:
+            return self._tools.digest()
+        except ToolsError as error:
+            raise VerificationError(
+                "the tools cannot be mounted: " + "; ".join(error.problems[:3])
+            ) from None
+
+    def _tools_of_turns(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
+        """The tools each turn of either side found, by fingerprint, for the turns started
+        before the delivery came in (ADR 0030); a start that recorded none is "none"."""
+        turns: dict[str, int] = {}
+        for item in self._audit.read(project_id, 0, 100_000):
+            if item.outcome is not Outcome.OK:
+                continue
+            parameters = json.loads(item.parameters)
+            if item.action is Action.DELIVERY_PUSH and parameters.get("delivery_id") == delivery_id:
+                break
+            if item.action is Action.TURN_START and item.principal == SYSTEM_PRINCIPAL:
+                found = parameters.get("tools")
+                label = found if isinstance(found, str) and found else "none"
                 turns[label] = turns.get(label, 0) + 1
         return tuple(turns.items())
 

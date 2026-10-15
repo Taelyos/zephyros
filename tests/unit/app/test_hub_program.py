@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import stat
 import threading
@@ -204,4 +205,78 @@ def test_the_turns_record_the_engine_each_side_runs_with_its_pinned_version(
     assert program.turn_engines(config) == {
         Side.OWNER: hermes,
         Side.CONTRACTOR: TurnEngine("opencode", OPENCODE_VERSION),
+    }
+
+
+# ----------------------------------------------------------------------------- ADR 0030
+def tools_of(tmp_path: Path) -> Path:
+    root = tmp_path / "tools"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "sim").write_bytes(b"#!/bin/sh\necho ok\n")
+    root.chmod(0o755)
+    (root / "bin").chmod(0o755)
+    (root / "bin" / "sim").chmod(0o755)
+    return root
+
+
+def test_a_hub_whose_tools_an_instance_could_change_does_not_start(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tools_of(tmp_path)
+    (root / "bin" / "sim").chmod(0o777)
+    config = make_config(tmp_path)
+    config = replace(config, tools=replace(config.tools, source=str(root)))
+    monkeypatch.setattr(program, "load_config", lambda _path: config)
+    assert main(["--config", str(tmp_path / "z.toml")]) == 2
+    error = capsys.readouterr().err
+    assert "refused to start: the tools directory cannot be mounted:" in error
+    assert "'bin/sim' is writable by every user" in error
+    assert not Path(config.paths.data_dir).exists()
+
+
+def test_the_hub_logs_the_fingerprint_of_the_tools_when_it_starts(tmp_path: Path) -> None:
+    from zephyros.adapters.project_tools import ToolsDirectory
+
+    root = tools_of(tmp_path)
+    config = make_config(tmp_path)
+    config = replace(config, tools=replace(config.tools, source=str(root)))
+    loop = asyncio.new_event_loop()
+    stop = asyncio.Event()
+    thread = threading.Thread(
+        target=lambda: loop.run_until_complete(run(config, agent_bind="127.0.0.1", stop=stop)),
+        daemon=True,
+    )
+    thread.start()
+    operator_url = f"http://127.0.0.1:{config.hub.operator_port}"
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                if httpx.get(f"{operator_url}/operator/health", timeout=1).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            assert time.monotonic() < deadline, "the hub did not start"
+            time.sleep(0.05)
+        token = Path(config.paths.operator_token_file).read_text(encoding="ascii").strip()
+        answer = httpx.post(
+            f"{operator_url}/operator/call",
+            json={"tool": "log.read", "arguments": {"stream": "hub", "limit": 100}},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        records = [json.loads(line) for line in answer.json()["data"]["records"]]
+    finally:
+        loop.call_soon_threadsafe(stop.set)
+        thread.join(timeout=15)
+    checks = [r for r in records if r["action"] == "tools.check"]
+    assert len(checks) == 1
+    measured = ToolsDirectory(root).digest()
+    assert checks[0]["outcome"] == "ok"
+    assert checks[0]["parameters"] == {
+        "source": str(root),
+        "target": "/opt/project-tools",
+        "tools": measured.fingerprint,
+        "files": 1,
+        "bytes": measured.bytes,
     }

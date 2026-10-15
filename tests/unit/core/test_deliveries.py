@@ -49,6 +49,7 @@ from zephyros.core.ports.verification import (
 )
 from zephyros.core.principals import MAIN_AGENT, OPERATOR, instance_principal
 from zephyros.core.projects import ProjectService
+from zephyros.core.tools import ToolsProbe
 
 BASE = {"calc.py": b"x = 1\n", "checks/add.txt": b"test_add: pass\n"}
 
@@ -116,6 +117,7 @@ def service(
     log_store: InMemoryLogStore | None = None,
     secrets: Callable[[], list[str]] | None = None,
     rejections_alert: int | None = None,
+    tools: ToolsProbe | None = None,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
@@ -149,6 +151,7 @@ def service(
         events=events,
         secrets=secrets,
         rejections_alert=rejections_alert,
+        tools=tools,
     )
     return made, project, audit, store
 

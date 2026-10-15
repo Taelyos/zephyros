@@ -72,7 +72,11 @@ RUN mkdir -p /opt/data /work && chown 10000:10000 /opt/data /work && chmod 0700 
 # servers, read the configuration, instructions and skills of other agents (~/.claude, ~/.agents)
 # or the configuration a delivered repository carries. None of them is a guarantee of Zephyros:
 # the network guard holds whatever OpenCode tries (ADR 0024); these keep a turn from trying.
+# The tools of the project (ADR 0030), when the operator gives some, are mounted read-only at
+# /opt/project-tools: their bin directory comes last on the PATH, so a tool runs by its name and
+# never hides a program of the image.
 ENV HOME=/opt/data \
+    PATH="${PATH}:/opt/project-tools/bin" \
     TMPDIR=/tmp \
     XDG_CONFIG_HOME=/opt/opencode/config \
     OPENCODE_TEST_HOME=/opt/opencode/home \
@@ -87,6 +91,9 @@ ENV HOME=/opt/data \
     OPENCODE_DISABLE_PROJECT_CONFIG=1 \
     OPENCODE_DISABLE_TERMINAL_TITLE=1
 
+# A login shell (the terminal of Hermes starts one) takes its PATH from /etc/profile, not from
+# the image: the profile adds the bin directory of the tools there too.
+COPY --chmod=0644 project-tools.sh /etc/profile.d/zephyros-project-tools.sh
 USER 10000:10000
 WORKDIR /work
 ENTRYPOINT ["/opt/zephyros/entrypoint.sh"]

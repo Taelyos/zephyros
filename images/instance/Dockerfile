@@ -30,8 +30,14 @@ RUN /usr/local/bin/python3 -m pip install --no-cache-dir --no-deps --only-binary
     && ln -s /usr/local/bin/python3 /opt/zephyros/bin/python \
     && ln -s "$(dirname "$(readlink -f /usr/local/bin/python3)")/pytest" /opt/zephyros/bin/pytest \
     && /opt/zephyros/bin/pytest --version
-ENV PATH=/opt/zephyros/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The tools of the project (ADR 0030), when the operator gives some, are mounted read-only at
+# /opt/project-tools: their bin directory comes last, so a tool runs by its name and never hides
+# a program of the image.
+ENV PATH=/opt/zephyros/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/project-tools/bin
 
+# A login shell (the terminal of Hermes starts one) takes its PATH from /etc/profile, not from
+# the image: the profile adds the bin directory of the tools there too.
+COPY --chmod=0644 project-tools.sh /etc/profile.d/zephyros-project-tools.sh
 USER 10000:10000
 WORKDIR /work
 ENTRYPOINT ["/opt/zephyros/entrypoint.sh"]

@@ -10,7 +10,7 @@ version. Each schema carries its own version number.
 
 | Surface | 0.2.0 | Unreleased |
 | --- | --- | --- |
-| Configuration schema | 1.15.0 | 1.16.0 |
+| Configuration schema | 1.15.0 | 1.17.0 |
 | Agent engine interface | 0.2.0 | 0.2.0 (a second real implementation) |
 
 ### Added
@@ -30,8 +30,26 @@ version. Each schema carries its own version number.
 - Each start of a turn records the agent engine and its version in the log (`turn.start`:
   `engine`, `engine_version`), and the evidence report of a delivery names the engines of the
   Contractor turns before it ("Built by the agent of the Contractor").
+- The tools of a project (ADR 0030): `tools.source` (configuration schema 1.17.0) names a
+  directory of the machine, a simulator or a test bench and its scripts, that the filter mounts
+  read-only, not recursively, at `/opt/project-tools` in every turn, Owner and Contractor, and in
+  every sandbox of verification; its `bin` comes last on the `PATH` of the three images, and of a
+  login shell of a turn (`/etc/profile.d`). The hub refuses to start when the user of the
+  instances could change an entry, or when a link is absolute or leads out of the directory, and
+  names each path. It fingerprints the directory
+  when it starts (`tools.check`), at each start of a turn (`turn.start`: `tools`) and before and
+  after each verification (`verification.run`: `tools`): a verification whose tools changed
+  during the run ends in an error. The evidence report gives the fingerprint and flags the turns
+  that found other tools. `zephyros tools check DIR` checks a directory as the hub does and
+  prints its fingerprint. `scripts/deploy.sh` takes the directory from `ZEPHYROS_TOOLS`.
+- `verification.timeout_seconds` goes up to 86 400 s (it stopped at 3 600 s): an acceptance test
+  may play several runs of a simulator. The default stays 300 s.
 
 ### Known limits
+- The images do not share a C library (Debian glibc for Hermes, Alpine musl for OpenCode and the
+  `tests` kit): a tool linked against the glibc of the machine runs in a Hermes turn and not at
+  the gate. The tools must be statically linked or carry their loader and libraries
+  (docs/configuration.md, "The tools of a project").
 - OpenCode has been run with the obedient stub, a scripted model, not yet with a real model: its
   behaviour with one, and the measures of a turn, remain to be shown. It does not read the
   `AGENTS.md` of the work directory as instructions, asks the model for a session title (one more

@@ -26,6 +26,7 @@ from typing import Any
 from zephyros.core.config import DEFAULT_EGRESS, DEFAULT_ENGINE, DEFAULT_RESOLVERS, Config
 from zephyros.core.ports.agent_engine import AgentEngine, Side, TurnRequest
 from zephyros.core.principals import is_project_id
+from zephyros.core.tools import TOOLS_PATH
 
 LABEL_MANAGED = "org.zephyros.managed"
 LABEL_PROJECT = "org.zephyros.project"
@@ -92,6 +93,9 @@ class Policy:
     """The agent engine of a Contractor instance (ADR 0029); an Owner instance runs Hermes."""
     opencode_image: str | None = None
     """The image of an instance that runs OpenCode."""
+    tools_source: str | None = None
+    """The tools directory of the machine (ADR 0030), bound read-only at TOOLS_PATH in every
+    turn and every sandbox; None when the projects have none."""
 
     def engine(self, side: Side) -> str:
         """The name of the agent engine that the instance of `side` runs."""
@@ -130,6 +134,7 @@ class Policy:
             egress_port=config.hub.egress_port,
             contractor_engine=config.instances.contractor_engine,
             opencode_image=config.images.opencode,
+            tools_source=config.tools.source,
             sandbox_images=(
                 ((config.verification.kit, config.verification.kit_image),)
                 if config.verification.kit_image
@@ -230,6 +235,25 @@ def inside(subnet: ipaddress.IPv4Network, text: str) -> ipaddress.IPv4Address:
 
 
 # ----------------------------------------------------------------------------- templates
+def tools_mounts(policy: Policy) -> list[dict[str, Any]]:
+    """The tools of the projects, when there are some (ADR 0030): the one bind of a host path
+    the filter makes. Read-only, and not recursive, so that a file system mounted somewhere
+    under the directory on the machine is not carried in (it would escape the read-only flag
+    and the fingerprint); private, so that nothing mounted later on either side reaches the
+    other."""
+    if policy.tools_source is None:
+        return []
+    return [
+        {
+            "Type": "bind",
+            "Source": policy.tools_source,
+            "Target": TOOLS_PATH,
+            "ReadOnly": True,
+            "BindOptions": {"Propagation": "rprivate", "NonRecursive": True},
+        }
+    ]
+
+
 def network_spec(project_id: str, side: Side, subnet: ipaddress.IPv4Network) -> dict[str, Any]:
     gateway = subnet.network_address + 1
     return {
@@ -347,7 +371,10 @@ def sandbox_spec(policy: Policy, project_id: str, run: str, kit: str) -> dict[st
         {
             "NetworkMode": "none",
             "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=64m"},  # noqa: S108  # reason: a container path
-            "Mounts": [{"Type": "volume", "Source": name, "Target": WORK_PATH, "ReadOnly": False}],
+            "Mounts": [
+                {"Type": "volume", "Source": name, "Target": WORK_PATH, "ReadOnly": False},
+                *tools_mounts(policy),
+            ],
             "LogConfig": copy.deepcopy(SANDBOX_LOG),
         }
     )
@@ -417,6 +444,7 @@ def turn_spec(
                     "Target": WORK_PATH,
                     "ReadOnly": False,
                 },
+                *tools_mounts(policy),
             ],
         }
     )
@@ -578,15 +606,24 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
     labels_ = spec.get("Labels")
     if not isinstance(labels_, Mapping) or labels_.get(LABEL_MANAGED) != "true":
         raise SpecError("a container carries the Zephyros labels")
-    mounts = host.get("Mounts", [])
+    mounts = list(host.get("Mounts", []))
     if role is Role.GUARD and mounts:
         raise SpecError("a guard mounts nothing")
+    # The tools are the one bind of a host path: exactly the template's, read-only, at the end
+    # of the list; every other mount is a Zephyros volume (ADR 0030).
+    tools = tools_mounts(policy)
+    if tools and mounts[-1:] == tools:
+        mounts = mounts[:-1]
     prefix = "zs-sbx-" if role is Role.SANDBOX else "zs-vol-"
     for mount in mounts:
         if mount.get("Type") != "volume" or not str(mount.get("Source", "")).startswith(prefix):
-            raise SpecError("only Zephyros volumes are mounted")
+            raise SpecError(
+                "only Zephyros volumes, and the tools of the configuration, are mounted"
+            )
         if mount.get("Target") not in (HOME_PATH, WORK_PATH):
             raise SpecError("a volume is mounted on the home or the work path")
+    if tools and role is not Role.GUARD and len(host.get("Mounts", [])) == len(mounts):
+        raise SpecError("a turn and a sandbox mount the tools of the configuration")
     if role is Role.SANDBOX:
         if spec.get("User") != INSTANCE_USER:
             raise SpecError("a sandbox runs as the unprivileged user")

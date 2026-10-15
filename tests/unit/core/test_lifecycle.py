@@ -37,6 +37,7 @@ from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing, TurnEn
 from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
+from zephyros.core.tools import ToolsDigest, ToolsError, ToolsProbe
 from zephyros.core.webhooks import NotifyResult
 
 OWNER, CONTRACTOR = Side.OWNER, Side.CONTRACTOR
@@ -115,6 +116,7 @@ class Rig:
         continuity: Continuity | None = None,
         notify: Any = None,
         engines: Mapping[Side, TurnEngine] | None = None,
+        tools: ToolsProbe | None = None,
     ) -> InstanceManager:
         self.notifier = Notifier(self.audit, notify)
         return InstanceManager(
@@ -128,6 +130,7 @@ class Rig:
             continuity=continuity,
             notifier=self.notifier,
             engines=engines,
+            tools=tools,
         )
 
     # -- driving
@@ -966,3 +969,62 @@ def test_a_guard_found_with_another_level_while_watched_is_taken_down(rig: Rig) 
     assert (info.state, info.last_turn) == (State.ABSENT, "egress_changed")
     assert rig.nothing_left()
     assert len(_level_records(rig)) == 1
+
+
+# ----------------------------------------------------------------------------- tools (ADR 0030)
+class ScriptedTools:
+    """A tools probe that gives each digest of a list in turn, or raises a ToolsError."""
+
+    def __init__(self, *answers: ToolsDigest | ToolsError) -> None:
+        self.answers = list(answers)
+        self.asked = 0
+
+    def digest(self) -> ToolsDigest:
+        answer = self.answers[min(self.asked, len(self.answers) - 1)]
+        self.asked += 1
+        if isinstance(answer, ToolsError):
+            raise answer
+        return answer
+
+
+FIRST_TOOLS = ToolsDigest("sha256:" + "1" * 64, 2, 300)
+OTHER_TOOLS = ToolsDigest("sha256:" + "2" * 64, 2, 301)
+
+
+def test_each_start_of_a_turn_records_the_tools_it_finds(rig: Rig) -> None:
+    tools = ScriptedTools(FIRST_TOOLS, OTHER_TOOLS)
+    rig.manager = rig.make_manager(tools=tools)
+    rig.manager.reconcile()
+    rig.start()
+    rig.manager.stop(PROJECT, CONTRACTOR)
+    rig.run_jobs()
+    rig.start(side=Side.OWNER)
+    starts = [
+        json.loads(r.parameters)
+        for r in rig.records()
+        if (r.action, r.outcome) == (Action.TURN_START, Outcome.OK)
+    ]
+    assert [(s["side"], s["tools"]) for s in starts] == [
+        ("contractor", FIRST_TOOLS.fingerprint),
+        ("owner", OTHER_TOOLS.fingerprint),
+    ]
+
+
+def test_a_start_without_tools_records_none(rig: Rig) -> None:
+    rig.start()
+    starts = [r for r in rig.records() if (r.action, r.outcome) == (Action.TURN_START, Outcome.OK)]
+    assert "tools" not in json.loads(starts[0].parameters)
+
+
+def test_a_turn_whose_tools_are_refused_does_not_start_and_the_log_says_why(rig: Rig) -> None:
+    refused = ToolsError(["'bin/sim' is writable by every user"])
+    rig.manager = rig.make_manager(tools=ScriptedTools(refused))
+    rig.manager.reconcile()
+    rig.start()
+    assert turn_name(PROJECT, CONTRACTOR) not in rig.docker.containers
+    assert rig.manager.status(PROJECT, CONTRACTOR).last_turn == "start_failed:tools_refused"
+    failed = [
+        r for r in rig.records() if (r.action, r.outcome) == (Action.TURN_START, Outcome.ERROR)
+    ]
+    assert json.loads(failed[0].parameters)["problems"] == ["'bin/sim' is writable by every user"]
+    assert rig.nothing_left()

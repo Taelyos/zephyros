@@ -10,7 +10,10 @@ COPY requirements.txt zephyros_kit.py kit-run /opt/kit/
 RUN python -m pip install --no-cache-dir --no-deps --only-binary :all: --require-hashes -r /opt/kit/requirements.txt \
     && chmod 0555 /opt/kit/kit-run \
     && mkdir /work && chown 10000:10000 /work
-ENV PYTHONPATH=/opt/kit PYTHONDONTWRITEBYTECODE=1
+# The tools of the project (ADR 0030), when the operator gives some, are mounted read-only at
+# /opt/project-tools, as in the turns: their bin directory comes last on the PATH, so an
+# acceptance test runs a tool by its name, and no tool hides the Python that judges.
+ENV PYTHONPATH=/opt/kit PYTHONDONTWRITEBYTECODE=1 PATH="${PATH}:/opt/project-tools/bin"
 USER 10000:10000
 WORKDIR /work
 ENTRYPOINT ["/opt/kit/kit-run"]

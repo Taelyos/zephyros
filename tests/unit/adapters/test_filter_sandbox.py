@@ -158,12 +158,24 @@ def test_a_second_manifest_is_refused() -> None:
         json.dumps(
             {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 0}
         ).encode(),
+        json.dumps(
+            {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 86401}
+        ).encode(),
     ],
 )
 def test_a_manifest_that_does_not_check_is_refused(broken: bytes) -> None:
     with pytest.raises(BrokerError) as caught:
         read_archive(make_tar([(MANIFEST, broken), ("test_a.py", b"x\n")]))
     assert caught.value.code in ("bad_request", "bad_json")
+
+
+def test_a_run_of_hours_is_asked_for_as_the_configuration_allows() -> None:
+    """ADR 0030: verification.timeout_seconds goes up to a day, and so does the manifest."""
+    raw = json.dumps(
+        {"project_id": PROJECT, "kit": "tests", "tests": list(TESTS), "timeout_seconds": 86400}
+    ).encode()
+    manifest, _clean = read_archive(make_tar([(MANIFEST, raw), ("test_a.py", b"x\n")]))
+    assert manifest.timeout_seconds == 86400
 
 
 def test_a_member_that_is_not_a_plain_regular_file_is_refused() -> None:

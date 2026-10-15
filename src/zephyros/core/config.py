@@ -27,7 +27,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.16.0"
+CONFIG_SCHEMA_VERSION = "1.17.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -254,6 +254,29 @@ def _instances() -> Table:
                     )
                 ),
                 "The Contractor instance of each project",
+            ),
+        )
+    )
+
+
+TOOLS_SOURCE = r"(?!.*//)(?!.*/\.\.?(?:/|$))/[A-Za-z0-9._@+-][A-Za-z0-9._@+/-]*(?<!/)"
+"""A tools directory as the configuration names it: an absolute path that is not `/`, with no
+`.` or `..` step, no doubled or trailing `/`, and none of the characters (a colon, a comma, a
+space, a quote) that a mount option or a script would read as something else."""
+
+
+def _tools() -> Table:
+    return Table(
+        (
+            Field(
+                "source",
+                Text(max_length=1024, pattern=TOOLS_SOURCE),
+                "The tools of the projects (ADR 0030): a directory of the machine, as the "
+                "container runtime sees it, mounted read-only at /opt/project-tools in every "
+                "turn, Owner and Contractor, and in every sandbox of verification. The hub "
+                "reads it at the same path, refuses to start when the user of the instances "
+                "could change it or a link leads out of it, and writes its fingerprint to the "
+                "log and to the evidence report",
             ),
         )
     )
@@ -537,8 +560,9 @@ def _verification() -> Table:
             ),
             Field(
                 "timeout_seconds",
-                Integer(30, 3600),
-                "Longest run of the acceptance tests of one delivery",
+                Integer(30, 86400),
+                "Longest run of the acceptance tests of one delivery; the delivery loop runs one "
+                "verification at a time, so a long one makes the next deliveries wait",
                 default=300,
             ),
             Field(
@@ -787,6 +811,7 @@ SCHEMA = Schema(
             Field("gateway", _gateway(), "Model gateway"),
             Field("forge", _forge(), "Forge"),
             Field("verification", _verification(), "Verification of deliveries"),
+            Field("tools", _tools(), "The tools of the projects, mounted read-only"),
             Field("notifications", _notifications(), "Signed notifications to the main agent"),
             Field("continuity", _continuity(), "The escalation ladder of a task without activity"),
         )
@@ -938,6 +963,12 @@ class VerificationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolsConfig:
+    source: str | None = None
+    """The tools directory, or None when the projects have none (ADR 0030)."""
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     hub: HubConfig
     paths: PathsConfig
@@ -952,6 +983,7 @@ class Config:
     notifications: NotificationsConfig
     continuity: ContinuityConfig
     instances: InstancesConfig = InstancesConfig()
+    tools: ToolsConfig = ToolsConfig()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1006,6 +1038,7 @@ def parse_config(data: object) -> Config:
     notifications = section("notifications")
     continuity = section("continuity")
     instances = section("instances")
+    tools = section("tools")
     return Config(
         hub=HubConfig(
             agent_port=_int(hub, "agent_port"),
@@ -1092,4 +1125,5 @@ def parse_config(data: object) -> Config:
             unblock_seconds=_int(continuity, "unblock_seconds"),
             rejections=_int(continuity, "rejections"),
         ),
+        tools=ToolsConfig(source=cast("str | None", tools.get("source"))),
     )

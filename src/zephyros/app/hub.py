@@ -3,10 +3,11 @@
     python -m zephyros.app.hub --config /etc/zephyros/zephyros.toml
 
 The program refuses to start when the configuration violates the schema, and names each faulty
-key, or when the operator channel and the main-agent endpoint could listen on an instance network
-(ADR 0025). The operator and main-agent tokens are written to their files the first time (mode
-0600), with a lifetime, and rotated on the control socket (ADR 0026); the hub keeps only their
-hashes.
+key, when the operator channel and the main-agent endpoint could listen on an instance network
+(ADR 0025), or when the tools directory of the projects could be changed from an instance or
+holds a link that leads out of it (ADR 0030). The operator and main-agent tokens are written to
+their files the first time (mode 0600), with a lifetime, and rotated on the control socket
+(ADR 0026); the hub keeps only their hashes.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from zephyros.adapters.http.server import (
     serve_on,
     stop_all,
 )
+from zephyros.adapters.project_tools import ToolsDirectory
 from zephyros.adapters.providers.openai_compatible import FileCredential, OpenAiCompatibleProvider
 from zephyros.adapters.sandbox_runner import SandboxRunner
 from zephyros.adapters.sqlite.continuity_store import SqliteContinuityStore
@@ -58,7 +60,7 @@ from zephyros.adapters.system_clock import SystemClock
 from zephyros.adapters.webhooks import Post, WebhookSender
 from zephyros.adapters.worker import InstanceWorker
 from zephyros.app.channel_tokens import ChannelTokens, build_control_app
-from zephyros.core.audit import AuditLog
+from zephyros.core.audit import HUB_STREAM, SYSTEM_PRINCIPAL, Action, AuditEvent, AuditLog, Outcome
 from zephyros.core.clock import Clock
 from zephyros.core.config import Config, ConfigError
 from zephyros.core.containers import Policy
@@ -84,6 +86,7 @@ from zephyros.core.ports.verification import (
 )
 from zephyros.core.projects import ProjectService
 from zephyros.core.tokens import TokenService
+from zephyros.core.tools import TOOLS_PATH, ToolsError, ToolsProbe
 from zephyros.core.webhooks import EVENTS_SCHEMA_VERSION, NotifyResult
 
 AGENT_BIND = "0.0.0.0"  # noqa: S104  # reason: the agent endpoint is reached on every instance network
@@ -234,6 +237,7 @@ def build_hub(
     rejections_alert: int | None = None,
     refusals_per_minute: int | None = None,
     simulation: bool = False,
+    tools: ToolsProbe | None = None,
 ) -> HubRuntime:
     if (instances is None) == (instance_factory is None):
         raise ValueError("give either an instance control or a way to build one")
@@ -281,6 +285,7 @@ def build_hub(
             events=events,
             rejections_alert=rejections_alert,
             simulation=simulation,
+            tools=tools,
         )
     hub = Hub(
         audit=audit,
@@ -319,6 +324,10 @@ async def run(
     pool = config.network.instance_pool
     operator_hosts = listen_hosts(config.hub.operator_bind, pool)
     main_agent_hosts = listen_hosts(config.hub.main_agent_bind, pool)
+    # Nor does a hub whose tools an instance could change (ADR 0030): measured once here, the
+    # fingerprint goes to the log below.
+    tools = None if config.tools.source is None else ToolsDirectory(Path(config.tools.source))
+    measured = None if tools is None else tools.digest()
     control = bind_unix_socket(Path(config.paths.control_socket), CONTROL_MODE)
     data_dir = Path(config.paths.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -348,6 +357,7 @@ async def run(
                 continuity=continuity,
                 notifier=notifier,
                 engines=turn_engines(config),
+                tools=tools,
             )
 
     forge, forge_credentials = build_forge(config)
@@ -388,8 +398,25 @@ async def run(
         rejections_alert=config.continuity.rejections,
         refusals_per_minute=config.limits.refusals_per_minute,
         simulation=config.gateway.simulation,
+        tools=tools,
     )
     hub = runtime.hub
+    if tools is not None and measured is not None:
+        runtime.audit.append(
+            AuditEvent(
+                HUB_STREAM,
+                SYSTEM_PRINCIPAL,
+                Action.TOOLS_CHECK,
+                Outcome.OK,
+                parameters={
+                    "source": tools.root,
+                    "target": TOOLS_PATH,
+                    "tools": measured.fingerprint,
+                    "files": measured.files,
+                    "bytes": measured.bytes,
+                },
+            )
+        )
     channel_tokens = ChannelTokens.from_config(config, runtime.tokens, runtime.audit)
     channel_tokens.prepare()
     workers: list[InstanceWorker] = []
@@ -462,7 +489,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     try:
         asyncio.run(run(config))
-    except (ListenError, SocketPathError) as error:
+    except (ListenError, SocketPathError, ToolsError) as error:
         print(f"refused to start: {error}", file=sys.stderr)
         return 2
     return 0
