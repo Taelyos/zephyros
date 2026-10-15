@@ -37,7 +37,13 @@ def request(prompt: str) -> TurnRequest:
 def test_a_turn_hands_the_prompt_to_the_entrypoint_as_one_word() -> None:
     description = OpenCodeEngine().describe_turn(request("Build it."))
     assert description.command == ("turn", "Build it.")
-    assert dict(description.environment) == {**ENVIRONMENT, "ZEPHYROS_REASONING_ECHO": "false"}
+    assert dict(description.environment) == {
+        **ENVIRONMENT,
+        "ZEPHYROS_REASONING_ECHO": "false",
+        "ZEPHYROS_CONTEXT_WINDOW": "256000",
+        "ZEPHYROS_COMPACTION_TOKENS": "224000",
+        "ZEPHYROS_SESSION": "continue",
+    }
 
 
 def test_a_turn_says_whether_the_model_wants_its_reasoning_back() -> None:
@@ -62,7 +68,9 @@ def make_entrypoint(directory: Path) -> Path:
     recorder = directory / "opencode"
     recorder.write_text(
         f'#!/bin/sh\nprintf "%s\\n" "$@" > "{directory}/argv"\ncat > "{directory}/stdin"\n'
-        f'printf "%s" "${{ZEPHYROS_REASONING_FIELD-unset}}" > "{directory}/field"\n',
+        f'printf "%s" "${{ZEPHYROS_REASONING_FIELD-unset}}" > "{directory}/field"\n'
+        f'printf "%s %s" "${{ZEPHYROS_CONTEXT_WINDOW-unset}}" "${{ZEPHYROS_OPENCODE_INPUT-unset}}"'
+        f' > "{directory}/limits"\n',
         encoding="utf-8",
     )
     recorder.chmod(0o755)
@@ -262,3 +270,53 @@ def test_a_database_that_cannot_be_read_gives_no_session_and_says_why(tmp_path: 
 def test_a_session_id_that_is_not_one_is_never_given(tmp_path: Path) -> None:
     make_database(tmp_path, [("--help", "global", None, 1, None)])
     assert find_session(tmp_path).stdout == ""
+
+
+def test_a_turn_carries_the_context_and_the_session_it_was_given() -> None:
+    """ADR 0033 and ADR 0016: the image turns them into the configuration of the engine."""
+    given = TurnRequest(
+        "p_a",
+        Side.CONTRACTOR,
+        "http://10.200.0.3:8080",
+        "served-model",
+        "zph_c_t",
+        "Go.",
+        context_window=1_000_000,
+        compaction_tokens=900_000,
+        new_session=True,
+    )
+    environment = OpenCodeEngine().describe_turn(given).environment
+    assert environment["ZEPHYROS_CONTEXT_WINDOW"] == "1000000"
+    assert environment["ZEPHYROS_COMPACTION_TOKENS"] == "900000"
+    assert environment["ZEPHYROS_SESSION"] == "new"
+
+
+def test_a_new_session_runs_opencode_without_continuing_and_without_looking_for_one(
+    entrypoint: Path,
+) -> None:
+    """ADR 0016: OpenCode creates a session, which later turns find as the last one written."""
+    (entrypoint.parent / "found").write_text("ses_old", encoding="utf-8")
+    argv, stdin = run(entrypoint, "turn", "Start again.", extra={"ZEPHYROS_SESSION": "new"})
+    assert argv == ["run"]
+    assert stdin == "Start again.\n"
+    argv, _stdin = run(entrypoint, "turn", "Go on.", extra={"ZEPHYROS_SESSION": "continue"})
+    assert argv == ["run", "--session", "ses_old"]
+
+
+@pytest.mark.parametrize(
+    ("given", "limits"),
+    [
+        (
+            {"ZEPHYROS_CONTEXT_WINDOW": "1000000", "ZEPHYROS_COMPACTION_TOKENS": "900000"},
+            "1000000 916000",
+        ),
+        ({}, "256000 240000"),
+        ({"ZEPHYROS_CONTEXT_WINDOW": "x", "ZEPHYROS_COMPACTION_TOKENS": "1e6"}, "256000 240000"),
+    ],
+)
+def test_the_entrypoint_sets_the_window_and_an_input_limit_above_the_compaction(
+    entrypoint: Path, given: dict[str, str], limits: str
+) -> None:
+    """ADR 0033: OpenCode compacts at its input limit less the 16 000 tokens of the answer."""
+    run(entrypoint, "turn", "Go.", extra=given)
+    assert (entrypoint.parent / "limits").read_text(encoding="utf-8") == limits

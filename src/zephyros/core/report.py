@@ -11,6 +11,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from zephyros.core.context import CONTEXT_FLOOR
 from zephyros.core.gate import GateResult
 from zephyros.core.masking import mask_text
 from zephyros.core.ports.delivery import Delivery
@@ -68,6 +69,9 @@ class ReportInput:
     tools_of_turns: tuple[tuple[str, int], ...] = ()
     """The tools the turns of both sides found before the delivery came in: each fingerprint
     (or "none"), with how many turns found it."""
+    context_of_turns: tuple[tuple[int, int, int], ...] = ()
+    """The context the agents of both sides worked with in the turns before the delivery came
+    in (ADR 0033): each (context, window of the model, turns), as the starts recorded it."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -107,6 +111,18 @@ def _tools_lines(tools: ToolsDigest | None, sandbox: bool) -> list[str]:
     ]
 
 
+def _context_lines(contexts: tuple[tuple[int, int, int], ...]) -> list[str]:
+    if not contexts:
+        return []
+    return [
+        "- Context of the agents: "
+        + ", ".join(
+            f"{tokens} tokens of a window of {window} ({turns} turn{'' if turns == 1 else 's'})"
+            for tokens, window, turns in contexts
+        )
+    ]
+
+
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
     """The evidence report. Without the output of the run (`with_output` false), it is the
     report the Contractor reads: the output shows the Owner side's acceptance tests, the outcome
@@ -121,6 +137,21 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
         lines += [
             "**SIMULATION** — carried with the simulated model provider (EXG-46): no model call "
             "left this machine.",
+            "",
+        ]
+    below = [
+        (tokens, turns)
+        for tokens, _window, turns in report.context_of_turns
+        if tokens < CONTEXT_FLOOR
+    ]
+    if below:
+        counted = sum(turns for _tokens, turns in below)
+        smallest = min(tokens for tokens, _turns in below)
+        lines += [
+            f"**CONTEXT BELOW THE FLOOR** — {counted} turn{'' if counted == 1 else 's'} before "
+            f"this delivery ran with a context of {smallest} tokens or less, below "
+            f"{CONTEXT_FLOOR} (ADR 0033): the agents may have lost the thread of their work. "
+            "The real run of 2026-10-15 failed with 80 000 tokens.",
             "",
         ]
     lines += [
@@ -141,6 +172,7 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             or "no turn of the Contractor recorded"
         ),
         *_tools_lines(report.tools, bool(report.outcomes)),
+        *_context_lines(report.context_of_turns),
         f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(

@@ -23,8 +23,17 @@ upstream_model = "deepseek-v4.1-flash" # what the gateway sends to the provider
 models = ["deepseek-v4.1-flash"]       # the models the gateway may send: this one alone
 session_header = "x-opencode-session"
 reasoning_echo = true                  # DeepSeek wants its reasoning back (see below)
+context_window = 1000000               # the window of the model, as the provider gives it
 simulation = false
 ```
+
+`context_window` is the context window of the model, as its provider gives it: the agents work
+with all of it, and compact a tenth before its end
+([the context of the agents](configuration.md#the-context-of-the-agents), [ADR 0033](decisions/0033-the-agents-work-with-the-context-of-the-model.md)).
+Declare the provider's figure. `context_tokens` gives the agents less of it (400 000 or 256 000
+for a model of a million tokens). Below 256 000 the hub accepts it and warns, at
+`deploy.sh up`, at every start and in each evidence report: the run of 2026-10-15 compacted the
+Owner at 80 000 tokens, 14 times in 46 minutes, and the Owner lost the thread of its work.
 
 `session_header` names the session header the provider asks for — OpenCode Go refuses a call
 without `x-opencode-session` (HTTP 400), and the gateway sends one stable session name per
@@ -137,6 +146,10 @@ instead, so the variables always resolve.
 5. **The Contractor side**: `instance.start` with `"side": "contractor"` and the task. From here
    the real agents work: they call the hub's tools (MCP), fetch the staging base, push a branch
    and declare the delivery.
+
+   Each turn of a side continues its conversation. If one has gone wrong, start the next turn of
+   that side in a new session: `"session": "new"` in `instance.start` (the operator alone; see
+   [running](running.md)).
 
 6. **The hub decides.** It replays the acceptance tests in a sandbox, computes the gate, writes
    the evidence report and opens the pull request on the forge. On GitHub, the pull request opens

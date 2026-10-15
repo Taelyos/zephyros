@@ -64,6 +64,7 @@ from zephyros.core.audit import HUB_STREAM, SYSTEM_PRINCIPAL, Action, AuditEvent
 from zephyros.core.clock import Clock
 from zephyros.core.config import Config, ConfigError
 from zephyros.core.containers import Policy
+from zephyros.core.context import AgentContext, context_banner
 from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.contract import ContractService
@@ -312,6 +313,29 @@ def build_hub(
     return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries, ladders)
 
 
+def record_context(context: AgentContext, audit: AuditLog) -> None:
+    """The context the agents work with, in the log of the hub at every start, and a warning on
+    the standard error too when it is below the floor (ADR 0033)."""
+    warning = context.warning()
+    audit.append(
+        AuditEvent(
+            HUB_STREAM,
+            SYSTEM_PRINCIPAL,
+            Action.CONTEXT_CHECK,
+            Outcome.OK,
+            parameters={
+                "context_window": context.window,
+                "context_tokens": context.tokens,
+                "compaction_tokens": context.compaction,
+                "below_floor": context.below_floor,
+                **({"warning": warning} if warning else {}),
+            },
+        )
+    )
+    if warning:
+        print(context_banner(warning), file=sys.stderr, flush=True)
+
+
 async def run(
     config: Config,
     *,
@@ -418,6 +442,7 @@ async def run(
                 },
             )
         )
+    record_context(config.gateway.context, runtime.audit)
     channel_tokens = ChannelTokens.from_config(config, runtime.tokens, runtime.audit)
     channel_tokens.prepare()
     workers: list[InstanceWorker] = []

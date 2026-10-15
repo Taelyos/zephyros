@@ -511,6 +511,57 @@ def test_the_operator_starts_and_stops_an_instance_through_the_control(env: Env)
     assert gone.data["state"] == "absent"
 
 
+def test_the_operator_starts_a_turn_in_a_new_session(env: Env) -> None:
+    """ADR 0016, amended: a session gone wrong is left behind, on the operator's word."""
+    started = env.call(
+        "operator",
+        "instance.start",
+        project_id=env.project_a,
+        side="owner",
+        prompt="Start again.",
+        session="new",
+    )
+    assert started.ok
+    assert env.instances.new_sessions == [(env.project_a, env.principal("owner_a").side)]
+    record = next(r for r in env.audit.read(env.project_a) if r.action is Action.INSTANCE_START)
+    assert json.loads(record.parameters)["session"] == "new"
+
+
+def test_a_turn_continues_its_session_unless_the_operator_says_new(env: Env) -> None:
+    for session in ({}, {"session": "continue"}):
+        assert env.call(
+            "main", "instance.start", project_id=env.project_a, side="owner", prompt="go", **session
+        ).ok
+        env.call("operator", "instance.stop", project_id=env.project_a, side="owner")
+    assert env.instances.new_sessions == []
+    records = [r for r in env.audit.read(env.project_a) if r.action is Action.INSTANCE_START]
+    assert all("session" not in json.loads(r.parameters) for r in records)
+
+
+def test_only_the_operator_starts_a_new_session(env: Env) -> None:
+    response = env.call(
+        "main", "instance.start", project_id=env.project_a, side="owner", prompt="go", session="new"
+    )
+    assert not response.ok
+    assert response.failure is not None
+    assert response.failure.reason is Reason.FORBIDDEN
+    assert env.instances.prompts == []
+
+
+def test_a_session_is_continue_or_new(env: Env) -> None:
+    response = env.call(
+        "operator",
+        "instance.start",
+        project_id=env.project_a,
+        side="owner",
+        prompt="go",
+        session="fresh",
+    )
+    assert not response.ok
+    assert response.failure is not None
+    assert response.failure.reason is Reason.INVALID_REQUEST
+
+
 def test_an_instance_cannot_start_or_stop_instances(env: Env) -> None:
     for who in ("owner_a", "contractor_a"):
         for tool in ("instance.start", "instance.stop", "instance.status"):

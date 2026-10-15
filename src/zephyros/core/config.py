@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlsplit
 
+from zephyros.core.context import (
+    CONTEXT_FLOOR,
+    DEFAULT_CONTEXT,
+    DEFAULT_CONTEXT_WINDOW,
+    MINIMUM_CONTEXT_WINDOW,
+    AgentContext,
+)
 from zephyros.core.schema import (
     CORE_ADDRESS,
     Array,
@@ -508,6 +515,24 @@ def _gateway() -> Table:
                 default=None,
             ),
             Field(
+                "context_window",
+                Integer(MINIMUM_CONTEXT_WINDOW, 10_000_000),
+                "The context window of the model the gateway serves, in tokens, as its provider "
+                "gives it: the agents work with all of it unless gateway.context_tokens says "
+                "less, and compact early enough that the provider never refuses a call for its "
+                "length (ADR 0033)",
+                default=DEFAULT_CONTEXT_WINDOW,
+            ),
+            Field(
+                "context_tokens",
+                Integer(32_000, 10_000_000),
+                "The context the agents work with, in tokens, when less than the window of the "
+                "model: for a model of a million tokens, 400 000 or 256 000. Below "
+                f"{CONTEXT_FLOOR} it is accepted with a warning at every start and in every "
+                "evidence report. Unset, the whole window",
+                default=None,
+            ),
+            Field(
                 "timeout_seconds",
                 Integer(10, 3600),
                 "How long the gateway waits for one answer of the provider, in seconds, when it is "
@@ -735,6 +760,21 @@ def _rule_simulation(data: Mapping[str, object]) -> list[Problem]:
     return []
 
 
+def _rule_context(data: Mapping[str, object]) -> list[Problem]:
+    """The agents cannot work with more context than the model has (ADR 0033)."""
+    gateway = _section(data, "gateway")
+    tokens, window = gateway.get("context_tokens"), gateway.get("context_window")
+    if isinstance(tokens, int) and isinstance(window, int) and tokens > window:
+        return [
+            Problem(
+                "gateway.context_tokens",
+                f"{tokens} is more than the window of the model (gateway.context_window, "
+                f"{window}): the provider would refuse the calls",
+            )
+        ]
+    return []
+
+
 def _rule_notifications(data: Mapping[str, object]) -> list[Problem]:
     notifications = _section(data, "notifications")
     url = str(notifications.get("url", ""))
@@ -903,6 +943,10 @@ SCHEMA = Schema(
             _rule_simulation,
         ),
         Rule(
+            "gateway.context_tokens is at most gateway.context_window",
+            _rule_context,
+        ),
+        Rule(
             "notifications.url and notifications.secret are set together, the url is http(s), "
             "and the secret is at least 16 characters",
             _rule_notifications,
@@ -989,6 +1033,8 @@ class GatewayConfig:
     simulation: bool
     timeout_seconds: int = 600
     reasoning_echo: bool = False
+    context: AgentContext = DEFAULT_CONTEXT
+    """The window of the model and the context the agents work with (ADR 0033)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1148,6 +1194,10 @@ def parse_config(data: object) -> Config:
             session_header=cast("str | None", gateway.get("session_header")),
             timeout_seconds=_int(gateway, "timeout_seconds"),
             reasoning_echo=_reasoning_echo(gateway),
+            context=AgentContext(
+                _int(gateway, "context_window"),
+                cast("int", gateway.get("context_tokens", gateway["context_window"])),
+            ),
         ),
         forge=ForgeConfig(
             provider=cast("str", forge["provider"]),

@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Any
 
 from zephyros.core.config import DEFAULT_EGRESS, DEFAULT_ENGINE, DEFAULT_RESOLVERS, Config
+from zephyros.core.context import DEFAULT_CONTEXT, AgentContext
 from zephyros.core.ports.agent_engine import AgentEngine, Side, TurnRequest
 from zephyros.core.principals import is_project_id
 from zephyros.core.tools import TOOLS_PATH
@@ -99,6 +100,8 @@ class Policy:
     reasoning_echo: bool = False
     """Whether the model wants the reasoning of its answers back (gateway.reasoning_echo): each
     turn tells its engine to keep it in the conversation (ADR 0032)."""
+    context: AgentContext = DEFAULT_CONTEXT
+    """The window of the model and where the engines compact (ADR 0033)."""
 
     def engine(self, side: Side) -> str:
         """The name of the agent engine that the instance of `side` runs."""
@@ -139,6 +142,7 @@ class Policy:
             opencode_image=config.images.opencode,
             tools_source=config.tools.source,
             reasoning_echo=config.gateway.reasoning_echo,
+            context=config.gateway.context,
             sandbox_images=(
                 ((config.verification.kit, config.verification.kit_image),)
                 if config.verification.kit_image
@@ -406,6 +410,8 @@ def turn_spec(
     hub_address: str,
     token: str,
     prompt: str,
+    *,
+    new_session: bool = False,
 ) -> dict[str, Any]:
     """One turn of an instance: the agent engine as user 10000, in the namespace of the guard,
     with the home and work volumes and one secret, the project token. The engine gives the
@@ -425,6 +431,9 @@ def turn_spec(
             token,
             prompt,
             reasoning_echo=policy.reasoning_echo,
+            context_window=policy.context.window,
+            compaction_tokens=policy.context.compaction,
+            new_session=new_session,
         )
     )
     command = list(description.command)

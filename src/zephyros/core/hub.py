@@ -58,7 +58,7 @@ from zephyros.core.instances import MAX_PROMPT, InstanceControl
 from zephyros.core.limits import RefusalBudget
 from zephyros.core.notifications import Notifier
 from zephyros.core.ports.agent_engine import Side
-from zephyros.core.principals import OPERATOR, Principal
+from zephyros.core.principals import OPERATOR, Principal, PrincipalKind
 from zephyros.core.projects import CREATE_INPUT, ProjectService
 from zephyros.core.rights import decide
 from zephyros.core.schema import Array, Choice, Field, Free, Integer, Problem, Table, Text
@@ -196,6 +196,14 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
                 Text(min_length=1, max_length=MAX_PROMPT, multiline=True),
                 "The first prompt of the turn",
                 required=True,
+            ),
+            Field(
+                "session",
+                Choice(("continue", "new")),
+                "continue (the default) goes on with the conversation of the instance; new "
+                "starts a new one, the earlier ones kept and no longer read. new is the "
+                "operator's alone",
+                default="continue",
             ),
             scoped=True,
         ),
@@ -1158,7 +1166,11 @@ class Hub:
         project_id = self._known_project(caller, arguments)
         side = Side(str(arguments["side"]))
         prompt = str(arguments["prompt"])
-        info = self._instances.start(project_id, side, prompt)
+        new_session = arguments.get("session", "continue") == "new"
+        if new_session and caller.principal.kind is not PrincipalKind.OPERATOR:
+            # A conversation thrown away is work lost: the operator decides (ADR 0016).
+            raise Refusal(Reason.FORBIDDEN, "a new session is the operator's to start")
+        info = self._instances.start(project_id, side, prompt, new_session=new_session)
         digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
         return ToolResult(
             {"project_id": project_id, "side": side.value, "state": info.state.value},
@@ -1167,6 +1179,7 @@ class Hub:
                 "side": side.value,
                 "prompt_sha256": digest,
                 "prompt_chars": len(prompt),
+                **({"session": "new"} if new_session else {}),
             },
             project_id,
         )

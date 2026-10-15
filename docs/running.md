@@ -43,6 +43,12 @@ scripts/deploy.sh call instance.status '{"project_id": "p_…", "side": "contrac
 scripts/deploy.sh down
 ```
 
+Each turn of an instance continues its conversation ([ADR 0016](decisions/0016-one-agent-container-per-turn.md)). When a conversation has gone wrong (an agent lost in summaries of summaries, a session that keeps failing), the operator starts the next turn in a new one: `"session": "new"` in `instance.start`. That turn and the following ones work in the new session; the earlier ones stay on the home volume, unread, and the work volume keeps the work. Only the operator may ask for it (`forbidden` for the main agent), and each `turn.start` in the log records `session`, `continue` or `new`.
+
+```bash
+scripts/deploy.sh call instance.start '{"project_id": "p_…", "side": "owner", "prompt": "…", "session": "new"}'
+```
+
 `down` stops the hub and the filter, then removes what the filter created outside compose: the guards, turns and sandboxes, and their networks. The instances keep their volumes; the hub creates a guard and a network again when it starts an instance. `down` removes every container and network labelled `org.zephyros.managed` on the host: run one deployment per machine. The model behind the gateway is the obedient stub unless the configuration names a provider (`ZEPHYROS_EXTRA_CONFIG`, see [configuration](configuration.md)).
 
 Both listeners are published on the loopback interface of the machine only, and never listen on an instance network ([ADR 0025](decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). Their tokens are in the hub's data volume (`/var/lib/zephyros/operator.token` and `main-agent.token`, mode 0600) and expire after 90 days by default. To replace one, before or after it expires:

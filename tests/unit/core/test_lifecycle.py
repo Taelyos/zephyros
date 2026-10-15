@@ -31,6 +31,7 @@ from zephyros.core.audit import Action, AuditLog, AuditRecord, Outcome, Reason
 from zephyros.core.broker import BrokerError
 from zephyros.core.containers import Policy, guard_name, network_name, turn_name, volume_name
 from zephyros.core.containers import VolumeKind as Volume
+from zephyros.core.context import AgentContext
 from zephyros.core.continuity import Continuity, TaskState
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.errors import Refusal
@@ -1047,3 +1048,44 @@ def test_a_turn_refused_for_its_tools_does_not_learn_their_path_on_the_machine(
         "the tools directory cannot be read: No such file or directory"
     ]
     assert all(str(tmp_path) not in r.parameters for r in rig.records())
+
+
+# ----------------------------------------------------------------------------- session (ADR 0016)
+def turn_environment(rig: Rig, side: Side = CONTRACTOR) -> dict[str, str]:
+    env = rig.docker.containers[turn_name(PROJECT, side)]["Config"]["Env"]
+    return dict(entry.split("=", 1) for entry in env)
+
+
+def test_a_new_session_reaches_the_turn_and_the_log_and_the_next_turn_continues(
+    rig: Rig,
+) -> None:
+    rig.manager.start(PROJECT, CONTRACTOR, "Start again.", new_session=True)
+    rig.run_jobs()
+    assert turn_environment(rig)["ZEPHYROS_SESSION"] == "new"
+    rig.manager.stop(PROJECT, CONTRACTOR)
+    rig.run_jobs()
+    rig.start()
+    assert turn_environment(rig)["ZEPHYROS_SESSION"] == "continue"
+    starts = [
+        json.loads(r.parameters)
+        for r in rig.records()
+        if (r.action, r.outcome) == (Action.TURN_START, Outcome.OK)
+    ]
+    assert [s["session"] for s in starts] == ["new", "continue"]
+
+
+# ----------------------------------------------------------------------------- context (ADR 0033)
+def test_each_start_of_a_turn_records_the_context_of_the_agents(rig: Rig) -> None:
+    rig.manager = rig.make_manager(replace(TIMING, context=AgentContext(1_000_000, 400_000)))
+    rig.manager.reconcile()
+    rig.start()
+    [start] = [
+        json.loads(r.parameters)
+        for r in rig.records()
+        if (r.action, r.outcome) == (Action.TURN_START, Outcome.OK)
+    ]
+    assert (start["context_window"], start["context_tokens"], start["compaction_tokens"]) == (
+        1_000_000,
+        400_000,
+        400_000,
+    )

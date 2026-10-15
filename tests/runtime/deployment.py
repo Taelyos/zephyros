@@ -176,9 +176,24 @@ class Deployment:
         return [json.loads(line) for line in lines]
 
     # ------------------------------------------------------------------ turns
-    def turn(self, project_id: str, side: Side, prompt: str, seconds: float = 240) -> str:
-        """Start a turn and wait for its end. Returns how it ended."""
-        self.data("instance.start", project_id=project_id, side=side.value, prompt=prompt)
+    def turn(
+        self,
+        project_id: str,
+        side: Side,
+        prompt: str,
+        seconds: float = 240,
+        *,
+        session: str | None = None,
+    ) -> str:
+        """Start a turn, in a new session when `session` is "new", and wait for its end.
+        Returns how it ended."""
+        self.data(
+            "instance.start",
+            project_id=project_id,
+            side=side.value,
+            prompt=prompt,
+            **({} if session is None else {"session": session}),
+        )
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             status = self.data("instance.status", project_id=project_id, side=side.value)

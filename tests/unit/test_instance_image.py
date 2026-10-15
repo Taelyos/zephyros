@@ -1,6 +1,7 @@
 """The instance image carries the test runner of the "tests" kit (ADR 0024, sealed level), and
-the managed scope that leaves the agent every power inside its instance (ADR 0031) and keeps the
-reasoning of the model when the hub says so (ADR 0032)."""
+the managed scope that leaves the agent every power inside its instance (ADR 0031), keeps the
+reasoning of the model when the hub says so (ADR 0032) and compacts where the hub says (ADR
+0033), and the entrypoint that starts a new session when the operator asks (ADR 0016)."""
 
 from __future__ import annotations
 
@@ -74,29 +75,39 @@ def test_the_model_entry_keeps_the_reasoning_when_the_hub_says_so() -> None:
     assert "reasoning_echo: ${ZEPHYROS_REASONING_ECHO}" in _section("model")
 
 
-def _expanded_echo(tmp_path: Path, environment: dict[str, str]) -> str:
-    """What the entrypoint hands Hermes in ZEPHYROS_REASONING_ECHO, with a recorder in the
-    place of Hermes and a home in a temporary directory."""
+HANDED = ("ZEPHYROS_REASONING_ECHO", "ZEPHYROS_CONTEXT_WINDOW", "ZEPHYROS_COMPACTION_TOKENS")
+
+
+def _entrypoint(tmp_path: Path, environment: dict[str, str]) -> dict[str, str]:
+    """What the entrypoint hands Hermes, with a recorder in the place of Hermes and of the
+    helper of a new session, and a home in a temporary directory: each variable of HANDED, and
+    `new_session` with the words of the helper when it ran."""
     if shutil.which("sh") is None:
         pytest.skip("not applicable here: no POSIX shell")
+    tmp_path.mkdir(parents=True, exist_ok=True)
     recorder = tmp_path / "hermes"
     recorder.write_text(
-        f'#!/bin/sh\nprintf "%s" "${{ZEPHYROS_REASONING_ECHO-unset}}" > "{tmp_path}/echo"\n',
+        "#!/bin/sh\n"
+        + "".join(f'printf "%s" "${{{name}-unset}}" > "{tmp_path}/{name}"\n' for name in HANDED),
         encoding="utf-8",
     )
-    recorder.chmod(0o755)
+    helper = tmp_path / "python"
+    helper.write_text(f'#!/bin/sh\nprintf "%s " "$@" > "{tmp_path}/new_session"\n', "utf-8")
+    for program in (recorder, helper):
+        program.chmod(0o755)
     seed = tmp_path / "seed.yaml"
     seed.write_text("model: {}\n", encoding="utf-8")
     text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert text.count("/opt/hermes/.venv/bin/hermes") == 1
-    assert text.count("/opt/zephyros/seed.yaml") == 1
+    replaced = {
+        "/opt/hermes/.venv/bin/hermes": str(recorder),
+        "/opt/hermes/.venv/bin/python": str(helper),
+        "/opt/zephyros/seed.yaml": str(seed),
+    }
+    for path, local in replaced.items():
+        assert text.count(path) == 1, path
+        text = text.replace(path, local)
     script = tmp_path / "entrypoint.sh"
-    script.write_text(
-        text.replace("/opt/hermes/.venv/bin/hermes", str(recorder)).replace(
-            "/opt/zephyros/seed.yaml", str(seed)
-        ),
-        encoding="utf-8",
-    )
+    script.write_text(text, encoding="utf-8")
     script.chmod(0o755)
     subprocess.run(  # noqa: S603  # reason: the repository's own script, with a recorder
         [str(script), "chat"],
@@ -109,7 +120,14 @@ def _expanded_echo(tmp_path: Path, environment: dict[str, str]) -> str:
         timeout=30,
     )
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == "model: {}\n"
-    return (tmp_path / "echo").read_text(encoding="utf-8")
+    handed = {name: (tmp_path / name).read_text(encoding="utf-8") for name in HANDED}
+    if (tmp_path / "new_session").exists():
+        handed["new_session"] = (tmp_path / "new_session").read_text(encoding="utf-8").strip()
+    return handed
+
+
+def _expanded_echo(tmp_path: Path, environment: dict[str, str]) -> str:
+    return _entrypoint(tmp_path, environment)["ZEPHYROS_REASONING_ECHO"]
 
 
 @pytest.mark.parametrize(
@@ -123,3 +141,48 @@ def test_the_entrypoint_gives_hermes_true_or_an_empty_text(
     cannot expand (it keeps the placeholder), would read as true."""
     environment = {} if given is None else {"ZEPHYROS_REASONING_ECHO": given}
     assert _expanded_echo(tmp_path, environment) == expanded
+
+
+# ----------------------------------------------------------------------------- context (ADR 0033)
+def test_the_managed_scope_takes_the_window_and_the_compaction_from_the_turn() -> None:
+    assert "context_length: ${ZEPHYROS_CONTEXT_WINDOW}" in _section("model")
+    assert _section("compression") == [
+        "threshold: 0.95",
+        "threshold_tokens: ${ZEPHYROS_COMPACTION_TOKENS}",
+    ]
+
+
+def test_the_entrypoint_hands_the_context_of_the_hub_or_its_defaults(tmp_path: Path) -> None:
+    given = {"ZEPHYROS_CONTEXT_WINDOW": "1000000", "ZEPHYROS_COMPACTION_TOKENS": "900000"}
+    handed = _entrypoint(tmp_path / "given", given)
+    assert (handed["ZEPHYROS_CONTEXT_WINDOW"], handed["ZEPHYROS_COMPACTION_TOKENS"]) == (
+        "1000000",
+        "900000",
+    )
+    for broken in ({}, {"ZEPHYROS_CONTEXT_WINDOW": "1M", "ZEPHYROS_COMPACTION_TOKENS": "-1"}):
+        handed = _entrypoint(tmp_path / "broken", broken)
+        assert (handed["ZEPHYROS_CONTEXT_WINDOW"], handed["ZEPHYROS_COMPACTION_TOKENS"]) == (
+            "256000",
+            "224000",
+        )
+
+
+# ----------------------------------------------------------------------------- session (ADR 0016)
+def test_the_entrypoint_starts_a_new_session_only_when_asked(tmp_path: Path) -> None:
+    for session, ran in (("new", True), ("continue", False), (None, False), ("NEW", False)):
+        home = tmp_path / str(session)
+        home.mkdir()
+        handed = _entrypoint(home, {} if session is None else {"ZEPHYROS_SESSION": session})
+        assert ("new_session" in handed) is ran, session
+        if ran:
+            assert handed["new_session"] == "-I /opt/zephyros/new_session.py"
+
+
+def test_the_new_session_follows_the_name_the_engine_continues() -> None:
+    """The helper creates the next session of the lineage of the name `--continue` gives."""
+    from zephyros.adapters.hermes.engine import SESSION
+
+    helper = (ROOT / "images" / "instance" / "new_session.py").read_text(encoding="utf-8")
+    assert f'SESSION = "{SESSION}"' in helper
+    dockerfile = (ROOT / "images" / "instance" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY --chmod=0644 new_session.py /opt/zephyros/new_session.py" in dockerfile

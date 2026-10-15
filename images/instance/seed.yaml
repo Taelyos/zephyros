@@ -16,11 +16,8 @@ mcp_servers:
 tools:
   tool_search:
     enabled: "off"
-# An instance continues its conversation from turn to turn (ADR 0016). Hermes compacts it past
-# this many tokens: the third real run's Contractor reached 188 000 tokens a call, and each call
-# took longer than the last. The hub holds the state that matters (contract, deliveries).
-compression:
-  threshold_tokens: 80000
+# An instance continues its conversation from turn to turn (ADR 0016). Where Hermes compacts
+# it is in the managed scope (managed.yaml), from the context of the agents (ADR 0033).
 # No review of the turn after it ends: Hermes' automatic background review is one more call
 # with the whole conversation (145 000 tokens in the third real run, after the hub had ended the
 # turn), and it writes the instance's own memories and skills from what the turn read — content

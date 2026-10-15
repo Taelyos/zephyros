@@ -25,3 +25,13 @@ The hub has to give work to an instance, and the permitted container operations 
 ## Alternatives considered
 - A long-running Hermes gateway with a webhook listener: works, but adds an inbound port, two Unix sockets and in-process scheduling inside every instance.
 - Hermes Relay, an outbound connection to a connector service: documented as experimental, with a wire contract that may change.
+
+## Amendment (Proposed, 2026-10-15): the operator can start a new session
+
+A session that went wrong could not be left behind: every turn continued it, and the restarts of the continuity ladder too. A real run showed the case: an Owner whose conversation had been compacted fourteen times went on from a summary of a summary.
+
+- `instance.start` takes `session`: `continue`, the default, or `new`. With `new`, the turn starts a new session of the instance, and every later turn continues that one. The earlier sessions stay on the home volume, unread.
+- `new` is the operator's alone. Another caller asking for it is refused (`forbidden`): a conversation dropped is work lost. The restarts of the continuity ladder always continue.
+- Each `turn.start` records `session`, `continue` or `new`. The `instance.start` of a new session records `session: new`.
+- Hermes: the image's entrypoint first creates the next session of the lineage, `zephyros #N`. Hermes then resumes it for the name `zephyros`, as the latest of that name. OpenCode: the entrypoint runs `opencode run` without `--session` or `--continue`, so OpenCode creates a session, which the next turns find as the last one written.
+- Nothing else changes: the volumes, the token and the guard of the instance stay. The work volume keeps the work of the old session.

@@ -596,6 +596,20 @@ SUMMARIES: list[tuple[export.LogRecord, str, str]] = [
         "Contractor turn begins (12,345 prompt chars)",
     ),
     (
+        record("turn.start", {"side": "owner", "prompt_chars": 3, "session": "new"}),
+        "turn",
+        "Owner turn begins (3 prompt chars, in a new session)",
+    ),
+    (
+        record(
+            "instance.start",
+            {"side": "owner", "prompt_chars": 3, "session": "new"},
+            principal="operator",
+        ),
+        "turn",
+        "Operator starts the Owner instance (3 prompt chars, in a new session)",
+    ),
+    (
         record("turn.end", {"side": "owner", "result": "guard_lost"}, "error"),
         "turn",
         "Owner turn ends in error: guard_lost",

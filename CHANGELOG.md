@@ -55,6 +55,21 @@ version. Each schema carries its own version number.
   tells its engine (`ZEPHYROS_REASONING_ECHO`): Hermes sets `model.reasoning_echo`, OpenCode the
   `interleaved` field of its model.
 
+- The agents work with the context window of the model (ADR 0033). `gateway.context_window`
+  (configuration schema 1.18.0, 256 000 tokens when unset) declares it, and
+  `gateway.context_tokens` gives the agents less of it. Both engines compact at the same point:
+  the context of the agents, or the window less a tenth of it when that comes first. Hermes
+  takes `model.context_length` and `compression.threshold_tokens` in its managed scope; OpenCode
+  takes the context and the input limit of its model. They replace the fixed 80 000 and 96 000
+  tokens. Below 256 000, the context is accepted with a warning: by `zephyros config check`
+  (which `scripts/deploy.sh up` runs), on the standard error and in the log of the hub at every
+  start (`context.check`), and at the top of the evidence report of each delivery built so
+  (CONTEXT BELOW THE FLOOR). Each `turn.start` records the window, the context and the point.
+- The operator can start a turn in a new session (ADR 0016, amended): `"session": "new"` in
+  `instance.start`, for Hermes and for OpenCode. That turn and the next ones work in a session
+  of their own; the earlier ones stay, unread. The main agent cannot ask for it (`forbidden`).
+  Each `turn.start` records `session`. The filter's `turn.start` takes `session`.
+
 ### Fixed
 - A Hermes turn no longer refuses its own commands (ADR 0031). Hermes refused, in a one-shot chat
   with nobody to approve, `python3 -c`, a here-document and `execute_code`: a real Owner turn
@@ -62,6 +77,8 @@ version. Each schema carries its own version number.
   instance image turns the approvals off (`approvals.mode: "off"`, and `approve` in every
   context) and lets the file tools write `AGENTS.md` and `CLAUDE.md`. What protects is around
   the agent: the guard, no key, the container, the hub's rights and the gate.
+- An agent no longer compacts its conversation every few minutes: the Owner of a real run
+  compacted 14 times in 46 minutes at 80 000 tokens and lost the thread of its work (ADR 0033).
 - A real run with DeepSeek in thinking mode no longer ends a turn with `failed:exit_1` after an
   answer without reasoning: the gateway dropped `reasoning_content`, and Hermes stripped it under
   a model name without `deepseek`, so the next call was refused (HTTP 400, answered 502).

@@ -1,8 +1,8 @@
 # 0032. The gateway carries the reasoning of the model, and the configuration says whether it goes back
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-15
-- Confirmed by the project owner on 2026-10-15 for the direction: the reasoning of DeepSeek goes back whatever the model is named behind the gateway; nothing rests on that name. The design below is the worker session's.
+- Decided by the project owner on 2026-10-15 for the direction: the reasoning of DeepSeek goes back whatever the model is named behind the gateway; nothing rests on that name. The design below is the coordinating agent's.
 - Extends: [0008](0008-model-gateway-in-hub.md), [0029](0029-the-contractor-can-be-a-third-party-coding-agent.md)
 
 ## Context
@@ -37,7 +37,7 @@ An answer of DeepSeek can come without reasoning (a short answer with two tool c
 
 - Positive: a thinking model that wants its reasoning back works under any name, with either engine, and a strict provider never sees the field.
 - Positive: the model reads its own reasoning again in a loop of tool calls, as its provider intends, rather than a pad.
-- Negative: the conversation the gateway sends grows by the reasoning of every answer it keeps. Both engines compact the conversation at about 80 000 tokens, the reasoning included.
+- Negative: the conversation the gateway sends grows by the reasoning of every answer it keeps. Both engines compact the conversation where the configuration says ([ADR 0033](0033-the-agents-work-with-the-context-of-the-model.md)), the reasoning included.
 - Negative: the default is a rule on names and hosts, which a new family or a new reseller can defeat; the key is there for that, and the gateway's log names the provider's reason for a refused call.
 - Negative: `model.reasoning_echo` and `interleaved` are internals of Hermes 0.21.6 and OpenCode 1.19.0. The runtime test with a provider that demands the field fails when a new version drops them.
 - Not shown: a real model through this path. The runtime test runs a fake provider behind the gateway that refuses an assistant message with tool calls without `reasoning_content`, and answers once with two tool calls and no reasoning; a Hermes turn and an OpenCode turn go to their end, and the provider receives back the reasoning it gave.

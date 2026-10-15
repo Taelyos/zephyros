@@ -42,6 +42,7 @@ from zephyros.core.containers import (
     volume_name,
     volume_spec,
 )
+from zephyros.core.context import AgentContext
 from zephyros.core.ports.agent_engine import Side
 
 PROJECT = "p_abcdef12"
@@ -190,13 +191,16 @@ def test_a_turn_is_the_agent_engine_as_the_unprivileged_user_in_the_guards_names
     ]
     assert "ZEPHYROS_HUB_URL=http://10.200.0.19:8080" in spec["Env"]
     # and no other variable of any kind travels with a turn (ATK-49): no git-hosting
-    # identifier, no forge address, nothing but the engine's four and, at the default
+    # identifier, no forge address, nothing but the engine's seven and, at the default
     # level (regulated), the egress proxy of the hub (ADR 0024).
     assert {entry.split("=", 1)[0] for entry in spec["Env"]} == {
         "ZEPHYROS_HUB_URL",
         "ZEPHYROS_MODEL",
         "ZEPHYROS_TOKEN",
         "ZEPHYROS_REASONING_ECHO",
+        "ZEPHYROS_CONTEXT_WINDOW",
+        "ZEPHYROS_COMPACTION_TOKENS",
+        "ZEPHYROS_SESSION",
         *PROXY_VARIABLES,
     }
     assert "ZEPHYROS_REASONING_ECHO=false" in spec["Env"]
@@ -234,6 +238,9 @@ def test_a_sealed_or_open_turn_is_given_no_proxy(level: str) -> None:
         "ZEPHYROS_MODEL",
         "ZEPHYROS_TOKEN",
         "ZEPHYROS_REASONING_ECHO",
+        "ZEPHYROS_CONTEXT_WINDOW",
+        "ZEPHYROS_COMPACTION_TOKENS",
+        "ZEPHYROS_SESSION",
     }
     check_spec(spec, Role.TURN, policy)
 
@@ -631,3 +638,24 @@ def test_the_policy_takes_the_reasoning_echo_from_the_gateway_of_the_configurati
     assert Policy.from_config(parse_config(document)).reasoning_echo is False
     document["gateway"] = {"reasoning_echo": True}
     assert Policy.from_config(parse_config(document)).reasoning_echo is True
+    document["gateway"] = {"context_window": 1_000_000, "context_tokens": 300_000}
+    assert Policy.from_config(parse_config(document)).context == AgentContext(1_000_000, 300_000)
+
+
+def test_a_turn_tells_its_engine_the_window_of_the_model_and_where_to_compact() -> None:
+    """ADR 0033: the context of the configuration reaches every turn, through the policy."""
+    policy = replace(POLICY, context=AgentContext(1_000_000, 400_000))
+    for engine in (HermesEngine(), OpenCodeEngine()):
+        spec = turn_spec(policy, engine, PROJECT, Side.CONTRACTOR, "10.200.0.19", TOKEN, "Do it.")
+        assert "ZEPHYROS_CONTEXT_WINDOW=1000000" in spec["Env"]
+        assert "ZEPHYROS_COMPACTION_TOKENS=400000" in spec["Env"]
+
+
+def test_a_turn_starts_a_new_session_only_when_asked() -> None:
+    for engine in (HermesEngine(), OpenCodeEngine()):
+        asked = turn_spec(
+            POLICY, engine, PROJECT, Side.CONTRACTOR, "10.200.0.19", TOKEN, "x", new_session=True
+        )
+        assert "ZEPHYROS_SESSION=new" in asked["Env"]
+        plain = turn_spec(POLICY, engine, PROJECT, Side.CONTRACTOR, "10.200.0.19", TOKEN, "x")
+        assert "ZEPHYROS_SESSION=continue" in plain["Env"]

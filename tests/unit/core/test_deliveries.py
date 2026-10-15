@@ -1312,3 +1312,52 @@ def test_a_record_kept_before_the_contractors_report_gives_the_contractor_none()
     assert report_for(kept, instance_principal(Side.CONTRACTOR, project)) is None
     assert report_for(kept, instance_principal(Side.OWNER, project)) == decided.report
     assert decided.report is not None
+
+
+# ----------------------------------------------------------------------------- context (ADR 0033)
+def report_after_turns(*contexts: tuple[int, int]) -> str:
+    """The report of a delivery pushed after turns that ran with these (context, window)."""
+    made, project, audit, _store = service()
+    ready(made, project)
+    for side in ("owner", "contractor"):
+        for tokens, window in contexts:
+            audit.append(
+                AuditEvent(
+                    project,
+                    "hub",
+                    Action.TURN_START,
+                    Outcome.OK,
+                    parameters={"side": side, "context_tokens": tokens, "context_window": window},
+                )
+            )
+    record = made.push(project, make_package({**BASE, "calc.py": b"x = 1\n"}, state_id(BASE)), "w")
+    made.declare(project, record.delivery_id)
+    while made.step():
+        pass
+    report = made.status(project, record.delivery_id).report
+    assert report is not None
+    return report
+
+
+def test_the_report_gives_the_context_of_the_turns_before_the_delivery() -> None:
+    report = report_after_turns((1_000_000, 1_000_000))
+    assert (
+        "- Context of the agents: 1000000 tokens of a window of 1000000 (2 turns)"
+        in report.splitlines()
+    )
+    assert "CONTEXT BELOW THE FLOOR" not in report
+
+
+def test_a_delivery_built_below_the_floor_opens_its_report_with_a_warning() -> None:
+    report = report_after_turns((80_000, 1_000_000), (1_000_000, 1_000_000))
+    [warning] = [line for line in report.splitlines() if "CONTEXT BELOW THE FLOOR" in line]
+    assert report.index(warning) < report.index("**Decision:")
+    assert "2 turns before this delivery ran with a context of 80000 tokens" in warning
+    assert "256000" in warning
+    assert "2026-10-15 failed with 80 000 tokens" in warning
+
+
+def test_a_report_of_turns_that_recorded_no_context_says_nothing_of_it() -> None:
+    report = report_after_turns()
+    assert "Context of the agents" not in report
+    assert "CONTEXT BELOW THE FLOOR" not in report

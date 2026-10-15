@@ -38,7 +38,7 @@ The agent engine is the software that runs an agent in an instance: Hermes Agent
 | `engine_version` | The version of the agent engine that instances run |
 | `describe_turn(TurnRequest) -> TurnDescription` | The words of the command and the environment variables that start a turn |
 
-`TurnRequest` holds the project, the side (`owner` or `contractor`), the URL of the hub's agent endpoint, the model name, the project token, the prompt of the turn, and whether the model wants the reasoning of its answers back with the conversation (`reasoning_echo`, from `gateway.reasoning_echo`, [ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)). The token and the prompt do not appear when the request is printed.
+`TurnRequest` holds the project, the side (`owner` or `contractor`), the URL of the hub's agent endpoint, the model name, the project token, the prompt of the turn, whether the model wants the reasoning of its answers back with the conversation (`reasoning_echo`, from `gateway.reasoning_echo`, [ADR 0032](decisions/0032-the-gateway-carries-the-reasoning-of-the-model.md)), the context window of the model and where the engine compacts (`context_window`, `compaction_tokens`, [ADR 0033](decisions/0033-the-agents-work-with-the-context-of-the-model.md)), and whether the turn starts a new session of the instance (`new_session`, [ADR 0016](decisions/0016-one-agent-container-per-turn.md)). The token and the prompt do not appear when the request is printed.
 
 The filter checks every description before using it, as if it came from outside: no empty word, no NUL, the token never on the command line and present in the environment, plain variable names.
 
@@ -48,7 +48,7 @@ Dummy: `DummyAgentEngine`, a turn that echoes its prompt. Real: `HermesEngine` (
 
 Changes from 0.1: `describe_instance` became `describe_turn`; the image is configured, not described; the files are gone (the configuration of Hermes is in the instance image, seeded from the environment at each start).
 
-Changes from 0.2: `TurnRequest.reasoning_echo`, false by default. Both real engines pass it to their image as `ZEPHYROS_REASONING_ECHO` (`true` or `false`), which sets `model.reasoning_echo` of Hermes and the `interleaved` field of the model of OpenCode.
+Changes from 0.2: `TurnRequest.reasoning_echo`, false by default. Both real engines pass it to their image as `ZEPHYROS_REASONING_ECHO` (`true` or `false`), which sets `model.reasoning_echo` of Hermes and the `interleaved` field of the model of OpenCode. `TurnRequest.context_window` and `compaction_tokens` (256 000 and 224 000 by default; the compaction comes before the end of the window), passed as `ZEPHYROS_CONTEXT_WINDOW` and `ZEPHYROS_COMPACTION_TOKENS`. `TurnRequest.new_session`, false by default, passed as `ZEPHYROS_SESSION` (`new` or `continue`).
 
 ## ModelProvider
 

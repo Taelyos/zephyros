@@ -46,6 +46,25 @@ class TestTurnRequest:
     def test_the_reasoning_is_not_echoed_unless_asked(self) -> None:
         assert _request().reasoning_echo is False
 
+    def test_a_turn_continues_its_session_unless_asked(self) -> None:
+        assert _request().new_session is False
+
+    @pytest.mark.parametrize(("window", "compaction"), [(256_000, 256_000), (256_000, 0)])
+    def test_the_compaction_comes_before_the_end_of_the_window(
+        self, window: int, compaction: int
+    ) -> None:
+        with pytest.raises(ValueError, match="window"):
+            TurnRequest(
+                "p",
+                Side.OWNER,
+                "http://hub.invalid",
+                "m",
+                "zph_o_t",
+                "go",
+                context_window=window,
+                compaction_tokens=compaction,
+            )
+
     def test_sides_are_owner_and_contractor(self) -> None:
         assert {side.value for side in Side} == {"owner", "contractor"}
 

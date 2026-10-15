@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-15
-- Decided by the project owner on 2026-10-15 for the direction: inside the instance, Hermes neither refuses nor asks; what protects is around the agent. The settings below are the worker session's.
+- Decided by the project owner on 2026-10-15 for the direction: inside the instance, Hermes neither refuses nor asks; what protects is around the agent. The design below is the coordinating agent's.
 - Extends: [0002](0002-guarantees-from-os-and-hub.md), [0016](0016-one-agent-container-per-turn.md), [0029](0029-the-contractor-can-be-a-third-party-coding-agent.md)
 
 ## Context

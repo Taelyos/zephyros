@@ -402,6 +402,19 @@
           "type": "boolean",
           "description": "Send the reasoning of the model back to the provider with the conversation, on every assistant message, when it is openai-compatible: a thinking model such as DeepSeek refuses a conversation without it, a strict provider one with it. Unset, it is true when the model at the provider or its host is of a family that asks for it (DeepSeek, Kimi, MiMo), false otherwise (ADR 0032)"
         },
+        "context_window": {
+          "type": "integer",
+          "minimum": 64000,
+          "maximum": 10000000,
+          "description": "The context window of the model the gateway serves, in tokens, as its provider gives it: the agents work with all of it unless gateway.context_tokens says less, and compact early enough that the provider never refuses a call for its length (ADR 0033)",
+          "default": 256000
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 32000,
+          "maximum": 10000000,
+          "description": "The context the agents work with, in tokens, when less than the window of the model: for a model of a million tokens, 400 000 or 256 000. Below 256000 it is accepted with a warning at every start and in every evidence report. Unset, the whole window"
+        },
         "timeout_seconds": {
           "type": "integer",
           "minimum": 10,
@@ -590,6 +603,7 @@
     "verification.kit_image is set when verification.runner is sandbox",
     "images.opencode is set when instances.contractor.engine is opencode",
     "gateway.simulation runs only with the stub provider",
+    "gateway.context_tokens is at most gateway.context_window",
     "notifications.url and notifications.secret are set together, the url is http(s), and the secret is at least 16 characters"
   ]
 }

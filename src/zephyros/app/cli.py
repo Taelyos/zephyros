@@ -20,16 +20,26 @@ import httpx
 from zephyros import __version__
 from zephyros.adapters.config_file import load_config
 from zephyros.core.config import CONFIG_SCHEMA_VERSION, ConfigError
+from zephyros.core.context import context_banner
 from zephyros.core.publication import published_schemas
 
 
 def _config_check(path: Path) -> int:
     try:
-        load_config(path)
+        config = load_config(path)
     except ConfigError as error:
         print(f"refused: {error}", file=sys.stderr)
         return 2
     print(f"{path}: valid (configuration schema {CONFIG_SCHEMA_VERSION})")
+    context = config.gateway.context
+    print(
+        f"the agents work with {context.tokens} tokens of a window of {context.window}, and "
+        f"compact at {context.compaction}"
+    )
+    warning = context.warning()
+    if warning:
+        # Accepted, and said where scripts/deploy.sh shows it (ADR 0033).
+        print(context_banner(warning), file=sys.stderr)
     return 0
 
 

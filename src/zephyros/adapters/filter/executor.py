@@ -329,6 +329,7 @@ class Executor:
             self._hub_address(project_id, side),
             str(request.token),
             str(request.prompt),
+            new_session=request.session == "new",
         )
         check_spec(spec, Role.TURN, self._policy)
         name = turn_name(project_id, side)

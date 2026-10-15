@@ -23,6 +23,9 @@ def test_a_turn_is_one_shot_in_the_session_of_the_instance() -> None:
         "ZEPHYROS_MODEL": "m",
         "ZEPHYROS_TOKEN": "zph_c_t",
         "ZEPHYROS_REASONING_ECHO": "false",
+        "ZEPHYROS_CONTEXT_WINDOW": "256000",
+        "ZEPHYROS_COMPACTION_TOKENS": "224000",
+        "ZEPHYROS_SESSION": "continue",
     }
 
 
@@ -38,3 +41,22 @@ def test_a_turn_says_whether_the_model_wants_its_reasoning_back() -> None:
 def test_a_prompt_that_looks_like_an_option_stays_attached_to_its_option(prompt: str) -> None:
     command = HermesEngine().describe_turn(request(prompt)).command
     assert command == ("chat", f"--query={prompt}", *TAIL)
+
+
+def test_a_turn_carries_the_context_and_the_session_it_was_given() -> None:
+    """ADR 0033 and ADR 0016: the image turns them into the configuration of the engine."""
+    given = TurnRequest(
+        "p_a",
+        Side.CONTRACTOR,
+        "http://10.200.0.3:8080",
+        "served-model",
+        "zph_c_t",
+        "Go.",
+        context_window=1_000_000,
+        compaction_tokens=900_000,
+        new_session=True,
+    )
+    environment = HermesEngine().describe_turn(given).environment
+    assert environment["ZEPHYROS_CONTEXT_WINDOW"] == "1000000"
+    assert environment["ZEPHYROS_COMPACTION_TOKENS"] == "900000"
+    assert environment["ZEPHYROS_SESSION"] == "new"

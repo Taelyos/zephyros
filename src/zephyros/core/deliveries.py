@@ -835,6 +835,7 @@ class DeliveryService:
             tools_of_turns=(
                 () if tools is None else self._tools_of_turns(project_id, record.delivery_id)
             ),
+            context_of_turns=self._context_of_turns(project_id, record.delivery_id),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)
@@ -994,6 +995,25 @@ class DeliveryService:
                 label = found if isinstance(found, str) and found else "none"
                 turns[label] = turns.get(label, 0) + 1
         return tuple(turns.items())
+
+    def _context_of_turns(
+        self, project_id: str, delivery_id: str
+    ) -> tuple[tuple[int, int, int], ...]:
+        """The context of the agents in the turns of both sides started before the delivery came
+        in (ADR 0033), each (context, window, turns); a start that recorded none is left out.
+        Read from the first READ_RECORDS records of the log, as the cost is."""
+        turns: dict[tuple[int, int], int] = {}
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
+            if item.outcome is not Outcome.OK:
+                continue
+            parameters = json.loads(item.parameters)
+            if item.action is Action.DELIVERY_PUSH and parameters.get("delivery_id") == delivery_id:
+                break
+            if item.action is Action.TURN_START and item.principal == SYSTEM_PRINCIPAL:
+                tokens, window = parameters.get("context_tokens"), parameters.get("context_window")
+                if isinstance(tokens, int) and isinstance(window, int):
+                    turns[(tokens, window)] = turns.get((tokens, window), 0) + 1
+        return tuple((tokens, window, count) for (tokens, window), count in turns.items())
 
     def _record_event(
         self,

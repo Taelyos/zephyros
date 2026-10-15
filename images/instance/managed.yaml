@@ -11,6 +11,15 @@ model:
   # named behind the gateway (ADR 0032). Hermes takes the truth of the expanded text: the
   # entrypoint makes it "true" or empty.
   reasoning_echo: ${ZEPHYROS_REASONING_ECHO}
+  # The context window of the model the gateway serves, as the operator declares it
+  # (gateway.context_window, ADR 0033): Hermes cannot know it from a name behind the gateway.
+  context_length: ${ZEPHYROS_CONTEXT_WINDOW}
+# Compaction where the hub says, early enough that the provider never refuses a call for its
+# length, and no earlier (ADR 0033): the agents work with the context the operator gives them.
+# The ratio is set high so that the count decides.
+compression:
+  threshold: 0.95
+  threshold_tokens: ${ZEPHYROS_COMPACTION_TOKENS}
 # The agent has every power inside its instance (ADR 0031): what protects is around it (the
 # network guard, no key, a user without root, a read-only root and read-only tools, the hub's
 # rights, the independent gate). A turn is a one-shot chat with nobody to answer, so Hermes

@@ -66,8 +66,11 @@ class InstanceStore(Protocol):
 
 
 class InstanceControl(Protocol):
-    def start(self, project_id: str, side: Side, prompt: str) -> InstanceInfo:
-        """Make sure the instance exists and start a turn with `prompt`."""
+    def start(
+        self, project_id: str, side: Side, prompt: str, *, new_session: bool = False
+    ) -> InstanceInfo:
+        """Make sure the instance exists and start a turn with `prompt`, in a new session of
+        the instance when `new_session` (ADR 0016)."""
         ...
 
     def stop(self, project_id: str, side: Side) -> InstanceInfo:

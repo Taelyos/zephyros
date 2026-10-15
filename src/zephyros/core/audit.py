@@ -95,6 +95,7 @@ class Action(StrEnum):
     DELIVERY_CHECK = "delivery.check"
     VERIFICATION_RUN = "verification.run"
     TOOLS_CHECK = "tools.check"
+    CONTEXT_CHECK = "context.check"
     GATE_DECISION = "gate.decision"
     PULL_REQUEST_OPEN = "pull_request.open"
     AUTHENTICATION = "authentication"
