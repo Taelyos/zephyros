@@ -34,6 +34,7 @@ TURN_ENVIRONMENT = {
     "ZEPHYROS_HUB_URL",
     "ZEPHYROS_MODEL",
     "ZEPHYROS_TOKEN",
+    "ZEPHYROS_REASONING_ECHO",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "NO_PROXY",
@@ -52,9 +53,11 @@ IMAGE_ENVIRONMENT = {
     "PYTHON_SHA256",
     "SHLVL",
     "PWD",
+    "ZEPHYROS_REASONING_FIELD",
 }
 """What the base image, the runtime and the shell of the entrypoint set: GPG_KEY is the public
-key that signs the Python release, PYTHON_SHA256 its digest."""
+key that signs the Python release, PYTHON_SHA256 its digest; ZEPHYROS_REASONING_FIELD is the
+entrypoint's, from ZEPHYROS_REASONING_ECHO (ADR 0032)."""
 MOUNTS = {
     "/",
     "/opt/data",
