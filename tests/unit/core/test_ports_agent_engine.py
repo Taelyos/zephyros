@@ -16,7 +16,14 @@ def _request(**changes: str) -> TurnRequest:
         "prompt": "private prompt",
     }
     values.update(changes)
-    return TurnRequest(side=Side.OWNER, **values)
+    return TurnRequest(
+        values["project_id"],
+        Side.OWNER,
+        values["agent_endpoint"],
+        values["model"],
+        values["token"],
+        values["prompt"],
+    )
 
 
 class TestTurnRequest:
@@ -35,6 +42,9 @@ class TestTurnRequest:
         assert "secret-value" not in text
         assert "private prompt" not in text
         assert "project_id='p'" in text
+
+    def test_the_reasoning_is_not_echoed_unless_asked(self) -> None:
+        assert _request().reasoning_echo is False
 
     def test_sides_are_owner_and_contractor(self) -> None:
         assert {side.value for side in Side} == {"owner", "contractor"}
