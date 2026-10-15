@@ -23,6 +23,7 @@ None of them protects anything here. Zephyros does not rest a guarantee on the a
 - `approvals.single_query_mode`, `unattended_mode` and `cron_mode` at `approve`: the context of a turn (one-shot chat), and the two others Hermes knows, resolve to running the action should anything read them.
 - `approvals.deny: []`. A deny rule matches the text of a command, so it stops nothing the agent wants done (another spelling, a script, `execute_code` reach the same end), and every refusal costs a call to the model. No strong reason for a rule was found.
 - `security.protected_instruction_files: false`: the agent can write the `AGENTS.md` or `CLAUDE.md` of the project it builds.
+- In the image, `HERMES_WRITE_SAFE_ROOT` empty: the upstream image sets it to the home (`/opt/data`), and the file tools of Hermes (`write_file`, `patch`) then refused every write outside it, the work directory included ("Write denied: '/work/AGENTS.md' is outside HERMES_WRITE_SAFE_ROOT"). Empty, it bounds nothing. It is a variable of the image, not of the configuration: the agent cannot change it for the process that runs it.
 
 **Why it is safe: what protects is around the agent, not in it.** Each of these holds whatever the agent runs, and none of them is a setting of Hermes:
 
@@ -36,7 +37,7 @@ None of them protects anything here. Zephyros does not rest a guarantee on the a
 
 **What Hermes still refuses.** Some refusals of Hermes are in its code, not its configuration, and stay: a few catastrophic commands (a recursive delete of `/`, of a system directory or of the home, formatting a file system, a fork bomb, killing every process, stopping the machine), the deletion of its own interpreter, and a write by its file tools to its own configuration file or to a system path. They cost the work nothing, and the shell does the last two where the user of the instance may write.
 
-**The test.** `tests/runtime/test_reasoning_and_approvals.py` runs a whole Zephyros, with the obedient stub as the model, and a Hermes turn that runs `python3 -c`, a here-document and `execute_code`: each one leaves its file on the work volume, and no tool result says BLOCKED. `tests/unit/test_instance_image.py` holds the managed scope to these settings.
+**The test.** `tests/runtime/test_reasoning_and_approvals.py` runs a whole Zephyros, with the obedient stub as the model. A Hermes turn runs `python3 -c`, a here-document and `execute_code`; another writes `AGENTS.md` and `docs/CLAUDE.md` in the work directory with the file tool. Each leaves its file on the work volume, and no tool result says BLOCKED or denied. `tests/unit/test_instance_image.py` holds the managed scope and the image to these settings.
 
 ## Consequences
 

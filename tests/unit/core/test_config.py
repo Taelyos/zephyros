@@ -348,6 +348,7 @@ def openai_gateway(**keys: object) -> dict[str, Any]:
         ({"upstream_model": "deepseek-v4.1-flash"}, True),
         ({"upstream_model": "DeepSeek-V4-Pro"}, True),
         ({"upstream_model": "mimo-v2.5-pro"}, True),
+        ({"upstream_model": "Kimi-K2-Thinking"}, True),
         ({"upstream_model": "plain-model"}, False),
         ({}, False),  # served-model goes to the provider as it is
         ({"upstream_url": "https://api.deepseek.com/v1"}, True),

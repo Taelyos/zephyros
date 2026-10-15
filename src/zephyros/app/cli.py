@@ -36,10 +36,10 @@ def _config_check(path: Path) -> int:
         f"the agents work with {context.tokens} tokens of a window of {context.window}, and "
         f"compact at {context.compaction}"
     )
-    warning = context.warning()
-    if warning:
+    warnings = config.gateway.context_warnings
+    if warnings:
         # Accepted, and said where scripts/deploy.sh shows it (ADR 0033).
-        print(context_banner(warning), file=sys.stderr)
+        print(context_banner(warnings), file=sys.stderr)
     return 0
 
 

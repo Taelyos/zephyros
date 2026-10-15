@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from zephyros.core.context import CONTEXT_FLOOR
+from zephyros.core.context import CONTEXT_FLOOR, FLOOR_REASON
 from zephyros.core.gate import GateResult
 from zephyros.core.masking import mask_text
 from zephyros.core.ports.delivery import Delivery
@@ -69,9 +69,10 @@ class ReportInput:
     tools_of_turns: tuple[tuple[str, int], ...] = ()
     """The tools the turns of both sides found before the delivery came in: each fingerprint
     (or "none"), with how many turns found it."""
-    context_of_turns: tuple[tuple[int, int, int], ...] = ()
+    context_of_turns: tuple[tuple[int, int, int, int], ...] = ()
     """The context the agents of both sides worked with in the turns before the delivery came
-    in (ADR 0033): each (context, window of the model, turns), as the starts recorded it."""
+    in (ADR 0033): each (context, window of the model, compaction point, turns), as the starts
+    recorded it."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -111,14 +112,15 @@ def _tools_lines(tools: ToolsDigest | None, sandbox: bool) -> list[str]:
     ]
 
 
-def _context_lines(contexts: tuple[tuple[int, int, int], ...]) -> list[str]:
+def _context_lines(contexts: tuple[tuple[int, int, int, int], ...]) -> list[str]:
     if not contexts:
         return []
     return [
         "- Context of the agents: "
         + ", ".join(
-            f"{tokens} tokens of a window of {window} ({turns} turn{'' if turns == 1 else 's'})"
-            for tokens, window, turns in contexts
+            f"{tokens} tokens of a window of {window}, compacting at {compaction} "
+            f"({turns} turn{'' if turns == 1 else 's'})"
+            for tokens, window, compaction, turns in contexts
         )
     ]
 
@@ -140,18 +142,17 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             "",
         ]
     below = [
-        (tokens, turns)
-        for tokens, _window, turns in report.context_of_turns
-        if tokens < CONTEXT_FLOOR
+        (compaction, turns)
+        for _tokens, _window, compaction, turns in report.context_of_turns
+        if compaction < CONTEXT_FLOOR
     ]
-    if below:
-        counted = sum(turns for _tokens, turns in below)
-        smallest = min(tokens for tokens, _turns in below)
+    if below and not report.simulation:  # the simulated provider has no context to lose
+        counted = sum(turns for _compaction, turns in below)
+        lowest = min(compaction for compaction, _turns in below)
         lines += [
             f"**CONTEXT BELOW THE FLOOR** — {counted} turn{'' if counted == 1 else 's'} before "
-            f"this delivery ran with a context of {smallest} tokens or less, below "
-            f"{CONTEXT_FLOOR} (ADR 0033): the agents may have lost the thread of their work. "
-            "The real run of 2026-10-15 failed with 80 000 tokens.",
+            f"this delivery compacted at {lowest} tokens or less, below {CONTEXT_FLOOR} "
+            f"(ADR 0033): {FLOOR_REASON}.",
             "",
         ]
     lines += [

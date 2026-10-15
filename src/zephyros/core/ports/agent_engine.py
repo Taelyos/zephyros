@@ -56,7 +56,8 @@ class TurnRequest:
     compaction_tokens: int = 224_000
     """Where the engine compacts the conversation, in tokens: below the window."""
     new_session: bool = False
-    """The turn starts a new session of the instance; the earlier ones stay, unread."""
+    """The turn starts a new session of the instance; the earlier ones stay, no longer
+    continued."""
 
     def __post_init__(self) -> None:
         for name in ("project_id", "agent_endpoint", "model", "token", "prompt"):

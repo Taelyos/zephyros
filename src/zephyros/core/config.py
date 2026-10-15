@@ -510,8 +510,9 @@ def _gateway() -> Table:
                 "Send the reasoning of the model back to the provider with the conversation, on "
                 "every assistant message, when it is openai-compatible: a thinking model such "
                 "as DeepSeek refuses a conversation without it, a strict provider one with it. "
-                "Unset, it is true when the model at the provider or its host is of a family "
-                "that asks for it (DeepSeek, Kimi, MiMo), false otherwise (ADR 0032)",
+                "Unset, it is true when the model at the provider (its name holds deepseek, kimi "
+                "or mimo) or its host is of a family that asks for it (DeepSeek, Kimi, MiMo), "
+                "false otherwise (ADR 0032)",
                 default=None,
             ),
             Field(
@@ -624,7 +625,9 @@ def _flag(table: Mapping[str, object], key: str) -> bool:
 
 # The model families whose thinking mode wants its reasoning back, as the pinned Hermes Agent
 # knows them (ADR 0032): by a part of the model name at the provider, or by the provider's host.
-REASONING_ECHO_MODELS = ("deepseek", "mimo")
+# Kimi by its name too, where Hermes goes by the host alone: some resellers of Kimi refuse the
+# field, and gateway.reasoning_echo = false is then the way.
+REASONING_ECHO_MODELS = ("deepseek", "kimi", "mimo")
 REASONING_ECHO_HOSTS = (
     "api.deepseek.com",
     "api.kimi.com",
@@ -653,6 +656,12 @@ def _reasoning_echo(gateway: Mapping[str, object]) -> bool:
     upstream = gateway.get("upstream_model", gateway.get("model"))
     url = gateway.get("upstream_url")
     return reasoning_echo_default(str(upstream or ""), url if isinstance(url, str) else None)
+
+
+def _raw_table(data: object, key: str) -> Mapping[str, object]:
+    """A table as the file wrote it, before the defaults."""
+    table = data.get(key) if isinstance(data, Mapping) else None
+    return cast("Mapping[str, object]", table) if isinstance(table, Mapping) else {}
 
 
 def _int(table: Mapping[str, object], key: str) -> int:
@@ -1035,6 +1044,13 @@ class GatewayConfig:
     reasoning_echo: bool = False
     context: AgentContext = DEFAULT_CONTEXT
     """The window of the model and the context the agents work with (ADR 0033)."""
+    context_declared: bool = False
+    """Whether the file names gateway.context_window: if not, the window is a guess."""
+
+    @property
+    def context_warnings(self) -> list[str]:
+        """What the operator is told about the context of the agents (ADR 0033)."""
+        return self.context.warnings(declared=self.context_declared, model=self.provider != "stub")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1198,6 +1214,7 @@ def parse_config(data: object) -> Config:
                 _int(gateway, "context_window"),
                 cast("int", gateway.get("context_tokens", gateway["context_window"])),
             ),
+            context_declared="context_window" in _raw_table(data, "gateway"),
         ),
         forge=ForgeConfig(
             provider=cast("str", forge["provider"]),

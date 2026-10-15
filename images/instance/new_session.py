@@ -3,7 +3,9 @@
 A turn of Hermes continues the session named `zephyros` (src/zephyros/adapters/hermes/engine.py:
 `--continue=zephyros --create-if-missing`). Hermes resolves that name to the latest session of
 its lineage, `zephyros #N`: this creates the next one, empty, so the turn starts there. The
-earlier sessions stay in the database of the home volume, and no later turn reads them.
+earlier sessions stay in the database of the home volume: no later turn continues them, but the
+`session_search` tool of Hermes can still find them. What Hermes keeps beside the conversation
+(its memory, MEMORY.md and SOUL.md, and its skills) is not touched, and the new session reads it.
 
 Run by the entrypoint with the Python of Hermes, before Hermes. Without any session yet, there is
 nothing to leave behind: the turn creates `zephyros` as a first turn does.

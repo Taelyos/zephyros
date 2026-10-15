@@ -187,3 +187,10 @@ def test_the_new_session_follows_the_name_the_engine_continues() -> None:
     assert f'SESSION = "{SESSION}"' in helper
     dockerfile = (ROOT / "images" / "instance" / "Dockerfile").read_text(encoding="utf-8")
     assert "COPY --chmod=0644 new_session.py /opt/zephyros/new_session.py" in dockerfile
+
+
+def test_the_file_tools_write_where_the_user_may() -> None:
+    """ADR 0031: the upstream image keeps the file tools of Hermes to its home; empty, the
+    variable bounds nothing, and the work directory is writable by them."""
+    dockerfile = (ROOT / "images" / "instance" / "Dockerfile").read_text(encoding="utf-8")
+    assert "\nENV HERMES_WRITE_SAFE_ROOT=\n" in dockerfile

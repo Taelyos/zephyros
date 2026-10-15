@@ -6,8 +6,8 @@ engines compact the conversation at one point derived from the two, early enough
 provider never refuses a call for its length: Hermes through `compression.threshold_tokens`,
 OpenCode through the input limit of its model.
 
-A context below 256 000 tokens is accepted, and said loudly: the real run of 2026-10-15 failed
-with 80 000 (the Owner compacted 14 times in 46 minutes and lost the thread of its work).
+A compaction point below 256 000 tokens is accepted, and said loudly, as is a window the
+operator did not declare for a real model: the window is then a guess.
 """
 
 from __future__ import annotations
@@ -54,30 +54,47 @@ class AgentContext:
 
     @property
     def below_floor(self) -> bool:
-        return self.tokens < CONTEXT_FLOOR
+        """The engines compact before the floor: whether by the operator's choice, or because
+        the window itself leaves no more."""
+        return self.compaction < CONTEXT_FLOOR
 
-    def warning(self) -> str | None:
-        """What the operator is told, on every surface, when the agents work below the floor."""
-        if not self.below_floor:
-            return None
-        if self.tokens == self.window:
-            why = f"the model's context window is {self.window} tokens"
-        else:
-            why = f"gateway.context_tokens is {self.tokens} (the model's window: {self.window})"
-        return (
-            f"the agents work with a context of {self.tokens} tokens, below the floor of "
-            f"{CONTEXT_FLOOR}: {why}. They compact at {self.compaction} tokens and may lose the "
-            "thread of their work: the real run of 2026-10-15 failed with 80 000 (the Owner "
-            "compacted 14 times in 46 minutes). See docs/configuration.md, the context of the "
-            "agents."
-        )
+    def warnings(self, *, declared: bool, model: bool) -> list[str]:
+        """What the operator is told, on every surface: `declared`, whether the configuration
+        names the window; `model`, whether a real model is behind the gateway (the stub has no
+        context to lose)."""
+        if not model:
+            return []
+        found: list[str] = []
+        if not declared:
+            found.append(
+                f"gateway.context_window is not declared: the agents assume a window of "
+                f"{self.window} tokens. A model with fewer refuses the calls past its window; "
+                "declare the window its provider gives"
+            )
+        if self.below_floor:
+            if self.tokens < self.window:
+                why = f"gateway.context_tokens is {self.tokens}"
+            else:
+                why = f"the model's context window is {self.window} tokens"
+            found.append(
+                f"the agents compact at {self.compaction} tokens, below the floor of "
+                f"{CONTEXT_FLOOR} ({why}): {FLOOR_REASON}"
+            )
+        return found
+
+
+FLOOR_REASON = (
+    "below 256 000 tokens, a long task loses the thread of its work: compactions repeat and the "
+    "agent re-reads what it already knew"
+)
+"""Why the floor, as every surface says it."""
 
 
 DEFAULT_CONTEXT = AgentContext()
 """The context of a configuration that declares none."""
 
 
-def context_banner(warning: str) -> str:
-    """A warning that cannot be missed in a terminal or in the log of a container."""
+def context_banner(warnings: list[str]) -> str:
+    """Warnings that cannot be missed in a terminal or in the log of a container."""
     rule = "!" * 78
-    return f"{rule}\nWARNING: {warning}\n{rule}"
+    return "\n".join([rule, *(f"WARNING: {warning}" for warning in warnings), rule])

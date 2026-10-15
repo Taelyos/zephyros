@@ -200,9 +200,15 @@ def offline_environment(window: int, compaction: int) -> list[str]:
     ]
 
 
+@pytest.mark.parametrize(
+    ("window", "compaction"),
+    [(1_000_000, 400_000), (128_000, 96_000), (64_000, 32_000)],
+)
 def test_adr_0033_hermes_takes_the_window_and_compacts_where_the_hub_says(
-    zephyros: Deployment,
+    zephyros: Deployment, window: int, compaction: int
 ) -> None:
+    """Down to the smallest window Hermes starts with: Hermes neither raises the point nor
+    drops the window."""
     done = docker(
         "run",
         "--rm",
@@ -213,7 +219,7 @@ def test_adr_0033_hermes_takes_the_window_and_compacts_where_the_hub_says(
         "/tmp:rw,size=64m",
         "--tmpfs",
         "/opt/data:rw,size=64m,uid=10000,gid=10000",
-        *offline_environment(1_000_000, 400_000),
+        *offline_environment(window, compaction),
         "--entrypoint",
         "sh",
         zephyros.instance_image(),
@@ -222,7 +228,7 @@ def test_adr_0033_hermes_takes_the_window_and_compacts_where_the_hub_says(
         'exec /opt/hermes/.venv/bin/python -I -c "$0"',
         HERMES_READS,
     )
-    assert json.loads(done.stdout.strip().splitlines()[-1]) == [1_000_000, 400_000]
+    assert json.loads(done.stdout.strip().splitlines()[-1]) == [window, compaction]
 
 
 def test_adr_0033_opencode_takes_the_window_and_compacts_where_the_hub_says(

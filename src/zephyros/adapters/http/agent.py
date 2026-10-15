@@ -89,7 +89,7 @@ def build_agent_app(
         if caller is None:
             return unauthorized()
         try:
-            body = await read_json(request)
+            body = await read_json(request, gateway.limits.body_bytes)
             answer = await gateway.complete(caller, body)
         except BodyError as error:
             hub.log_caller_refusal(caller, Reason.INVALID_REQUEST, str(error))

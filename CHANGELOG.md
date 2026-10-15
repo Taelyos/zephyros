@@ -11,7 +11,7 @@ version. Each schema carries its own version number.
 | Surface | 0.2.0 | Unreleased |
 | --- | --- | --- |
 | Configuration schema | 1.15.0 | 1.18.0 |
-| Agent engine interface | 0.2.0 | 0.3.0 (a second real implementation; `TurnRequest.reasoning_echo`) |
+| Agent engine interface | 0.2.0 | 0.3.0 (a second real implementation; `TurnRequest.reasoning_echo`, the context and the session) |
 | Model provider interface | 0.1.0 | 0.2.0 (`ChatMessage.reasoning`) |
 
 ### Added
@@ -51,23 +51,29 @@ version. Each schema carries its own version number.
   provider. `gateway.reasoning_echo` (configuration schema 1.18.0) says whether the provider gets
   it: with `true`, every assistant message carries its reasoning, or a single space when it has
   none; with `false`, none carries the field, which a strict provider refuses. Unset, it follows
-  the model at the provider and its host (DeepSeek, Kimi, MiMo), never `gateway.model`. Each turn
+  the name of the model at the provider (`deepseek`, `kimi`, `mimo`) and its host, never
+  `gateway.model`. Each turn
   tells its engine (`ZEPHYROS_REASONING_ECHO`): Hermes sets `model.reasoning_echo`, OpenCode the
   `interleaved` field of its model.
-
 - The agents work with the context window of the model (ADR 0033). `gateway.context_window`
   (configuration schema 1.18.0, 256 000 tokens when unset) declares it, and
   `gateway.context_tokens` gives the agents less of it. Both engines compact at the same point:
   the context of the agents, or the window less a tenth of it when that comes first. Hermes
   takes `model.context_length` and `compression.threshold_tokens` in its managed scope; OpenCode
   takes the context and the input limit of its model. They replace the fixed 80 000 and 96 000
-  tokens. Below 256 000, the context is accepted with a warning: by `zephyros config check`
-  (which `scripts/deploy.sh up` runs), on the standard error and in the log of the hub at every
-  start (`context.check`), and at the top of the evidence report of each delivery built so
-  (CONTEXT BELOW THE FLOOR). Each `turn.start` records the window, the context and the point.
+  tokens. A compaction point below 256 000 tokens, or a real model whose window the file does
+  not declare, is accepted with a warning: by `zephyros config check` (which
+  `scripts/deploy.sh up` runs), on the standard error and in the log of the hub at every start
+  (`context.check`), and, for the floor, at the top of the evidence report of each delivery
+  built so (CONTEXT BELOW THE FLOOR). Each `turn.start` records the window, the context and the
+  point, and the journal of the filter what it gave the turn. The gateway takes a conversation
+  as large as the window: 8 bytes a token of the window plus 1 MiB (twice the 3.9 bytes a token
+  measured on a real conversation), and a message per 64 tokens, within 16 MiB whatever the
+  window; it took 1 MiB and 1 000 messages.
 - The operator can start a turn in a new session (ADR 0016, amended): `"session": "new"` in
   `instance.start`, for Hermes and for OpenCode. That turn and the next ones work in a session
-  of their own; the earlier ones stay, unread. The main agent cannot ask for it (`forbidden`).
+  of their own; the earlier ones stay, still searchable by Hermes, and its memory and skills
+  carry over. The main agent cannot ask for it (`forbidden`).
   Each `turn.start` records `session`. The filter's `turn.start` takes `session`.
 
 ### Fixed
@@ -77,6 +83,9 @@ version. Each schema carries its own version number.
   instance image turns the approvals off (`approvals.mode: "off"`, and `approve` in every
   context) and lets the file tools write `AGENTS.md` and `CLAUDE.md`. What protects is around
   the agent: the guard, no key, the container, the hub's rights and the gate.
+- The file tools of Hermes (`write_file`, `patch`) write the work directory: the upstream image
+  kept them to the home of Hermes (`HERMES_WRITE_SAFE_ROOT=/opt/data`), and every write to
+  `/work` was denied. The instance image empties the variable (ADR 0031).
 - An agent no longer compacts its conversation every few minutes: the Owner of a real run
   compacted 14 times in 46 minutes at 80 000 tokens and lost the thread of its work (ADR 0033).
 - A real run with DeepSeek in thinking mode no longer ends a turn with `failed:exit_1` after an

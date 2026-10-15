@@ -62,15 +62,15 @@ from zephyros.adapters.worker import InstanceWorker
 from zephyros.app.channel_tokens import ChannelTokens, build_control_app
 from zephyros.core.audit import HUB_STREAM, SYSTEM_PRINCIPAL, Action, AuditEvent, AuditLog, Outcome
 from zephyros.core.clock import Clock
-from zephyros.core.config import Config, ConfigError
+from zephyros.core.config import Config, ConfigError, GatewayConfig
 from zephyros.core.containers import Policy
-from zephyros.core.context import AgentContext, context_banner
+from zephyros.core.context import DEFAULT_CONTEXT_WINDOW, context_banner
 from zephyros.core.continuity import Continuity
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.contract import ContractService
 from zephyros.core.deliveries import DeliveryService
 from zephyros.core.egress import GITHUB_HOST, EgressPolicy, EgressRefusal, host_of
-from zephyros.core.gateway import CredentialSource, GatewayService
+from zephyros.core.gateway import CredentialSource, GatewayLimits, GatewayService
 from zephyros.core.hub import Hub
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager, Timing, TurnEngine
@@ -240,6 +240,7 @@ def build_hub(
     refusals_per_minute: int | None = None,
     simulation: bool = False,
     tools: ToolsProbe | None = None,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> HubRuntime:
     if (instances is None) == (instance_factory is None):
         raise ValueError("give either an instance control or a way to build one")
@@ -309,14 +310,16 @@ def build_hub(
         provider=provider or ObedientStubProvider(),
         model=model,
         credentials=credentials,
+        limits=GatewayLimits.for_window(context_window),
     )
     return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries, ladders)
 
 
-def record_context(context: AgentContext, audit: AuditLog) -> None:
-    """The context the agents work with, in the log of the hub at every start, and a warning on
-    the standard error too when it is below the floor (ADR 0033)."""
-    warning = context.warning()
+def record_context(gateway: GatewayConfig, audit: AuditLog) -> None:
+    """The context the agents work with, in the log of the hub at every start, and on the
+    standard error too what the operator is to know of it (ADR 0033)."""
+    context = gateway.context
+    warnings = gateway.context_warnings
     audit.append(
         AuditEvent(
             HUB_STREAM,
@@ -325,15 +328,16 @@ def record_context(context: AgentContext, audit: AuditLog) -> None:
             Outcome.OK,
             parameters={
                 "context_window": context.window,
+                "context_declared": gateway.context_declared,
                 "context_tokens": context.tokens,
                 "compaction_tokens": context.compaction,
                 "below_floor": context.below_floor,
-                **({"warning": warning} if warning else {}),
+                **({"warnings": warnings} if warnings else {}),
             },
         )
     )
-    if warning:
-        print(context_banner(warning), file=sys.stderr, flush=True)
+    if warnings:
+        print(context_banner(warnings), file=sys.stderr, flush=True)
 
 
 async def run(
@@ -424,6 +428,7 @@ async def run(
         refusals_per_minute=config.limits.refusals_per_minute,
         simulation=config.gateway.simulation,
         tools=tools,
+        context_window=config.gateway.context.window,
     )
     hub = runtime.hub
     if tools is not None and measured is not None:
@@ -442,7 +447,7 @@ async def run(
                 },
             )
         )
-    record_context(config.gateway.context, runtime.audit)
+    record_context(config.gateway, runtime.audit)
     channel_tokens = ChannelTokens.from_config(config, runtime.tokens, runtime.audit)
     channel_tokens.prepare()
     workers: list[InstanceWorker] = []

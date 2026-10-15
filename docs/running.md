@@ -43,7 +43,7 @@ scripts/deploy.sh call instance.status '{"project_id": "p_…", "side": "contrac
 scripts/deploy.sh down
 ```
 
-Each turn of an instance continues its conversation ([ADR 0016](decisions/0016-one-agent-container-per-turn.md)). When a conversation has gone wrong (an agent lost in summaries of summaries, a session that keeps failing), the operator starts the next turn in a new one: `"session": "new"` in `instance.start`. That turn and the following ones work in the new session; the earlier ones stay on the home volume, unread, and the work volume keeps the work. Only the operator may ask for it (`forbidden` for the main agent), and each `turn.start` in the log records `session`, `continue` or `new`.
+Each turn of an instance continues its conversation ([ADR 0016](decisions/0016-one-agent-container-per-turn.md)). When a conversation has gone wrong (an agent lost in summaries of summaries, a session that keeps failing), the operator starts the next turn in a new one: `"session": "new"` in `instance.start`. That turn and the following ones work in the new session. The earlier ones stay on the home volume; no turn continues them, but Hermes can still search them (`session_search`). The work volume keeps the work, and what the engine keeps beside the conversation stays and is read again: the memory of Hermes (`MEMORY.md`, `SOUL.md`), its skills, and the `AGENTS.md` of the work directory. A new session is a fresh conversation, not a fresh agent. Only the operator may ask for it (`forbidden` for the main agent), and each `turn.start` in the log records `session`, `continue` or `new`.
 
 ```bash
 scripts/deploy.sh call instance.start '{"project_id": "p_…", "side": "owner", "prompt": "…", "session": "new"}'

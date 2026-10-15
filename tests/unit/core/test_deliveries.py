@@ -118,6 +118,7 @@ def service(
     secrets: Callable[[], list[str]] | None = None,
     rejections_alert: int | None = None,
     tools: ToolsProbe | None = None,
+    simulation: bool = False,
 ) -> tuple[DeliveryService, str, AuditLog, InMemoryDeliveryStore]:
     """A delivery service on a project with a contract; `events` hears what the service tells
     the hub."""
@@ -152,6 +153,7 @@ def service(
         secrets=secrets,
         rejections_alert=rejections_alert,
         tools=tools,
+        simulation=simulation,
     )
     return made, project, audit, store
 
@@ -1315,19 +1317,25 @@ def test_a_record_kept_before_the_contractors_report_gives_the_contractor_none()
 
 
 # ----------------------------------------------------------------------------- context (ADR 0033)
-def report_after_turns(*contexts: tuple[int, int]) -> str:
-    """The report of a delivery pushed after turns that ran with these (context, window)."""
-    made, project, audit, _store = service()
+def report_after_turns(*contexts: tuple[int, int, int], simulation: bool = False) -> str:
+    """The report of a delivery pushed after turns that ran with these (context, window,
+    compaction point)."""
+    made, project, audit, _store = service(simulation=simulation)
     ready(made, project)
     for side in ("owner", "contractor"):
-        for tokens, window in contexts:
+        for tokens, window, compaction in contexts:
             audit.append(
                 AuditEvent(
                     project,
                     "hub",
                     Action.TURN_START,
                     Outcome.OK,
-                    parameters={"side": side, "context_tokens": tokens, "context_window": window},
+                    parameters={
+                        "side": side,
+                        "context_tokens": tokens,
+                        "context_window": window,
+                        "compaction_tokens": compaction,
+                    },
                 )
             )
     record = made.push(project, make_package({**BASE, "calc.py": b"x = 1\n"}, state_id(BASE)), "w")
@@ -1340,21 +1348,28 @@ def report_after_turns(*contexts: tuple[int, int]) -> str:
 
 
 def test_the_report_gives_the_context_of_the_turns_before_the_delivery() -> None:
-    report = report_after_turns((1_000_000, 1_000_000))
+    report = report_after_turns((1_000_000, 1_000_000, 900_000))
     assert (
-        "- Context of the agents: 1000000 tokens of a window of 1000000 (2 turns)"
-        in report.splitlines()
-    )
+        "- Context of the agents: 1000000 tokens of a window of 1000000, compacting at 900000 "
+        "(2 turns)"
+    ) in report.splitlines()
     assert "CONTEXT BELOW THE FLOOR" not in report
 
 
 def test_a_delivery_built_below_the_floor_opens_its_report_with_a_warning() -> None:
-    report = report_after_turns((80_000, 1_000_000), (1_000_000, 1_000_000))
+    """The floor is about the compaction point: the default window compacts at 224 000."""
+    report = report_after_turns((80_000, 1_000_000, 80_000), (256_000, 256_000, 224_000))
     [warning] = [line for line in report.splitlines() if "CONTEXT BELOW THE FLOOR" in line]
     assert report.index(warning) < report.index("**Decision:")
-    assert "2 turns before this delivery ran with a context of 80000 tokens" in warning
-    assert "256000" in warning
-    assert "2026-10-15 failed with 80 000 tokens" in warning
+    assert "4 turns before this delivery compacted at 80000 tokens or less" in warning
+    assert "a long task loses the thread of its work" in warning
+    assert "2026" not in warning
+
+
+def test_a_simulation_has_no_context_to_lose() -> None:
+    report = report_after_turns((256_000, 256_000, 224_000), simulation=True)
+    assert "CONTEXT BELOW THE FLOOR" not in report
+    assert "Context of the agents" in report
 
 
 def test_a_report_of_turns_that_recorded_no_context_says_nothing_of_it() -> None:

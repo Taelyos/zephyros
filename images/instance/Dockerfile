@@ -32,6 +32,11 @@ RUN /usr/local/bin/python3 -m pip install --no-cache-dir --no-deps --only-binary
     && ln -s /usr/local/bin/python3 /opt/zephyros/bin/python \
     && ln -s "$(dirname "$(readlink -f /usr/local/bin/python3)")/pytest" /opt/zephyros/bin/pytest \
     && /opt/zephyros/bin/pytest --version
+# The file tools of Hermes write where the user of the instance may write (ADR 0031): the
+# upstream image keeps them to the home (HERMES_WRITE_SAFE_ROOT=/opt/data), so they could not
+# write the work directory. Empty, the variable bounds nothing; the read-only root, the user
+# without root and the read-only tools bound what is written.
+ENV HERMES_WRITE_SAFE_ROOT=
 # The tools of the project (ADR 0030), when the operator gives some, are mounted read-only at
 # /opt/project-tools: their bin directory comes last, so a tool runs by its name and never hides
 # a program of the image.

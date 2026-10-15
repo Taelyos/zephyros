@@ -201,8 +201,9 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
                 "session",
                 Choice(("continue", "new")),
                 "continue (the default) goes on with the conversation of the instance; new "
-                "starts a new one, the earlier ones kept and no longer read. new is the "
-                "operator's alone",
+                "starts a new one: the earlier ones are kept and no longer continued, and what the "
+                "agent keeps beside its conversation (memory, skills, AGENTS.md) carries over. "
+                "new is the operator's alone",
                 default="continue",
             ),
             scoped=True,

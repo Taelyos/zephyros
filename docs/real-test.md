@@ -32,8 +32,9 @@ with all of it, and compact a tenth before its end
 ([the context of the agents](configuration.md#the-context-of-the-agents), [ADR 0033](decisions/0033-the-agents-work-with-the-context-of-the-model.md)).
 Declare the provider's figure. `context_tokens` gives the agents less of it (400 000 or 256 000
 for a model of a million tokens). Below 256 000 the hub accepts it and warns, at
-`deploy.sh up`, at every start and in each evidence report: the run of 2026-10-15 compacted the
-Owner at 80 000 tokens, 14 times in 46 minutes, and the Owner lost the thread of its work.
+`deploy.sh up`, at every start and in each evidence report: below 256 000 tokens, a long task
+loses the thread of its work, as compactions repeat and the agent re-reads what it already knew.
+Without the line, the hub warns too: the window would be a guess.
 
 `session_header` names the session header the provider asks for — OpenCode Go refuses a call
 without `x-opencode-session` (HTTP 400), and the gateway sends one stable session name per

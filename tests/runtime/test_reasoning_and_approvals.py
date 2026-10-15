@@ -237,3 +237,19 @@ def test_adr_0032_an_opencode_turn_goes_to_its_end_and_gives_the_reasoning_back(
         if r["action"] == "gateway.call" and r["outcome"] != "ok"
     ]
     assert errors == []
+
+
+def test_adr_0031_the_file_tools_of_hermes_write_the_instruction_files_of_the_project(
+    zephyros: Deployment,
+) -> None:
+    """`security.protected_instruction_files: false`: Hermes asked a person before writing an
+    AGENTS.md or a CLAUDE.md, and refused without one; and HERMES_WRITE_SAFE_ROOT, empty in the
+    image, had kept the file tools to the home. The file tool now writes them in /work."""
+    project = zephyros.project()
+    prompt = lines("WRITE /work/AGENTS.md", "WRITE /work/docs/CLAUDE.md")
+    assert zephyros.turn(project, OWNER, prompt) == "completed"
+    results = zephyros.tool_results(project, OWNER)
+    assert not [r for r in results if "BLOCKED" in r or "denied" in r], results
+    for path in ("AGENTS.md", "docs/CLAUDE.md"):
+        written = zephyros.work_file(project, OWNER, path)
+        assert written == "written by the obedient stub\n", (path, results)
