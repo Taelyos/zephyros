@@ -169,8 +169,9 @@ def test_the_entrypoint_hands_the_context_of_the_hub_or_its_defaults(tmp_path: P
 
 # ----------------------------------------------------------------------------- session (ADR 0016)
 def test_the_entrypoint_starts_a_new_session_only_when_asked(tmp_path: Path) -> None:
-    for session, ran in (("new", True), ("continue", False), (None, False), ("NEW", False)):
-        home = tmp_path / str(session)
+    cases = (("new", True), ("continue", False), (None, False), ("NEW", False))
+    for number, (session, ran) in enumerate(cases):
+        home = tmp_path / f"case-{number}"  # not the value: macOS folds "new" and "NEW"
         home.mkdir()
         handed = _entrypoint(home, {} if session is None else {"ZEPHYROS_SESSION": session})
         assert ("new_session" in handed) is ran, session
