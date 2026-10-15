@@ -119,19 +119,26 @@ source = "/srv/zephyros-tools"
 
 With `scripts/deploy.sh`, `ZEPHYROS_TOOLS=/srv/zephyros-tools` writes that table.
 
-The container filter mounts the directory **read-only at `/opt/project-tools`** in every turn, Owner and Contractor, whatever the engine, and in every sandbox of verification: the acceptance tests run with the tools the agents had. `/opt/project-tools/bin` is the last directory of the `PATH` in the three images, so a tool there runs by its name (`sim`), and never hides a program of the image. The mount is not recursive: a file system mounted under the directory on the machine shows as an empty directory. The directory is the same for every project of the deployment.
+The container filter mounts the directory **read-only at `/opt/project-tools`** in every turn, Owner and Contractor, whatever the engine, and in every sandbox of verification: the acceptance tests run with the tools the agents had. `/opt/project-tools/bin` is the last directory of the `PATH` in the three images, so a tool there runs by its name (`sim`), and never hides a program of the image. The mount is not recursive: a file system mounted under the directory on the machine would show there as an empty directory, so the hub refuses one (below). The directory is the same for every project of the deployment.
 
-The hub reads the directory at that same path (`deploy/compose.yaml` mounts it into the hub container there, read-only), and **refuses to start** when the user of the instances (uid and gid 10000) could change it, or when it holds a link that leads out of it. Each path at fault is named:
+The hub reads the directory at that same path (`deploy/compose.yaml` mounts it into the hub container there, read-only and not recursive), and **refuses to start** when the user of the instances (uid and gid 10000) could change it, or when it holds a link that leads out of it. Each path at fault is named:
 
 ```text
-refused to start: the tools directory cannot be mounted:
+refused to start: the tools directory '/srv/zephyros-tools' cannot be mounted:
   'bin/sim' is writable by every user
   'lib/libsim.so' is a link that leads out of the tools directory
 ```
 
-What is refused: an entry owned by uid 10000, writable by gid 10000 or by every user, or carrying an access control list; a link to an absolute path, or one that leads out of the directory; a device, a socket or a pipe; a setuid or setgid file; a file the hub (uid 10001) cannot read. A directory owned by its operator with modes `0755` and `0644` (and `0755` for programs) passes. `scripts/deploy.sh` runs the same check before it starts anything. The hub checks again at each start of a turn and at each verification: a turn whose tools have since become refused does not start (`turn.start`, `error: tools_refused`), and such a verification ends in an error.
+What is refused:
 
-**The fingerprint.** The hub fingerprints the directory when it starts (`tools.check`, in the log of the hub), at each start of a turn (`turn.start`: `tools`), and before and after each verification (`verification.run`: `tools`); a change during the run drops its results, and the delivery ends in an error. The evidence report gives it, with the number of files and their size, and flags the turns of either side that found other tools before the delivery. To check a copy of the tools against a report, anywhere:
+- an entry owned by uid 10000, writable by gid 10000 or by every user, or carrying a POSIX access control list;
+- a link to an absolute path, or one that leads out of the directory: on the machine, or on its way, read step by step as the kernel reads it in a container. There the directory is `/opt/project-tools`, so a `..` above it is a way out, even when the next names lead back in on the machine: in `/srv/sim/build`, the link `lib/cur -> ../../build/lib` resolves to `/srv/sim/build/lib` on the machine, but to `/opt/build/lib` in a turn, and is refused. A loop of links is refused too;
+- a file system mounted under the directory, when the hub sees it: the turns and the sandbox would find an empty directory there. The mount of the hub is not recursive, so it sees what they see, but some versions of Compose (2.26 among them) drop `recursive: disabled` without a word: the hub then sees the file system, and refuses rather than fingerprint files the turns do not have. `scripts/deploy.sh` checks with a recursive mount, so it refuses one in every case;
+- a device, a socket or a pipe; a setuid or setgid file; a file the hub (uid 10001) cannot read.
+
+A directory owned by its operator with modes `0755` and `0644` (and `0755` for programs) passes. `scripts/deploy.sh` runs the same check before it writes the configuration or starts anything. The hub checks again at each start of a turn and at each verification: a turn whose tools have since become refused does not start (`turn.start`, `error: tools_refused`, with the problems), and such a verification ends in an error. The log of a project and the status of a delivery, which the agents read, name the paths inside the directory only, never its path on the machine; that path is in the log of the hub (`tools.check`: `source`) and in the message of a hub that refuses to start.
+
+**The fingerprint.** The hub fingerprints the directory when it starts (`tools.check`, in the log of the hub), at each start of a turn (`turn.start`: `tools`), and before and after each verification (`verification.run`: `tools`); when the two around a verification differ, its results are dropped and the delivery ends in an error. The evidence report gives it, with the number of files and their size, and flags the turns of either side, before the delivery, that found other tools when they started (read from the first 100 000 records of the log of the project, as the cost is). These are measures at given moments, not a watch: a change undone before the end of a verification, or made during a turn, is not seen. To check a copy of the tools against a report, anywhere:
 
 ```bash
 zephyros tools check /path/to/tools
@@ -139,6 +146,8 @@ zephyros tools check /path/to/tools
 ```
 
 It is the SHA-256 of one JSON line per entry, sorted by path (relative, `/` between names, the directory itself `""`): `["d", path]` for a directory, `["f", path, "x" or "-", size, sha256]` for a file (`x` when any execute bit is set), `["l", path, target]` for a link. Owners, times and other mode bits do not count.
+
+The hub walks the whole tree at each measure, and hashes the content again only when the status of an entry changed (size, times, inode, mode, owner). A change of content moves the change time (ctime) of the file, which no program sets at will; since the kernel moves it by ticks of a few milliseconds, a result is kept only once every entry is at least two seconds old.
 
 **What a tool needs to run everywhere.** The three images do not share a C library: the Hermes image is Debian 13 (glibc 2.41), the OpenCode image and the `tests` kit are Alpine 3.24 (musl). A program linked against the glibc of the machine runs in a Hermes turn and fails at the gate with `not found`. Give the tools what they run on:
 
@@ -156,6 +165,16 @@ It is the SHA-256 of one JSON line per entry, sorted by path (relative, `/` betw
 
 The tools are the operator's, and trusted: Zephyros keeps everyone inside it from changing them, not from reading them. Both sides read them, so they hold no secret and no hidden part of an evaluation, which belongs to the acceptance tests of the Owner side.
 
+**A turn that runs a tool for long.** The hub stops a turn that has called neither the hub nor the model for `limits.silence_seconds` (600 s by default): the turn ends `silent`. A turn that runs a simulation of more than ten minutes and waits for it says nothing meanwhile, and is stopped. When a tool runs long in a turn, set the silence above its longest run, with room to spare, and `limits.turn_seconds` above the whole turn; the sandbox of verification has no such limit, only `verification.timeout_seconds`:
+
+```toml
+[limits]
+silence_seconds = 3600   # a run of the simulator takes up to 45 min
+turn_seconds = 14400
+```
+
+**What has not been checked.** The check judges the owners and the modes the hub sees, which are those of the instances only when the runtime maps no user: with Docker in rootless mode or with user namespace remapping (`userns-remap`), uid 10000 in a container is another uid on the machine, and the check does not know which; neither the check nor the runtime tests have run there. It reads POSIX access control lists only: an NFSv4 one (`system.nfs4_acl`) is not seen. It has been run with Docker on Linux only: on macOS the owner shown for a directory shared from the host may not be the owner on the host, and whether Podman honours a non-recursive bind has not been checked.
+
 ## The sandbox of verification
 
 A sandbox runs the acceptance tests of one delivery, as user 10000, with no network, a read-only root, the files to verify in a volume of its own on `/work`, and the tools of the projects at `/opt/project-tools`. Its resources are those of a turn:
@@ -169,7 +188,11 @@ A sandbox runs the acceptance tests of one delivery, as user 10000, with no netw
 | `/work` | the files of the delivery, on a volume of the runtime: writable, and a program there runs | fixed |
 | Longest run | 300 s | `verification.timeout_seconds` (30 to 86 400) |
 
-A tool that unpacks a program to run it unpacks it in `/work`. Raising `limits.*` raises them for the turns too. A verification that reaches `verification.timeout_seconds` is stopped and verifies nothing: every test reads `not_run`. The delivery loop runs one verification at a time, for every project: a verification of two hours makes the deliveries behind it wait. For tests that play several runs of a few minutes, set the limit to cover them all with room to spare:
+A tool that unpacks a program to run it unpacks it in `/work`. Raising `limits.*` raises them for the turns too. A verification that reaches `verification.timeout_seconds` is stopped and verifies nothing: every test reads `not_run`.
+
+The delivery loop runs one job at a time, for every project, on one thread of the hub: a verification, and also the preparation of a project's base from the forge and the comments and titles of its pull requests. A verification of two hours makes every one of them wait, for every project; the turns do not wait (their watch runs on another thread). The queue of the loop is in memory: when the hub starts again, it queues again, from the start, the verification of every delivery declared and not decided. A sandbox lives inside one call of the container filter, which removes it at the end whatever happens: a sandbox whose hub stopped runs on until it ends or reaches `verification.timeout_seconds`, then is removed, its result lost; one whose filter stopped is removed when the filter starts again.
+
+For tests that play several runs of a few minutes, set the limit to cover them all with room to spare:
 
 ```toml
 [verification]

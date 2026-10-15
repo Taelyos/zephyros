@@ -69,6 +69,9 @@ ACCEPTANCE_PATH = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./-]{0,150}$")
 LOGGED_PATHS = 20
 """The most paths a record of the log names: each is short, and a record stays small."""
 WRITE_ATTEMPTS = 10
+READ_RECORDS = 100_000
+"""The most records of the log of a project the report reads, from the first, for the cost, the
+engines and the tools of the turns: a project with more has its later ones left out of those."""
 """How many times a change is applied again to a record that others keep writing."""
 REFUSED = "REFUSED"
 """What `delivery.decided` tells of a delivery the checks refused before any run."""
@@ -359,6 +362,21 @@ class DeliveryService:
         _before, record = self._update(project_id, delivery_id, declared)
         self._enqueue(_Job("verify", project_id, delivery_id))
         return record
+
+    def resume(self) -> list[tuple[str, str]]:
+        """Queue again the verification of every delivery declared and not yet decided. The queue
+        lives in memory: a hub that stopped while a verification waited or ran would otherwise
+        leave its delivery declared for ever. Called once, when the hub starts, before the
+        worker runs; returns the deliveries queued, as (project, delivery)."""
+        resumed = [
+            (record.project_id, record.delivery_id)
+            for project in self._projects.visible_to(OPERATOR)
+            for record in self._store.records(project.id)
+            if record.state is DeliveryState.DECLARED
+        ]
+        for project_id, delivery_id in resumed:
+            self._enqueue(_Job("verify", project_id, delivery_id))
+        return resumed
 
     def status(self, project_id: str, delivery_id: str) -> DeliveryRecord:
         return self._record(project_id, delivery_id)
@@ -757,8 +775,8 @@ class DeliveryService:
         log = ""
         never_run: tuple[str, ...] = ()
         # The tools the sandbox mounts, measured before the run and after it (ADR 0030): a
-        # verdict names the tools it was reached with, and none is reached with tools that
-        # changed under it.
+        # verdict names the tools it was reached with, and is not kept when they differ after
+        # the run. A change undone before the run ends is not seen: two measures, not a watch.
         tools = self._measure_tools()
         if tests:
             result = self._runner.run(
@@ -920,7 +938,7 @@ class DeliveryService:
 
     def _cost(self, project_id: str) -> Cost:
         calls = prompt = completion = 0
-        for item in self._audit.read(project_id, 0, 100_000):
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.action is Action.GATEWAY_CALL and item.outcome is Outcome.OK:
                 parameters = json.loads(item.parameters)
                 calls += 1
@@ -931,9 +949,10 @@ class DeliveryService:
     def _built_by(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
         """The agent engines of the Contractor's turns started before the delivery came in, read
         from the log as the cost is (ADR 0029): each with its version, and how many turns it
-        ran. A start recorded before the hub recorded engines counts as "not recorded"."""
+        ran. A start recorded before the hub recorded engines counts as "not recorded". Read from
+        the first READ_RECORDS records of the log."""
         turns: dict[str, int] = {}
-        for item in self._audit.read(project_id, 0, 100_000):
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.outcome is not Outcome.OK:
                 continue
             parameters = json.loads(item.parameters)
@@ -960,10 +979,11 @@ class DeliveryService:
             ) from None
 
     def _tools_of_turns(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
-        """The tools each turn of either side found, by fingerprint, for the turns started
-        before the delivery came in (ADR 0030); a start that recorded none is "none"."""
+        """The tools each turn of either side found when it started, by fingerprint, for the
+        turns started before the delivery came in (ADR 0030); a start that recorded none is
+        "none". Read from the first READ_RECORDS records of the log, as the cost is."""
         turns: dict[str, int] = {}
-        for item in self._audit.read(project_id, 0, 100_000):
+        for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.outcome is not Outcome.OK:
                 continue
             parameters = json.loads(item.parameters)

@@ -45,15 +45,21 @@ class ToolsDigest:
 
 
 class ToolsError(Exception):
-    """The directory cannot be mounted as the tools of a project: each problem names a path."""
+    """The directory cannot be mounted as the tools of a project: each problem names a path.
 
-    def __init__(self, problems: list[str]) -> None:
+    The problems name paths relative to the directory, never its path on the machine, since they
+    reach the log of the project and the status of a delivery, which the agents read; the message
+    (`str`), for the operator, names the directory as well."""
+
+    def __init__(self, problems: list[str], root: str | None = None) -> None:
         self.problems = tuple(problems)
+        self.root = root
         shown = list(problems[:MAX_PROBLEMS])
         if len(problems) > MAX_PROBLEMS:
             shown.append(f"and {len(problems) - MAX_PROBLEMS} more")
         lines = "\n".join(f"  {problem}" for problem in shown)
-        super().__init__(f"the tools directory cannot be mounted:\n{lines}")
+        named = "" if root is None else f" {root!r}"
+        super().__init__(f"the tools directory{named} cannot be mounted:\n{lines}")
 
 
 class ToolsProbe(Protocol):

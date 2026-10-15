@@ -5,10 +5,12 @@ other tools, and keeps no result reached with tools that changed or that it refu
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from tests.unit.core.test_deliveries import BASE, delivered, ready, service
 from tests.unit.core.test_lifecycle import FIRST_TOOLS, OTHER_TOOLS, ScriptedTools
 from zephyros.adapters.dummy.delivery import make_package, state_id
+from zephyros.adapters.project_tools import ToolsDirectory
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome
 from zephyros.core.deliveries import DeliveryState
 from zephyros.core.tools import ToolsError
@@ -36,6 +38,18 @@ def test_the_fingerprint_of_the_tools_is_in_the_log_and_in_the_report() -> None:
     contractor = found.contractor_report
     assert contractor is not None
     assert FIRST_TOOLS.fingerprint in contractor
+
+
+def test_with_no_test_to_run_the_report_does_not_place_the_tools_in_a_sandbox() -> None:
+    """No criterion names a test yet: nothing ran at the gate, so no sandbox mounted them."""
+    made, project, _audit, _store = service(specs=(), tools=ScriptedTools(FIRST_TOOLS))
+    ready(made, project)
+    found = made.status(project, delivered(made, project))
+    assert found.report is not None
+    assert (
+        f"- Project tools: `{FIRST_TOOLS.fingerprint}` (2 files, 300 bytes), mounted read-only "
+        "at `/opt/project-tools` in the turns of both sides (no test ran, so no sandbox started)"
+    ) in found.report.splitlines()
 
 
 def test_without_tools_neither_the_log_nor_the_report_names_any() -> None:
@@ -70,6 +84,21 @@ def test_tools_the_hub_refuses_run_no_verification() -> None:
         "the tools cannot be mounted: 'bin' is writable by every user; "
         "'lib/x' is a link that leads out"
     )
+
+
+def test_a_verification_refused_for_its_tools_does_not_tell_their_path_on_the_machine(
+    tmp_path: Path,
+) -> None:
+    """The status of a delivery reaches the Contractor: it names what is wrong, never where the
+    tools are on the machine (ADR 0030)."""
+    made, project, audit, _store = service(tools=ToolsDirectory(tmp_path / "gone"))
+    ready(made, project)
+    found = made.status(project, delivered(made, project))
+    assert found.state is DeliveryState.ERROR
+    assert found.detail == (
+        "the tools cannot be mounted: the tools directory cannot be read: No such file or directory"
+    )
+    assert all(str(tmp_path) not in r.parameters for r in audit.read(project))
 
 
 def test_the_report_flags_the_turns_that_found_other_tools_before_the_delivery() -> None:

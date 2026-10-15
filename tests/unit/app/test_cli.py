@@ -100,5 +100,5 @@ def test_tools_check_refuses_what_the_hub_refuses_and_names_the_path(
     (root / "out").symlink_to("../elsewhere")
     assert main(["tools", "check", str(root)]) == 2
     error = capsys.readouterr().err
-    assert error.startswith("refused: the tools directory cannot be mounted:")
+    assert error.startswith(f"refused: the tools directory {str(root)!r} cannot be mounted:")
     assert "'out' is a link that leads out of the tools directory" in error

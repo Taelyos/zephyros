@@ -11,7 +11,11 @@ What is refused, each with the path it is found at:
   group may write, one every user may write, one that carries an access control list (which this
   check cannot read for who it lets write);
 - a link to an absolute path (inside a container it would point at something else) or one that
-  leads out of the directory;
+  leads out of the directory: on the machine (`realpath`), or on its way, step by step, as the
+  kernel reads it in a container where the directory is the root of the mount (a `..` above the
+  directory is a way out, even when the next names lead back in on the machine);
+- a file system mounted under the directory: the mount is not recursive, so the turns and the
+  sandbox would find an empty directory where the hub read files;
 - anything but a directory, a regular file or a link (a device, a socket, a pipe), a setuid or
   setgid file, and a file the hub cannot read (it could not be fingerprinted).
 
@@ -23,7 +27,14 @@ so the same tree copied elsewhere has the same fingerprint (`zephyros tools chec
 
 Hashing hundreds of megabytes takes a second or two, so the result is kept with the status of
 every entry (size, times, inode, mode, owner): it is computed again when any of them changed. A
-change of a file's content changes its change time (ctime), which no program sets at will.
+change of a file's content changes its change time (ctime), which no program sets at will; but
+the kernel moves the ctime by ticks of a few milliseconds, so a change made in the tick of the
+hashing could leave every status as it was. A result is therefore kept only when every entry
+changed at least `RACY_SECONDS` before the walk began, as git does for its index.
+
+The problems name paths relative to the directory, never its path on the machine: they reach the
+log of the project and the status of a delivery, which the agents read. The operator finds the
+path in the message of the error (`str`), in the log of the hub and in the configuration.
 """
 
 from __future__ import annotations
@@ -31,9 +42,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +56,11 @@ from zephyros.core.tools import ToolsDigest, ToolsError
 CHUNK = 1024 * 1024
 ACL_ATTRIBUTES = ("system.posix_acl_access", "system.posix_acl_default")
 _UID, _GID = (int(part) for part in INSTANCE_USER.split(":"))
+MAX_LINKS = 40
+"""The links one path may cross before the kernel gives up (ELOOP); a longer chain is refused."""
+RACY_SECONDS = 2
+"""How long ago every entry must have changed for a fingerprint to be kept (see above)."""
+MOUNTINFO = "/proc/self/mountinfo"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +110,68 @@ def _has_acl(full: str) -> bool:
     return any(name in ACL_ATTRIBUTES for name in names)
 
 
+def _climbs_out(root: str, path: str, target: str) -> bool | None:
+    """Whether the link at `path` climbs above the root on its way, read step by step as the
+    kernel reads it inside a container, where the root is that of the mount: a `..` there stays
+    at `/opt/project-tools/..`, wherever the following names would lead back on the machine. A
+    link met on the way is followed from where it is; a step that does not exist is read as a
+    name, which can only make the check stricter. None when the chain of links is too long for
+    the kernel to follow (a loop)."""
+    parts = path.split("/")[:-1]  # the directory that holds the link
+    pending = target.split("/")
+    followed = 0
+    while pending:
+        name = pending.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            if not parts:
+                return True
+            parts.pop()
+            continue
+        parts.append(name)
+        full = os.path.join(root, *parts)
+        try:
+            status = os.lstat(full)
+        except OSError:
+            continue
+        if stat.S_ISLNK(status.st_mode):
+            followed += 1
+            if followed > MAX_LINKS:
+                return None
+            inner = os.readlink(full)
+            if os.path.isabs(inner):
+                return True
+            parts.pop()
+            pending[:0] = inner.split("/")
+    return False
+
+
+def _unescape(field: str) -> str:
+    """A path of /proc/self/mountinfo, where a space, a tab, a newline and a backslash are written
+    in octal."""
+    return re.sub(r"\\([0-7]{3})", lambda found: chr(int(found.group(1), 8)), field)
+
+
+def _mount_points(root: str, mountinfo: str) -> list[str]:
+    """The mount points strictly under `root` (resolved), relative to it; none where the system
+    keeps no mountinfo (macOS, where `zephyros tools check` may run on a copy)."""
+    try:
+        with open(mountinfo, encoding="utf-8", errors="surrogateescape") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return []
+    found = []
+    for line in lines:
+        fields = line.split(" ")
+        if len(fields) < 5:  # the mount point is the fifth field
+            continue
+        point = _unescape(fields[4])
+        if point.startswith(root.rstrip("/") + "/"):
+            found.append(point[len(root.rstrip("/")) + 1 :])
+    return sorted(set(found))
+
+
 def _problems(root: str, entry: _Entry) -> list[str]:
     mode = entry.status.st_mode
     where = _shown(entry.path)
@@ -100,7 +180,10 @@ def _problems(root: str, entry: _Entry) -> list[str]:
         if os.path.isabs(target):
             return [f"{where} is a link to an absolute path; in a container it points elsewhere"]
         resolved = os.path.realpath(entry.full)
-        if os.path.commonpath([resolved, root]) != root:
+        climbs = _climbs_out(root, entry.path, target)
+        if climbs is None:
+            return [f"{where} is a link in a loop, or behind too many links"]
+        if climbs or os.path.commonpath([resolved, root]) != root:
             return [f"{where} is a link that leads out of the tools directory"]
         return []
     if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
@@ -134,8 +217,16 @@ def _content_digest(full: str) -> str:
 class ToolsDirectory:
     """The tools directory at `root`, measured each time `digest` is called."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        mountinfo: str = MOUNTINFO,
+        now: Callable[[], float] = time.time,
+    ) -> None:
         self._root = str(root)
+        self._mountinfo = mountinfo
+        self._now = now
         self._lock = threading.Lock()
         self._kept: tuple[str, ToolsDigest] | None = None
 
@@ -145,39 +236,59 @@ class ToolsDirectory:
 
     def digest(self) -> ToolsDigest:
         with self._lock:
+            began = self._now()
             entries = self._entries()
             signature = self._signature(entries)
             if self._kept is not None and self._kept[0] == signature:
                 return self._kept[1]
             measured = self._fingerprint(entries)
-            self._kept = (signature, measured)
+            newest = max(entry.status.st_ctime for entry in entries)
+            self._kept = (signature, measured) if newest < began - RACY_SECONDS else None
             return measured
 
     def _entries(self) -> list[_Entry]:
         root = self._root
         if not os.path.isabs(root):
-            raise ToolsError([f"{root!r} is not an absolute path"])
+            raise ToolsError(["the tools directory is not named by an absolute path"], root)
         try:
             status = os.lstat(root)
         except OSError as error:
-            raise ToolsError([f"{root!r} cannot be read: {error.strerror or error}"]) from None
+            raise ToolsError(
+                [f"the tools directory cannot be read: {error.strerror or error}"], root
+            ) from None
         if stat.S_ISLNK(status.st_mode):
-            raise ToolsError([f"{root!r} is a link: name the directory it points at"])
+            raise ToolsError(
+                ["the tools directory is a link: name the directory it points at"], root
+            )
         if not stat.S_ISDIR(status.st_mode):
-            raise ToolsError([f"{root!r} is not a directory"])
+            raise ToolsError(["the tools directory is not a directory"], root)
         resolved = os.path.realpath(root)
         entries: list[_Entry] = []
-        problems: list[str] = []
+        problems = [
+            f"{_shown(point)} is a mount point: the turns and the sandbox would find it empty"
+            for point in _mount_points(resolved, self._mountinfo)
+        ]
         try:
             for entry in _walk(root):
                 entries.append(entry)
                 problems.extend(_problems(resolved, entry))
         except OSError as error:
-            problems.append(f"{error.filename or root!r} cannot be read: {error.strerror or error}")
+            problems.append(
+                f"{self._inside(error.filename)} cannot be read: {error.strerror or error}"
+            )
         if problems:
-            raise ToolsError(problems)
+            raise ToolsError(problems, root)
         entries.sort(key=lambda entry: os.fsencode(entry.path))
         return entries
+
+    def _inside(self, filename: object) -> str:
+        """A path the walk failed on, relative to the directory: never its path on the machine."""
+        full = os.fsdecode(filename) if isinstance(filename, (str, bytes)) else ""
+        if full == self._root:
+            return _shown("")
+        if full.startswith(self._root.rstrip("/") + "/"):
+            return _shown(full[len(self._root.rstrip("/")) + 1 :])
+        return "an entry"
 
     @staticmethod
     def _signature(entries: list[_Entry]) -> str:
@@ -202,8 +313,7 @@ class ToolsDirectory:
             )
         return digest.hexdigest()
 
-    @staticmethod
-    def _fingerprint(entries: list[_Entry]) -> ToolsDigest:
+    def _fingerprint(self, entries: list[_Entry]) -> ToolsDigest:
         digest = hashlib.sha256()
         files = size = 0
         problems: list[str] = []
@@ -226,5 +336,5 @@ class ToolsDirectory:
                 files += 1
                 size += entry.status.st_size
         if problems:
-            raise ToolsError(problems)
+            raise ToolsError(problems, self._root)
         return ToolsDigest("sha256:" + digest.hexdigest(), files, size)

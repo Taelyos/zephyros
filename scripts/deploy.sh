@@ -119,6 +119,14 @@ up() {
   export ZEPHYROS_IMAGE; ZEPHYROS_IMAGE=$(image_id zephyros:local)
   # deploy/compose.yaml takes its image from this variable: it must be an image identifier.
   [[ "$ZEPHYROS_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "not an image identifier" >&2; exit 1; }
+  if [ -n "${ZEPHYROS_TOOLS:-}" ]; then
+    # Checked as the hub will check them, by the user of the hub, before the configuration is
+    # written and anything starts: a refusal names each path at fault here rather than in the
+    # log of a hub that exits. The mount is recursive on purpose: a file system mounted under
+    # the directory shows, and is refused (the turns would find an empty directory there).
+    docker run --rm --network none --user 10001:10001 \
+      -v "$ZEPHYROS_TOOLS_DIR:$ZEPHYROS_TOOLS_DIR:ro" "$ZEPHYROS_IMAGE" tools check "$ZEPHYROS_TOOLS_DIR"
+  fi
   export ZEPHYROS_CONFIG; ZEPHYROS_CONFIG="$(cd "$state" && pwd)/zephyros.toml"
   resolvers_toml="$(printf '%s' "$ZEPHYROS_RESOLVERS" | tr ',' '\n' \
     | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^/"/' -e 's/$/"/' \
@@ -188,10 +196,6 @@ token_file = "/run/zephyros-credentials/forge.key"
 TOML
   fi
   if [ -n "${ZEPHYROS_TOOLS:-}" ]; then
-    # Checked as the hub will check them, by the user of the hub, before anything starts: a
-    # refusal names each path at fault here rather than in the log of a hub that exits.
-    docker run --rm --network none --user 10001:10001 \
-      -v "$ZEPHYROS_TOOLS_DIR:$ZEPHYROS_TOOLS_DIR:ro" "$ZEPHYROS_IMAGE" tools check "$ZEPHYROS_TOOLS_DIR"
     cat >> "$ZEPHYROS_CONFIG" <<TOML
 
 [tools]

@@ -324,6 +324,36 @@ def test_a_delivery_declared_before_the_contract_runs_nothing_and_never_passes()
     assert f"- {NOTHING_JUDGED}" in record.report.splitlines()
 
 
+def test_a_hub_that_starts_again_runs_the_verifications_it_had_not_ended() -> None:
+    """The queue of the loop is in memory: what a stopped hub had declared and not decided runs
+    again when it starts (resume), and nothing else does."""
+    made, project, _audit, store = service()
+    ready(made, project)
+    decided = delivered(made, project)
+    package = make_package({**BASE, "calc.py": b"x = 2\n"}, state_id(BASE))
+    waiting = made.push(project, package, "later").delivery_id
+    made.declare(project, waiting)  # the hub stops here: its queue goes with it
+    # The hub that starts again: the same store, staging area and services, a new queue.
+    again = DeliveryService(
+        made._area,
+        made._runner,
+        made._forge,
+        made._contracts,
+        made._projects,
+        store,
+        made._audit,
+        made._clock,
+        kit="assertions",
+    )
+    assert not again.step()
+    assert again.resume() == [(project, waiting)]
+    while again.step():
+        pass
+    assert again.status(project, waiting).decision == "PASS"
+    assert again.resume() == []
+    assert store.get_record(project, decided) == made.status(project, decided)
+
+
 def test_the_worker_hooks_are_harmless() -> None:
     made, _project, _audit, _store = service()
     assert not made.step()

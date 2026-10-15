@@ -16,7 +16,7 @@ from typing import Any
 from zephyros.adapters.docker.api import DockerApi, DockerError
 from zephyros.adapters.engines import ENGINES
 from zephyros.adapters.filter.journal import Journal
-from zephyros.adapters.filter.sandbox import run_sandbox
+from zephyros.adapters.filter.sandbox import run_sandbox, sweep_sandboxes
 from zephyros.core.broker import (
     BrokerError,
     ContainerInfo,
@@ -98,6 +98,10 @@ class Executor:
     def run_sandbox(self, manifest: SandboxManifest, archive: bytes) -> dict[str, Any]:
         """One verification in a sandbox of its own (see adapters/filter/sandbox.py)."""
         return run_sandbox(self._api, self._policy, self._journal, manifest, archive)
+
+    def sweep_sandboxes(self) -> list[str]:
+        """The sandboxes a stopped filter left behind, removed (see adapters/filter/sandbox.py)."""
+        return sweep_sandboxes(self._api, self._journal)
 
     # ------------------------------------------------------------------ entry point
     def perform(self, request: Request) -> dict[str, Any]:

@@ -80,6 +80,8 @@ async def run(
     runtime = docker or DockerApi.over_socket(docker_socket)
     listener = bind_socket(Path(config.paths.filter_socket))
     executor = Executor(runtime, Policy.from_config(config), journal)
+    # A filter stopped during a verification left its sandbox running: nothing else removes it.
+    await asyncio.to_thread(executor.sweep_sandboxes)
     server = build_filter_server(executor, journal)
     loop = asyncio.get_running_loop()
     # A turn must not outlive the hub past its limit: the reaper

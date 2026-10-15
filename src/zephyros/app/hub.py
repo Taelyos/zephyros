@@ -423,6 +423,9 @@ async def run(
     if isinstance(runtime.instances, InstanceManager):
         workers.append(InstanceWorker(runtime.instances, config.runtime.poll_seconds))
     if runtime.deliveries is not None:
+        # The queue of the delivery loop is in memory: a verification that waited or ran when the
+        # hub stopped runs again from the start.
+        runtime.deliveries.resume()
         workers.append(InstanceWorker(runtime.deliveries, config.runtime.poll_seconds))
     # The notifications go out on a thread of their own, never on a listener's loop nor on a
     # worker above; stopped last, so that it records what the others raised on their way out.

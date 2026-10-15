@@ -177,7 +177,7 @@ def serve(handler: Any) -> tuple[HTTPServer, str]:
 
 def test_two_calls_in_two_event_loops_work(tmp_path: Path) -> None:
     """Every hub call is its own `asyncio.run`: a client or a lock kept between calls would
-    outlive its loop — the steam-watch run's RuntimeError."""
+    outlive its loop — the RuntimeError of the first real run."""
     pulls: list[dict[str, object]] = []
 
     def handler(method: str, path: str, body: bytes) -> tuple[int, object]:

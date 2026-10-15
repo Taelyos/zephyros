@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -255,6 +257,35 @@ def test_adr_0030_a_turn_runs_the_tools_by_their_name_and_cannot_change_them(
     assert tools_of_turns(deployment, project) == [(side.value, before.fingerprint)]
     checks = [r for r in deployment.records("hub") if r["action"] == "tools.check"]
     assert checks[-1]["parameters"]["tools"] == before.fingerprint
+
+
+def test_adr_0030_the_hub_refuses_a_file_system_mounted_under_the_tools(
+    zephyros: tuple[Deployment, str, Path], tools: Path, tmp_path: Path
+) -> None:
+    """The turns and the sandbox mount the tools without what is mounted under them; a hub that
+    saw such a mount (a recursive bind: Compose 2.26 drops `recursive: disabled`) would
+    fingerprint files the turns do not find, so it refuses. The check reads the mounts of its
+    own container: here a tmpfs under the directory, which needs no root on the machine."""
+    deployment, _engine, _forge = zephyros
+    image = docker("inspect", "-f", "{{.Image}}", deployment.hub).stdout.strip()
+    copy = tmp_path / "tools"
+    shutil.copytree(tools, copy, symlinks=True)
+    (copy / "mnt").mkdir(mode=0o755)
+    copy.chmod(0o755)
+
+    def check(*mounts: str) -> subprocess.CompletedProcess[str]:
+        return docker(
+            "run", "--rm", "--name", f"{deployment.name}-tools-mounts", "--network", "none",
+            "--user", "10001:10001", "-v", f"{copy}:{copy}:ro", *mounts,
+            image, "tools", "check", str(copy),
+            check=False,
+        )  # fmt: skip
+
+    alone = check()
+    assert alone.returncode == 0, alone.stderr
+    under = check("--tmpfs", f"{copy}/mnt:ro")
+    assert under.returncode == 2  # the exit code of a refusal
+    assert "'mnt' is a mount point: the turns and the sandbox would find it empty" in under.stderr
 
 
 def wait_for(deployment: Deployment, project: str, action: str, seconds: float) -> dict[str, Any]:

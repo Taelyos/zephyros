@@ -312,7 +312,7 @@ class InstanceManager:
         assert record is not None  # noqa: S101  # reason: set by _bring_up or by an earlier start
         self._check_not_stopping(live)
         # Measured before the turn starts: the fingerprint the log keeps is that of the tools the
-        # turn finds (ADR 0030).
+        # turn finds when it starts; nothing measures them again at its end (ADR 0030).
         tools = None if self._tools is None else self._tools.digest()
         secret = self._token_for_turn(live, record)
         self._broker.start_turn(project_id, side, secret, prompt)

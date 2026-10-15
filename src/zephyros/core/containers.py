@@ -622,6 +622,15 @@ def check_spec(spec: Mapping[str, Any], role: Role, policy: Policy) -> None:
             )
         if mount.get("Target") not in (HOME_PATH, WORK_PATH):
             raise SpecError("a volume is mounted on the home or the work path")
+        # Exactly the template's fields, as for the tools: no VolumeOptions (a driver, its
+        # options, a subpath), no read-only flag to toggle, nothing the runtime adds later.
+        if mount != {
+            "Type": "volume",
+            "Source": mount["Source"],
+            "Target": mount["Target"],
+            "ReadOnly": False,
+        }:
+            raise SpecError("a volume is mounted as its template says, with no other option")
     if tools and role is not Role.GUARD and len(host.get("Mounts", [])) == len(mounts):
         raise SpecError("a turn and a sandbox mount the tools of the configuration")
     if role is Role.SANDBOX:

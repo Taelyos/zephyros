@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from zephyros.adapters.memory.clock import FakeClock
 from zephyros.adapters.memory.instance_store import InMemoryInstanceStore
 from zephyros.adapters.memory.log_store import InMemoryLogStore
 from zephyros.adapters.memory.token_store import InMemoryTokenStore
+from zephyros.adapters.project_tools import ToolsDirectory
 from zephyros.core.audit import Action, AuditLog, AuditRecord, Outcome, Reason
 from zephyros.core.broker import BrokerError
 from zephyros.core.containers import Policy, guard_name, network_name, turn_name, volume_name
@@ -1028,3 +1030,20 @@ def test_a_turn_whose_tools_are_refused_does_not_start_and_the_log_says_why(rig:
     ]
     assert json.loads(failed[0].parameters)["problems"] == ["'bin/sim' is writable by every user"]
     assert rig.nothing_left()
+
+
+def test_a_turn_refused_for_its_tools_does_not_learn_their_path_on_the_machine(
+    rig: Rig, tmp_path: Path
+) -> None:
+    """The log of the project is read by the agents: it names what is wrong inside the tools,
+    never where they are on the machine (ADR 0030)."""
+    rig.manager = rig.make_manager(tools=ToolsDirectory(tmp_path / "gone"))
+    rig.manager.reconcile()
+    rig.start()
+    failed = [
+        r for r in rig.records() if (r.action, r.outcome) == (Action.TURN_START, Outcome.ERROR)
+    ]
+    assert json.loads(failed[0].parameters)["problems"] == [
+        "the tools directory cannot be read: No such file or directory"
+    ]
+    assert all(str(tmp_path) not in r.parameters for r in rig.records())

@@ -92,12 +92,18 @@ def _plain(text: str) -> str:
     return text.replace("|", "/").replace("\n", " ")
 
 
-def _tools_lines(tools: ToolsDigest | None) -> list[str]:
+def _tools_lines(tools: ToolsDigest | None, sandbox: bool) -> list[str]:
+    """`sandbox`: whether a sandbox ran tests with them; with no test to run, none started."""
     if tools is None:
         return []
+    where = (
+        "in the turns of both sides and in the sandbox"
+        if sandbox
+        else "in the turns of both sides (no test ran, so no sandbox started)"
+    )
     return [
         f"- Project tools: {_code(tools.fingerprint)} ({tools.files} files, {tools.bytes} bytes), "
-        f"mounted read-only at {_code(TOOLS_PATH)} in the turns of both sides and in the sandbox"
+        f"mounted read-only at {_code(TOOLS_PATH)} {where}"
     ]
 
 
@@ -134,7 +140,7 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             )
             or "no turn of the Contractor recorded"
         ),
-        *_tools_lines(report.tools),
+        *_tools_lines(report.tools, bool(report.outcomes)),
         f"- Files of the Owner side in the tree verified ({len(report.acceptance_files)}): "
         + (
             ", ".join(

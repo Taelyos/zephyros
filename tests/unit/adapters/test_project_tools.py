@@ -99,13 +99,34 @@ def test_an_unchanged_tree_is_not_hashed_again(
         return real(full)
 
     monkeypatch.setattr(project_tools, "_content_digest", counting)
-    tools = ToolsDirectory(root)
+    tools = ToolsDirectory(root, now=lambda: os.stat(root).st_ctime + 60)
     first = tools.digest()
     assert len(hashed) == 3
     assert tools.digest() is first
     assert len(hashed) == 3
     (root / "bin" / "sim").write_bytes(SIM + b"?")  # the change time moves with the content
     assert tools.digest() != first
+    assert len(hashed) == 6
+
+
+def test_a_tree_that_changed_in_the_last_seconds_is_hashed_each_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The kernel moves the change time by ticks: a write in the tick of the hashing could leave
+    every status as it was, so a result is kept only once every entry is older than that."""
+    root = make_tools(tmp_path / "tools")
+    hashed: list[str] = []
+    real = project_tools._content_digest
+
+    def counting(full: str) -> str:
+        hashed.append(full)
+        return real(full)
+
+    monkeypatch.setattr(project_tools, "_content_digest", counting)
+    newest = max(os.lstat(path).st_ctime for path in [root, *root.rglob("*")])
+    tools = ToolsDirectory(root, now=lambda: newest + project_tools.RACY_SECONDS)
+    first = tools.digest()
+    assert tools.digest() == first
     assert len(hashed) == 6
 
 
@@ -155,6 +176,87 @@ def test_a_link_through_a_link_that_leads_out_is_refused(tmp_path: Path) -> None
         "'bin/far' is a link that leads out of the tools directory",
         "'lib/up' is a link that leads out of the tools directory",
     ]
+
+
+@pytest.mark.parametrize(
+    ("place", "target"),
+    [
+        ("lib/cur", "../../build/lib"),  # out by `..`, back in by the name of the directory
+        ("lib/cur", "../../build/bin/sim"),
+        ("cur", "../build/lib/levels.txt"),
+        ("bin/deep/cur", "../../../build/lib"),
+    ],
+)
+def test_a_link_that_climbs_out_and_comes_back_in_by_name_is_refused(
+    tmp_path: Path, place: str, target: str
+) -> None:
+    """On the machine it resolves inside the directory; in a container the directory is
+    /opt/project-tools, so the same link reaches /opt/build/..., which is not the tools, and
+    could be a path an agent writes."""
+    root = make_tools(tmp_path / "build")
+    (root / place).parent.mkdir(parents=True, exist_ok=True)
+    (root / place).symlink_to(target)
+    assert os.path.realpath(root / place).startswith(str(root) + "/")
+    assert problems(root) == [f"{place!r} is a link that leads out of the tools directory"]
+
+
+def test_a_link_that_climbs_out_through_another_link_is_refused(tmp_path: Path) -> None:
+    """`lib/top` stays inside, but `bin/far` goes one level above it: the kernel follows
+    `lib/top` first, then climbs above the root of the mount."""
+    root = make_tools(tmp_path / "build")
+    (root / "lib" / "top").symlink_to("..")
+    (root / "bin" / "far").symlink_to("../lib/top/../build/lib")
+    assert problems(root) == ["'bin/far' is a link that leads out of the tools directory"]
+
+
+@pytest.mark.parametrize("target", ["../lib/../lib/levels.txt", "./../bin/../lib", "../lib/top"])
+def test_a_link_that_stays_inside_on_its_way_is_kept(tmp_path: Path, target: str) -> None:
+    root = make_tools(tmp_path / "build")
+    (root / "lib" / "top").symlink_to("..")
+    (root / "bin" / "ok").symlink_to(target)
+    assert ToolsDirectory(root).digest().files == 3
+
+
+def test_a_loop_of_links_is_refused(tmp_path: Path) -> None:
+    root = make_tools(tmp_path / "tools")
+    (root / "lib" / "a").symlink_to("b")
+    (root / "lib" / "b").symlink_to("a")
+    (root / "bin" / "loop").symlink_to("../lib/a/x")
+    assert sorted(problems(root)) == [
+        f"{where!r} is a link in a loop, or behind too many links"
+        for where in ("bin/loop", "lib/a", "lib/b")
+    ]
+
+
+def write_mountinfo(tmp: Path, *points: str) -> str:
+    lines = [
+        f"{n} 1 0:{n} / {point} ro,relatime - tmpfs tmpfs ro" for n, point in enumerate(points)
+    ]
+    (tmp / "mountinfo").write_text("\n".join(["22 1 8:1 / / rw - ext4 /dev/sda1 rw", *lines]))
+    return str(tmp / "mountinfo")
+
+
+def test_a_file_system_mounted_under_the_directory_is_refused(tmp_path: Path) -> None:
+    """The mount of the turns and the sandbox is not recursive: they would find an empty
+    directory where the hub, through a recursive mount, read files."""
+    root = make_tools(tmp_path / "tools")
+    (root / "lib" / "my data").mkdir()
+    info = write_mountinfo(
+        tmp_path,
+        str(root),  # the mount of the directory itself
+        f"{root}/lib/my\\040data",  # mountinfo writes a space in octal
+        f"{root}x/elsewhere",  # a sibling whose name starts the same
+    )
+    with pytest.raises(ToolsError) as refused:
+        ToolsDirectory(root, mountinfo=info).digest()
+    assert refused.value.problems == (
+        "'lib/my data' is a mount point: the turns and the sandbox would find it empty",
+    )
+
+
+def test_without_a_mountinfo_the_mounts_are_not_read(tmp_path: Path) -> None:
+    root = make_tools(tmp_path / "tools")
+    assert ToolsDirectory(root, mountinfo=str(tmp_path / "none")).digest().files == 3
 
 
 def test_a_dangling_link_inside_is_kept(tmp_path: Path) -> None:
@@ -281,12 +383,31 @@ def test_a_root_that_is_not_a_directory_is_refused(
     tmp_path: Path, make: Callable[[Path], Path], message: str
 ) -> None:
     root = make(tmp_path)
-    (refusal,) = problems(root)
-    assert refusal == f"{str(root)!r} {message}"
+    with pytest.raises(ToolsError) as refused:
+        ToolsDirectory(root).digest()
+    assert refused.value.problems == (f"the tools directory {message}",)
+    # The path on the machine is for the operator alone: the problems reach the agents.
+    assert str(tmp_path) not in "".join(refused.value.problems)
+    assert str(refused.value).startswith(f"the tools directory {str(root)!r} cannot be mounted:")
 
 
 def test_a_relative_root_is_refused() -> None:
-    assert problems(Path("tools")) == ["'tools' is not an absolute path"]
+    assert problems(Path("tools")) == ["the tools directory is not named by an absolute path"]
+
+
+def test_no_problem_names_the_path_on_the_machine(tmp_path: Path) -> None:
+    """Not even when the walk fails under the root: the problem names the entry inside."""
+    root = make_tools(tmp_path / "tools")
+    (root / "lib").chmod(0o000)
+    try:
+        if os.access(root / "lib", os.R_OK):
+            pytest.skip("this user reads every directory")
+        with pytest.raises(ToolsError) as refused:
+            ToolsDirectory(root).digest()
+    finally:
+        (root / "lib").chmod(0o755)
+    assert refused.value.problems == ("'lib' cannot be read: Permission denied",)
+    assert str(root) in str(refused.value)
 
 
 def test_a_refusal_names_the_first_problems_and_counts_the_others(tmp_path: Path) -> None:
@@ -298,5 +419,5 @@ def test_a_refusal_names_the_first_problems_and_counts_the_others(tmp_path: Path
         ToolsDirectory(root).digest()
     assert len(refused.value.problems) == MAX_PROBLEMS + 5
     text = str(refused.value)
-    assert text.startswith("the tools directory cannot be mounted:\n  'lib/f00' is writable")
+    assert text.startswith(f"the tools directory {str(root)!r} cannot be mounted:\n  'lib/f00'")
     assert text.endswith("\n  and 5 more")

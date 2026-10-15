@@ -229,7 +229,7 @@ def test_a_hub_whose_tools_an_instance_could_change_does_not_start(
     monkeypatch.setattr(program, "load_config", lambda _path: config)
     assert main(["--config", str(tmp_path / "z.toml")]) == 2
     error = capsys.readouterr().err
-    assert "refused to start: the tools directory cannot be mounted:" in error
+    assert f"refused to start: the tools directory {str(root)!r} cannot be mounted:" in error
     assert "'bin/sim' is writable by every user" in error
     assert not Path(config.paths.data_dir).exists()
 
