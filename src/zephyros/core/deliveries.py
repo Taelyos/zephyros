@@ -999,10 +999,12 @@ class DeliveryService:
             ) from None
 
     def _tools_of_turns(self, project_id: str, delivery_id: str) -> tuple[tuple[str, int], ...]:
-        """The tools each turn of either side found when it started, by fingerprint, for the
-        turns started before the delivery came in (ADR 0030); a start that recorded none is
-        "none". Read from the first READ_RECORDS records of the log, as the cost is."""
-        turns: dict[str, int] = {}
+        """The tools the turns of either side found when they started, for the turns started
+        before the delivery came in (ADR 0030), in the order of the turns: each fingerprint with
+        how many turns in a row found it, so that a change between two turns shows as one
+        fingerprint followed by another (AN-026). A start that recorded none is "none". Read
+        from the first READ_RECORDS records of the log, as the cost is."""
+        runs: list[tuple[str, int]] = []
         for item in self._audit.read(project_id, 0, READ_RECORDS):
             if item.outcome is not Outcome.OK:
                 continue
@@ -1012,8 +1014,11 @@ class DeliveryService:
             if item.action is Action.TURN_START and item.principal == SYSTEM_PRINCIPAL:
                 found = parameters.get("tools")
                 label = found if isinstance(found, str) and found else "none"
-                turns[label] = turns.get(label, 0) + 1
-        return tuple(turns.items())
+                if runs and runs[-1][0] == label:
+                    runs[-1] = (label, runs[-1][1] + 1)
+                else:
+                    runs.append((label, 1))
+        return tuple(runs)
 
     def _context_of_turns(
         self, project_id: str, delivery_id: str

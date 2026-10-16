@@ -23,6 +23,7 @@ from zephyros.core.report import (
     render,
     with_addendum,
 )
+from zephyros.core.tools import ToolsDigest
 
 TOKEN = "zph_c_" + "Q" * 43
 
@@ -341,3 +342,37 @@ def test_a_run_stopped_at_its_limit_says_so_and_names_the_test_under_way() -> No
         assert "- `tests/t.py::test_add`: not_run" in text.splitlines()
     alone = render(make(stopped_at=300, outcomes=outcomes, gate=compute_gate(objects, outcomes)))
     assert "The kit had signed no test as under way." in alone
+
+
+OLD, NEW = "sha256:" + "a1" * 32, "sha256:" + "0f" * 32
+
+
+def flags_of(text: str) -> str:
+    return text.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
+
+
+def test_tools_changed_between_two_turns_are_said_so_old_then_new() -> None:
+    """AN-026: after a fix of the tools, the old fingerprint was flagged and not explained."""
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((OLD, 4), (NEW, 2)))
+    assert flags_of(render(report)) == (
+        "The project tools changed between two turns before this delivery (the fingerprints the "
+        "turns found, in order; the last turns found the tools verified):\n"
+        "\n"
+        f"- `{OLD}` (4 turns) → `{NEW}` (2 turns)"
+    )
+
+
+def test_tools_changed_after_the_last_turn_are_said_apart() -> None:
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((OLD, 1),))
+    assert flags_of(render(report)) == (
+        "The project tools changed after the last turn before this delivery: it was built with "
+        "other tools than the ones it was verified with (the fingerprints the turns found, in "
+        "order, then the verification's):\n"
+        "\n"
+        f"- `{OLD}` (1 turn) → `{NEW}` (the verification)"
+    )
+
+
+def test_turns_that_all_found_the_tools_verified_raise_no_flag() -> None:
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((NEW, 5),))
+    assert flags_of(render(report)) == "None."

@@ -77,8 +77,8 @@ class ReportInput:
     tools: ToolsDigest | None = None
     """The tools the sandbox mounted, as the hub measured them around the run (ADR 0030)."""
     tools_of_turns: tuple[tuple[str, int], ...] = ()
-    """The tools the turns of both sides found before the delivery came in: each fingerprint
-    (or "none"), with how many turns found it."""
+    """The tools the turns of both sides found before the delivery came in, in the order of the
+    turns: each fingerprint (or "none"), with how many turns in a row found it."""
     context_of_turns: tuple[tuple[int, int, int, int], ...] = ()
     """The context the agents of both sides worked with in the turns before the delivery came
     in (ADR 0033): each (context, window of the model, compaction point, turns), as the starts
@@ -222,6 +222,33 @@ def _obstacles_lines(obstacles: tuple[Obstacle, ...], *, owner_side: bool) -> li
     return lines
 
 
+def _tools_flag(report: ReportInput) -> tuple[str, list[str]]:
+    """The tools the turns found, when they are not the ones verified all along (AN-026). A
+    change between two turns, the last of them finding the tools verified, is the expected
+    course after a fix of the tools, and is said so; a change after the last turn means the
+    delivery was built with other tools than the ones it was verified with. A change during the
+    verification never reaches a report: its results are not kept."""
+    verified = None if report.tools is None else report.tools.fingerprint
+    runs = report.tools_of_turns
+    if verified is None or all(found == verified for found, _turns in runs):
+        return "", []
+    chain = " → ".join(
+        f"{_code(found)} ({turns} turn{'' if turns == 1 else 's'})" for found, turns in runs
+    )
+    if runs[-1][0] == verified:
+        return (
+            "The project tools changed between two turns before this delivery (the "
+            "fingerprints the turns found, in order; the last turns found the tools verified):",
+            [chain],
+        )
+    return (
+        "The project tools changed after the last turn before this delivery: it was built with "
+        "other tools than the ones it was verified with (the fingerprints the turns found, in "
+        "order, then the verification's):",
+        [f"{chain} → {_code(verified)} (the verification)"],
+    )
+
+
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
     """The evidence report. Without the output of the run (`with_output` false), it is the
     report the Contractor reads: the output shows the Owner side's acceptance tests, the outcome
@@ -340,15 +367,7 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
                 else []
             ),
         ),
-        (
-            "Turns before this delivery found other tools than the verification (each "
-            "fingerprint, with how many turns found it):",
-            [
-                f"{_code(found)} ({turns} turn{'' if turns == 1 else 's'})"
-                for found, turns in report.tools_of_turns
-                if report.tools is not None and found != report.tools.fingerprint
-            ],
-        ),
+        _tools_flag(report),
         (
             "Acceptance test files that a criterion names and neither the Owner side nor the "
             "base holds (their tests cannot pass):",
