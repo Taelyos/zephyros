@@ -168,8 +168,11 @@ instead, so the variables always resolve.
    and sandboxes; the volumes stay. Restore the mode of the key file if you changed it.
 
 Keep the client's interface in the contract (a constraint) when the Owner must write tests
-against it: a first prompt holds 4 000 characters, and the Owner reads the code only once it is
-delivered.
+against it: a prompt holds 4 000 characters, and the Owner reads the code only once it is
+delivered. The limit holds for every prompt of `instance.start`, a relaunch as much as the first
+one, and for the reasons of a `delivery.review`; a longer text is refused, never cut, and the
+refusal names the field, the limit and the length it received
+([limits of the texts](tools.md#limits-of-the-free-texts)).
 
 What to watch: `delivery.status` for the decision and the report, the log (`log.read`,
 `log.verify`) for every call and every refusal, and the notifications if `[notifications]` is set

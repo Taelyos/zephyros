@@ -36,6 +36,33 @@ An agent reaches the hub through MCP on its agent endpoint, and the operator rea
 | `log.read` | Read records of the log. The operator only. | yes | no | no | no |
 | `log.verify` | Verify the chain of a stream. The operator only. | yes | no | no | no |
 
+## Limits of the free texts
+
+Every free text of a call has a limit, in characters, whoever calls: the prompt of every `instance.start`, the first of an instance and every later one alike, and the reasons of a `delivery.review` among them. A text over its limit is refused, and nothing is cut: the refusal (`invalid_request`) names the field, the limit and the length received, for example `arguments.prompt: must have at most 4000 characters; it has 5210`.
+
+| Tool | Field | At most |
+| --- | --- | --- |
+| `project.create` | `name` | 100 |
+| `project.create` | `repository_url` | 2 048 |
+| `instance.start` | `prompt` | 4 000 |
+| `contract.propose` | `summary` | 300 |
+| `contract.apply_reserved` | `summary` | 300 |
+| `contract.import` | `summary` | 300 |
+| `contract.import` | `markdown` | 200 000 |
+| `acceptance.put` | `content` | 65 536 |
+| `inspection.record` | `observation` | 2 000 |
+| `delivery.review` | `reasons` | 4 000 |
+| `obstacle.report` | `title` | 120 |
+| `obstacle.report` | `description` | 4 000 |
+| `obstacle.report` | `evidence[].path` | 300 |
+| `obstacle.report` | `evidence[].command` | 500 |
+| `obstacle.report` | `evidence[].output` | 2 000 |
+| `obstacle.report` | `evidence[].note` | 300 |
+| `obstacle.report` | `tried` | 2 000 |
+| `obstacle.report` | `needed` | 1 000 |
+| `obstacle.answer` | `text` | 4 000 |
+| `obstacle.close` | `note` | 1 000 |
+
 ## What a Contractor instance reaches on the hub
 
 `whoami`, `project.list`, `project.get`, `contract.read`, `delivery.declare`, `delivery.status`, `obstacle.report`, `obstacle.list`, `obstacle.read`, `obstacle.close`. It reads the contract as data and cannot write it, propose a change to it, approve one, write an acceptance test, or reach the log, the configuration or the instances. It declares a delivery and reads its state; it never records a result. It reports the obstacles it meets and reads the answers to its own; it answers none, and never reads an obstacle of the Owner side.

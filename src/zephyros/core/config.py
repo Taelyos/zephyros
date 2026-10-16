@@ -35,7 +35,7 @@ from zephyros.core.schema import (
     Text,
 )
 
-CONFIG_SCHEMA_VERSION = "1.18.0"
+CONFIG_SCHEMA_VERSION = "1.19.0"
 
 CONFIG_SCHEMA_ID = "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json"
 
@@ -433,13 +433,14 @@ def _tokens() -> Table:
             Field(
                 "lifetime_seconds",
                 Integer(120, 604800),
-                "Lifetime of a project token; longer than the longest turn",
+                "Lifetime of the token of a turn; the hub renews it while the turn runs",
                 default=14400,
             ),
             Field(
                 "rotate_before_seconds",
                 Integer(30, 86400),
-                "A turn that starts when less than this remains of the lifetime gets a new token",
+                "The hub renews the token of a running turn when less than this remains of its "
+                "lifetime (four rounds of the watchdog at least)",
                 default=900,
             ),
             Field(
@@ -686,19 +687,14 @@ def _rule_ports(data: Mapping[str, object]) -> list[Problem]:
 
 
 def _rule_token_lifetime(data: Mapping[str, object]) -> list[Problem]:
+    # A turn may run longer than the lifetime of a token: the watchdog renews the token of a
+    # turn while it runs (ADR 0016, amended), so the lifetime no longer has to outlast a turn.
     tokens = _section(data, "tokens")
-    limits = _section(data, "limits")
-    problems: list[Problem] = []
-    lifetime = _int(tokens, "lifetime_seconds")
-    if lifetime <= _int(limits, "turn_seconds"):
-        problems.append(
-            Problem("tokens.lifetime_seconds", "must be longer than limits.turn_seconds")
-        )
-    if _int(tokens, "rotate_before_seconds") >= lifetime:
-        problems.append(
+    if _int(tokens, "rotate_before_seconds") >= _int(tokens, "lifetime_seconds"):
+        return [
             Problem("tokens.rotate_before_seconds", "must be shorter than tokens.lifetime_seconds")
-        )
-    return problems
+        ]
+    return []
 
 
 def _rule_pool(data: Mapping[str, object]) -> list[Problem]:
@@ -916,7 +912,6 @@ SCHEMA = Schema(
             _rule_ports,
         ),
         Rule(
-            "tokens.lifetime_seconds is longer than limits.turn_seconds, and "
             "tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
             _rule_token_lifetime,
         ),

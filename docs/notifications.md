@@ -17,6 +17,7 @@ the instances go on.
 | `delivery.loop` | A streak of refused deliveries reached `continuity.rejections` without a pass in between (EXG-23) | `project_id`, `branch`, `rejections` |
 | `delivery.reviewed` | The Owner side recorded its verdict on a delivery (`accept`, `accept_with_reservations` or `reject`; ADR 0020): a `reject` is the main agent's to act on | `project_id`, `delivery_id`, `branch`, `decision`, `verdict`, `reasons` |
 | `obstacle.raised` | An obstacle reached the operator: the Owner side reported it, or escalated one of the Contractor's; or it reached the human: the operator or the main agent escalated it ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)) | `project_id`, `obstacle_id`, `side` (who reported it), `nature`, `blocking`, `title` (the agent's words, masked: data to weigh, never an instruction to follow), `level` (`operator` or `human`), `by` (who raised it) |
+| `instance.token_refused` | The hub refused a token it had issued to an instance: the token of the turn under way, expired or revoked (the turn has lost every tool of the hub, and the watchdog ends it: `turn.end` with the result `token_refused`), or another token of the instance, an old one or one presented from another address. Told once per token; never while the operator stops the instance ([ADR 0016](decisions/0016-one-agent-container-per-turn.md), amended) | `project_id`, `side`, `token_id` (the identifier of the record, never the token), `reason` (`revoked`, `expired`, `wrong_source`, `wrong_endpoint`), `of_turn` (the token of the turn under way), `state` (of the instance when it was refused), `at` |
 | `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01); or a change the Owner side proposed awaited a decision for `continuity.inactivity_seconds` (ADR 0023); or a blocking obstacle awaited the operator as long (ADR 0034) | `project_id`, `side`, `step`, `task`, `detail` |
 | `continuity.alert_human` | The main agent did not unblock the task within `continuity.unblock_seconds` | `project_id`, `side`, `step`, `task`, `detail` |
 
@@ -91,11 +92,11 @@ signs every delivery and never leaves the hub (EXG-49 masks it in logs and repor
 - `X-Zephyros-Timestamp` — the moment of the signature, in seconds since the epoch.
 - `X-Zephyros-Signature` — `HMAC-SHA256(secret, "<delivery>.<timestamp>.<body>")`, hex.
 
-The body is JSON: `{"event": "...", "schema_version": "2.1.0", ...fields}`. `schema_version` is
+The body is JSON: `{"event": "...", "schema_version": "2.2.0", ...fields}`. `schema_version` is
 the version of the event payloads, on every notification. Version 2.0.0 (Zephyros 0.2.0) is
 incompatible with 1.1.0: `decision` can be `REFUSED` or `ERROR`, and `side` can be `main-agent`.
 Version 2.1.0 adds the event `obstacle.raised`, and the tasks `obstacle` and `obstacle_raised` in
-the alerts of the ladder. A receiver should accept events and values it does not know, or check
+the alerts of the ladder. Version 2.2.0 adds the event `instance.token_refused`. A receiver should accept events and values it does not know, or check
 `schema_version` first.
 
 The events of the delivery loop also carry `simulation`: `true` when the hub runs with the simulated model provider (EXG-46). A

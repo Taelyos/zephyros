@@ -36,7 +36,14 @@ from zephyros.core.continuity import OBSTACLE, Continuity, TaskState
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import InstanceState as State
-from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing, TurnBriefing, TurnEngine
+from zephyros.core.lifecycle import (
+    LOST_ROUNDS,
+    TOKEN_REFUSED,
+    InstanceManager,
+    Timing,
+    TurnBriefing,
+    TurnEngine,
+)
 from zephyros.core.notifications import Notifier
 from zephyros.core.obstacles import Briefing
 from zephyros.core.ports.agent_engine import Side
@@ -161,6 +168,11 @@ class Rig:
     def turn_secret(self, project: str = PROJECT, side: Side = CONTRACTOR) -> str:
         env = self.docker.containers[turn_name(project, side)]["Config"]["Env"]
         return str(next(e.split("=", 1)[1] for e in env if e.startswith("ZEPHYROS_TOKEN=")))
+
+    def instance_id(self, project: str = PROJECT, side: Side = CONTRACTOR) -> str:
+        record = self.store.get(project, side)
+        assert record is not None
+        return record.instance_id
 
     def records(self, project: str = PROJECT) -> list[AuditRecord]:
         return self.audit.read(project)
@@ -394,7 +406,7 @@ def test_a_turn_that_vanishes_is_reported_as_failed(rig: Rig) -> None:
     assert rig.state() is State.IDLE
 
 
-def test_a_new_turn_reuses_the_instance_and_the_token(rig: Rig) -> None:
+def test_a_new_turn_reuses_the_instance_with_a_token_of_its_own(rig: Rig) -> None:
     rig.start(prompt="first")
     secret = rig.turn_secret()
     rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
@@ -402,8 +414,8 @@ def test_a_new_turn_reuses_the_instance_and_the_token(rig: Rig) -> None:
     networks_before = len([c for c in rig.docker.calls if c.path.endswith("/networks/create")])
     rig.start(prompt="second")
     assert rig.state() is State.TURN
-    assert rig.turn_secret() == secret
-    assert [a for a, _ in rig.actions()].count(Action.TOKEN_ISSUE) == 1
+    assert rig.turn_secret() != secret
+    assert [a for a, _ in rig.actions()].count(Action.TOKEN_ISSUE) == 2
     assert (
         len([c for c in rig.docker.calls if c.path.endswith("/networks/create")]) == networks_before
     )
@@ -456,25 +468,197 @@ def test_a_call_from_the_wrong_address_does_not_count_as_a_sign_of_life(rig: Rig
 
 
 # ----------------------------------------------------------------------------- tokens
-def test_a_token_near_its_end_is_replaced_at_the_next_turn(rig: Rig) -> None:
+GUARD = "10.200.0.2"
+SHORT = replace(
+    TIMING,
+    turn_seconds=7200,
+    silence_seconds=600,
+    token_lifetime_seconds=300,
+    rotate_before_seconds=60,
+)
+"""A token lifetime much shorter than a turn, as a test can have it."""
+
+
+def revocations(rig: Rig) -> list[str]:
+    return [
+        str(json.loads(r.parameters).get("why"))
+        for r in rig.records()
+        if r.action is Action.TOKEN_REVOKE
+    ]
+
+
+def test_the_token_of_a_turn_is_revoked_when_the_turn_ends(rig: Rig) -> None:
+    rig.start()
+    old = rig.turn_secret()
+    assert isinstance(rig.who_is(old, GUARD), Authenticated)
+    rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
+    rig.manager.tick()
+    refused = rig.who_is(old, GUARD)
+    assert isinstance(refused, Rejected)
+    assert refused.reason is Reason.REVOKED
+    assert revocations(rig) == ["turn_end"]
+    rig.start()
+    new = rig.turn_secret()
+    principal = rig.who_is(new, GUARD)
+    assert isinstance(principal, Authenticated)
+    assert principal.principal.id == f"contractor:{PROJECT}"  # the same principal, a new token
+
+
+def test_a_turn_started_late_in_the_life_of_the_first_token_keeps_its_tools(rig: Rig) -> None:
+    """AN-021: the token of the first turn was kept for the next ones, and a turn that started
+    with less than a turn left on it lost every tool of the hub in its middle."""
+    rig.start()
+    rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
+    rig.manager.tick()
+    rig.clock.advance(TIMING.token_lifetime_seconds - TIMING.rotate_before_seconds - 10)
+    rig.start()
+    secret = rig.turn_secret()
+    for _ in range(TIMING.turn_seconds // 60 - 1):  # the whole of a turn, a call a minute
+        rig.clock.advance(60)
+        assert isinstance(rig.who_is(secret, GUARD), Authenticated)
+        rig.manager.tick()
+    assert rig.state() is State.TURN
+
+
+def test_a_turn_longer_than_the_lifetime_of_a_token_keeps_its_token(rig: Rig) -> None:
+    rig.manager = rig.make_manager(SHORT)
+    rig.manager.reconcile()
+    rig.start()
+    secret = rig.turn_secret()
+    elapsed = 0
+    while elapsed < 6 * SHORT.token_lifetime_seconds:
+        rig.clock.advance(SHORT.poll_seconds)
+        elapsed += SHORT.poll_seconds
+        assert isinstance(rig.who_is(secret, GUARD), Authenticated), elapsed
+        rig.manager.tick()
+    assert rig.state() is State.TURN
+    renewals = [r for r in rig.records() if r.action is Action.TOKEN_RENEW]
+    lifetime, margin = SHORT.token_lifetime_seconds, SHORT.rotate_before_seconds
+    assert len(renewals) == pytest.approx(elapsed / (lifetime - margin), abs=1)
+    assert secret not in json.dumps([r.parameters for r in rig.records()])
+
+
+def test_a_token_is_not_renewed_once_its_turn_is_no_longer_seen(rig: Rig) -> None:
+    rig.manager = rig.make_manager(SHORT)
+    rig.manager.reconcile()
+    rig.start()
+    secret = rig.turn_secret()
+    rig.broker.down = True  # the filter no longer answers: the watchdog cannot see the turn
+    rig.clock.advance(SHORT.token_lifetime_seconds - SHORT.rotate_before_seconds + 1)
+    rig.manager.tick()
+    assert not [r for r in rig.records() if r.action is Action.TOKEN_RENEW]
+    assert isinstance(rig.who_is(secret, GUARD), Authenticated)  # until it expires
+    for _ in range(LOST_ROUNDS):
+        rig.manager.tick()
+    refused = rig.who_is(secret, GUARD)
+    assert isinstance(refused, Rejected)  # cut off after the rounds the filter did not answer
+    assert rig.manager.status(PROJECT, CONTRACTOR).last_turn == "supervision_lost"
+
+
+def test_the_renewal_starts_four_rounds_before_the_end_at_least(rig: Rig) -> None:
+    timing = replace(SHORT, poll_seconds=30, rotate_before_seconds=30)
+    rig.manager = rig.make_manager(timing)
+    rig.manager.reconcile()
+    rig.start()
+    rig.clock.advance(timing.token_lifetime_seconds - (LOST_ROUNDS + 1) * 30 + 1)
+    rig.manager.tick()
+    assert [r for r in rig.records() if r.action is Action.TOKEN_RENEW]
+
+
+def test_a_token_issued_for_a_turn_that_did_not_start_is_revoked(rig: Rig) -> None:
+    rig.start()
+    rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
+    rig.manager.tick()
+    rig.broker.explode.add("start_turn")
+    rig.start()
+    assert rig.manager.status(PROJECT, CONTRACTOR).last_turn == "start_failed:internal_error"
+    assert revocations(rig) == ["turn_end", "start_failed"]
+    assert rig.tokens.live_project_token(rig.instance_id()) is None
+
+
+# ----------------------------------------------------------------------------- refused tokens
+def told(rig: Rig) -> list[dict[str, Any]]:
+    rig.send_notifications()
+    return [
+        json.loads(r.parameters)
+        for r in rig.records()
+        if r.action is Action.NOTIFICATION
+        and json.loads(r.parameters).get("event") == "instance.token_refused"
+    ]
+
+
+def test_a_turn_whose_own_token_is_refused_ends_and_the_operator_sees_it(rig: Rig) -> None:
+    rig.start()
+    token_id = rig.tokens.live_project_token(rig.instance_id())
+    assert token_id is not None
+    rig.manager.token_refused(PROJECT, CONTRACTOR, token_id.token_id, "expired")
+    info = rig.manager.status(PROJECT, CONTRACTOR)
+    assert info.token_refused is not None
+    assert (info.token_refused.reason, info.token_refused.of_turn) == ("expired", True)
+    assert info.state is State.TURN  # until the watchdog's round: no container is touched here
+    rig.manager.tick()
+    info = rig.manager.status(PROJECT, CONTRACTOR)
+    assert (info.state, info.last_turn) == (State.IDLE, "token_refused")
+    assert turn_name(PROJECT, CONTRACTOR) not in rig.docker.containers
+    assert (Action.TURN_END, Outcome.ERROR) in rig.actions()
+    [event] = told(rig)
+    assert (event["reason"], event["of_turn"], event["side"]) == ("expired", True, "contractor")
+
+
+def test_the_event_of_a_refused_token_is_documented() -> None:
+    page = Path(__file__).parents[3] / "docs" / "notifications.md"
+    assert f"| `{TOKEN_REFUSED}` |" in page.read_text(encoding="utf-8")
+
+
+def test_an_old_token_refused_is_seen_and_told_once_and_the_turn_goes_on(rig: Rig) -> None:
     rig.start()
     old = rig.turn_secret()
     rig.docker.finish(turn_name(PROJECT, CONTRACTOR), 0)
     rig.manager.tick()
-    rig.clock.advance(TIMING.token_lifetime_seconds - TIMING.rotate_before_seconds + 1)
     rig.start()
-    new = rig.turn_secret()
-    assert new != old
-    assert isinstance(rig.who_is(new, "10.200.0.2"), Authenticated)
-    refused = rig.who_is(old, "10.200.0.2")
+    refused = rig.who_is(old, GUARD)
     assert isinstance(refused, Rejected)
-    assert refused.reason is Reason.REVOKED
-    kinds = [a for a, _ in rig.actions()]
-    assert kinds.count(Action.TOKEN_ISSUE) == 2
-    assert kinds.count(Action.TOKEN_REVOKE) == 1
-    principal = rig.who_is(new, "10.200.0.2")
-    assert isinstance(principal, Authenticated)
-    assert principal.principal.id == f"contractor:{PROJECT}"  # the same principal, rotated
+    assert refused.token_id is not None
+    for _ in range(3):
+        rig.manager.token_refused(PROJECT, CONTRACTOR, refused.token_id, refused.reason.value)
+    rig.manager.tick()
+    info = rig.manager.status(PROJECT, CONTRACTOR)
+    assert info.state is State.TURN
+    assert info.token_refused is not None
+    assert (info.token_refused.reason, info.token_refused.of_turn) == ("revoked", False)
+    assert info.token_refused.token_id == refused.token_id
+    assert len(told(rig)) == 1
+
+
+def test_a_token_from_elsewhere_does_not_end_the_turn(rig: Rig) -> None:
+    rig.start()
+    secret = rig.turn_secret()
+    refused = rig.who_is(secret, "10.200.0.99")
+    assert isinstance(refused, Rejected)
+    assert refused.token_id is not None
+    rig.manager.token_refused(PROJECT, CONTRACTOR, refused.token_id, refused.reason.value)
+    rig.manager.tick()
+    info = rig.manager.status(PROJECT, CONTRACTOR)
+    assert info.state is State.TURN
+    assert info.token_refused is not None
+    assert (info.token_refused.reason, info.token_refused.of_turn) == ("wrong_source", True)
+    assert len(told(rig)) == 1
+
+
+def test_the_refusals_of_a_stopping_instance_are_seen_and_not_told(rig: Rig) -> None:
+    rig.start()
+    secret = rig.turn_secret()
+    rig.manager.stop(PROJECT, CONTRACTOR)
+    refused = rig.who_is(secret, GUARD)
+    assert isinstance(refused, Rejected)
+    assert refused.token_id is not None
+    rig.manager.token_refused(PROJECT, CONTRACTOR, refused.token_id, refused.reason.value)
+    assert rig.manager.status(PROJECT, CONTRACTOR).token_refused is not None
+    rig.run_jobs()
+    after = rig.manager.status(PROJECT, CONTRACTOR)
+    assert after.state is State.ABSENT
+    assert after.token_refused is not None  # still there once the instance is gone
+    assert told(rig) == []
 
 
 def test_the_tokens_of_an_instance_are_all_gone_when_it_stops(rig: Rig) -> None:

@@ -909,6 +909,7 @@ SUMMARIES: dict[str, Summary] = {
     "delivery.review": _delivery_review,
     "token.issue": _token("issues", "to"),
     "token.revoke": _token("revokes", "of"),
+    "token.renew": _token("renews", "of"),
     "notification.sent": _notification,
     "continuity.step": _continuity,
     "obstacle.report": _obstacle_report,

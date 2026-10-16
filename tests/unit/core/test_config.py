@@ -209,11 +209,18 @@ def test_an_unknown_key_is_refused_in_every_table(section: str) -> None:
     assert expected in [problem.key for problem in caught.value.problems]
 
 
+def test_a_token_may_live_less_than_a_turn() -> None:
+    """The hub renews the token of a turn while it runs (ADR 0016, amended): a lifetime shorter
+    than the longest turn is no longer refused."""
+    document = with_value("tokens.lifetime_seconds", 600)
+    document["tokens"]["rotate_before_seconds"] = 120
+    assert parse_config(document).tokens.lifetime_seconds == 600
+
+
 def test_rules_across_keys() -> None:
     cases: list[tuple[dict[str, Any], str]] = [
         (with_value("hub.operator_port", 8080), "hub.operator_port"),
         (with_value("hub.main_agent_port", 8081), "hub.main_agent_port"),
-        (with_value("tokens.lifetime_seconds", 600), "tokens.lifetime_seconds"),
         (with_value("tokens.rotate_before_seconds", 20000), "tokens.rotate_before_seconds"),
         (with_value("network.instance_prefix", 24), "network.instance_prefix"),
     ]

@@ -204,10 +204,17 @@ class Text(Spec):
     def check(self, value: object, key: str) -> list[Problem]:
         if not isinstance(value, str):
             return [Problem(key, f"must be a string, not a {_type_name(value)}")]
+        # The refusal says the limit and what came: a long text is cut down, not guessed at.
         if len(value) < self.min_length:
-            return [Problem(key, f"must have at least {self.min_length} characters")]
+            return [
+                Problem(
+                    key, f"must have at least {self.min_length} characters; it has {len(value)}"
+                )
+            ]
         if len(value) > self.max_length:
-            return [Problem(key, f"must have at most {self.max_length} characters")]
+            return [
+                Problem(key, f"must have at most {self.max_length} characters; it has {len(value)}")
+            ]
         if _has_control(value, self.multiline):
             return [Problem(key, "must not contain control characters")]
         if self.kind is not None:

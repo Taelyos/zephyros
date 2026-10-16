@@ -320,14 +320,14 @@
           "type": "integer",
           "minimum": 120,
           "maximum": 604800,
-          "description": "Lifetime of a project token; longer than the longest turn",
+          "description": "Lifetime of the token of a turn; the hub renews it while the turn runs",
           "default": 14400
         },
         "rotate_before_seconds": {
           "type": "integer",
           "minimum": 30,
           "maximum": 86400,
-          "description": "A turn that starts when less than this remains of the lifetime gets a new token",
+          "description": "The hub renews the token of a running turn when less than this remains of its lifetime (four rounds of the watchdog at least)",
           "default": 900
         },
         "channel_lifetime_days": {
@@ -591,10 +591,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Taelyos/zephyros/schemas/configuration.schema.json",
   "title": "Zephyros configuration",
-  "x-zephyros-schema-version": "1.18.0",
+  "x-zephyros-schema-version": "1.19.0",
   "x-zephyros-rules": [
     "hub.agent_port, hub.operator_port, hub.main_agent_port and hub.egress_port are four different ports",
-    "tokens.lifetime_seconds is longer than limits.turn_seconds, and tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
+    "tokens.rotate_before_seconds is shorter than tokens.lifetime_seconds",
     "network.instance_prefix is longer than the prefix of network.instance_pool",
     "hub.operator_bind and hub.main_agent_bind are not addresses of network.instance_pool",
     "network.resolvers holds no address of a protected network (the guard blocks them)",
