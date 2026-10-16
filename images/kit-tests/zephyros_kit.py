@@ -326,9 +326,11 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
 
 def pytest_runtest_logstart(nodeid: str, location: object) -> None:
     # Signed, so that a line a subprocess writes cannot name another test; printed at once, so
-    # that a run stopped at its limit still says which test was under way.
+    # that a run stopped at its limit still says which test was under way. The leading newline
+    # keeps the line whole: pytest has just written the name of the file, with no line end.
     if nodeid in OUTCOMES:
-        print(_signed(STARTED_MARK, {"test": nodeid, "at": _elapsed()}), file=REAL_OUT, flush=True)
+        line = _signed(STARTED_MARK, {"test": nodeid, "at": _elapsed()})
+        print("\n" + line, file=REAL_OUT, flush=True)
 
 
 def pytest_exception_interact(

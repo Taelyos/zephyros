@@ -351,7 +351,8 @@ def test_each_test_that_starts_is_signed_at_once(kit: ModuleType) -> None:
     setattr(kit, "REAL_OUT", out)  # noqa: B010  # reason: the module is loaded from a file
     kit.pytest_runtest_logstart("t.py::slow", None)
     kit.pytest_runtest_logstart("x.py::not_asked", None)
-    lines = out.getvalue().splitlines()
+    lines = [line for line in out.getvalue().splitlines() if line]
+    assert out.getvalue().startswith("\n")  # whole, whatever pytest wrote before it
     assert len(lines) == 1
     payload = _signed_payload(kit, lines[0], kit.STARTED_MARK)
     assert payload["test"] == "t.py::slow"

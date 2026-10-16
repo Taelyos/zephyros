@@ -652,3 +652,12 @@ def test_a_run_that_ended_carries_the_time_limits_of_its_tests() -> None:
         "test_a.py::test_a": {"phase": "setup", "seconds": 612.3, "limit": 600.0}
     }
     assert answer["started"] is None
+
+
+def test_a_started_line_after_what_pytest_wrote_on_the_same_line_is_still_read() -> None:
+    """In its classic style pytest writes the name of the file with no line end: the kit begins
+    its line with a newline, and a line that does not begin with the mark is not read."""
+    started = signed_line("ZEPHYROS-STARTED ", {"test": "test_a.py::test_a", "at": 0.5})
+    log = f"ZEPHYROS-RUN {NONCE}\ntest_a.py \n{started}\n"
+    assert parse_started(log, TESTS) == {"test": "test_a.py::test_a", "at": 0.5}
+    assert parse_started(f"ZEPHYROS-RUN {NONCE}\ntest_a.py {started}\n", TESTS) is None
