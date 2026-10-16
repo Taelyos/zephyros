@@ -84,7 +84,8 @@ def render_tools_doc() -> str:
             + ". It reads the contract as data and cannot write it, propose a "
             "change to it, approve one, write an acceptance test, or reach the log, the "
             "configuration or the instances. It declares a delivery and reads its state; it "
-            "never records a result.",
+            "never records a result. It reports the obstacles it meets and reads the answers to "
+            "its own; it answers none, and never reads an obstacle of the Owner side.",
             "",
             "Besides these tools, a Contractor instance calls with its project token the model "
             "gateway (`/v1`) and the staging area of its project: `GET /staging/base` for the "

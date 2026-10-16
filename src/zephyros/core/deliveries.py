@@ -23,7 +23,7 @@ import json
 import re
 import threading
 from collections import deque
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, Protocol, cast
@@ -39,6 +39,7 @@ from zephyros.core.gate import (
     compute_gate,
     every_acceptance_test,
 )
+from zephyros.core.obstacles import Obstacle
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery, DeliveryArea, DeliveryError
 from zephyros.core.ports.forge import Forge, ForgeError, PullRequestRequest, RepositoryRef
@@ -256,6 +257,7 @@ class DeliveryService:
         rejections_alert: int | None = None,
         simulation: bool = False,
         tools: ToolsProbe | None = None,
+        obstacles: Callable[[str], Sequence[Obstacle]] | None = None,
     ) -> None:
         self._area = area
         self._runner = runner
@@ -275,6 +277,7 @@ class DeliveryService:
         self._rejections_alert = rejections_alert
         self._simulation = simulation
         self._tools = tools
+        self._obstacles = obstacles or (lambda _project_id: ())
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._jobs: deque[_Job] = deque()
@@ -307,6 +310,11 @@ class DeliveryService:
             raise Refusal(Reason.INVALID_REQUEST, "the file is too large")
         self._store.put_acceptance(project_id, path, data)
         return hashlib.sha256(data).hexdigest()[:12]
+
+    def acceptance_files(self, project_id: str) -> dict[str, bytes]:
+        """The acceptance tests the hub keeps for the Owner side, by path: what the Contractor
+        never reads."""
+        return self._store.acceptance(project_id)
 
     def base_package(self, project_id: str) -> bytes:
         try:
@@ -836,6 +844,7 @@ class DeliveryService:
                 () if tools is None else self._tools_of_turns(project_id, record.delivery_id)
             ),
             context_of_turns=self._context_of_turns(project_id, record.delivery_id),
+            obstacles=tuple(self._obstacles(project_id)),
         )
         report = render(evidence, self._secrets())
         contractor_report = render(evidence, self._secrets(), with_output=False)

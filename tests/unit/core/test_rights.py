@@ -49,6 +49,11 @@ EXPECTED = {
     "delivery.status": ("any", "any", "own", "own"),
     "inspection.record": ("any", "any", "own", "none"),
     "delivery.review": ("any", "any", "own", "none"),
+    "obstacle.report": ("none", "none", "own", "own"),
+    "obstacle.list": ("any", "any", "own", "own"),
+    "obstacle.read": ("any", "any", "own", "own"),
+    "obstacle.answer": ("any", "any", "own", "none"),
+    "obstacle.close": ("any", "none", "own", "own"),
 }
 KINDS = (
     PrincipalKind.OPERATOR,
@@ -101,10 +106,16 @@ def test_the_contractor_has_no_tool_that_writes_the_contract_or_the_rules() -> N
         "delivery.push",
         "delivery.declare",
         "delivery.status",
+        # ADR 0034: it reports obstacles and reads its own; it answers none
+        "obstacle.report",
+        "obstacle.list",
+        "obstacle.read",
+        "obstacle.close",
     }
     writes = {"contract.propose", "contract.approve", "contract.reject", "contract.apply_reserved"}
     assert not writes & reachable
     assert "acceptance.put" not in reachable  # the Contractor never writes what verifies it
+    assert "obstacle.answer" not in reachable  # nor answers an obstacle, its own or another's
 
 
 def test_only_the_operator_applies_reserved_data_and_reads_the_log() -> None:

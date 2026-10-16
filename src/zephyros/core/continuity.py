@@ -12,6 +12,12 @@ the main agent, then alert the human. Each step is due `continuity.inactivity_se
 last activity or the previous step; the step after the restarts waits `continuity.unblock_seconds`.
 A decision the main agent is to take has no instance to wake: its ladder is the two alerts.
 
+A blocking obstacle (ADR 0034) is a task too, carried by whoever is to answer it: the Owner side
+for one of the Contractor (`obstacle`), the main agent for one that awaits the operator
+(`obstacle_raised`). Only an answer counts on it, never another call of the side, and the wake
+of the Owner side is due at once: the Contractor is blocked now. An Owner side busy with a turn
+is woken once that turn ends.
+
 A task the side cannot carry yet is held, for a reason the hub records: it walks no ladder
 until it is released, and then starts from the first step (ADR 0021). The Contractor's delivery
 is held while the contract is not ready for it (`delivery_waits_for`): the base is prepared
@@ -34,7 +40,7 @@ import threading
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from zephyros.core.contract import ContractVersion, PendingChange, approvable
@@ -50,6 +56,13 @@ DELIVERY = "delivery"
 """The Contractor's task: a base was prepared, a delivery is expected."""
 DECISION = "decision"
 """A change of the contract awaits a decision."""
+OBSTACLE = "obstacle"
+"""A blocking obstacle of the Contractor awaits an answer of the Owner side (ADR 0034)."""
+RAISED = "obstacle_raised"
+"""A blocking obstacle awaits an answer of the operator or the main agent (ADR 0034)."""
+ANSWER_TASKS = frozenset({OBSTACLE, RAISED})
+"""The tasks only an answer counts on: another call of the side that carries one is not
+activity on it, and a busy instance is woken once its turn ends."""
 MAIN_AGENT = PrincipalKind.MAIN_AGENT.value
 """Who carries a decision on a change of the Owner side: the main agent (or the operator)."""
 HOLD = "hold"
@@ -184,11 +197,15 @@ class Continuity:
         if self._store is not None:
             self._store.put(expectation)
 
-    def expect(self, state: TaskState, *, held: str | None = None) -> None:
+    def expect(self, state: TaskState, *, held: str | None = None, due_now: bool = False) -> None:
         """A task the hub now expects a side to carry, in place of any other of its kind in the
-        project; one `held` for a reason waits for `release`."""
+        project; one `held` for a reason waits for `release`, and the first step of one
+        `due_now` is due at once."""
+        last = state.since
+        if due_now:
+            last -= timedelta(seconds=self._timing.inactivity_seconds)
         with self._lock:
-            self._keep(Expectation(state, last=state.since, held=held))
+            self._keep(Expectation(state, last=last, held=held))
 
     def hold(self, project_id: str, kind: str, why: str) -> bool:
         """The side cannot carry the task for now, because of `why`: no step is due until
@@ -224,6 +241,21 @@ class Continuity:
                 state.detail,
             ):
                 self.expect(state)
+
+    def await_answer(self, project_id: str, kind: str, state: TaskState | None) -> None:
+        """The blocking obstacle that awaits an answer now, for one of the ANSWER_TASKS, or None
+        when none does. The task of the same obstacle, carried by the same side, keeps its place
+        on the ladder; a task about another obstacle starts again, and the wake of the Owner
+        side is due at once."""
+        with self._lock:
+            current = self._waiting.get((project_id, kind))
+            if state is None:
+                self.answered(project_id, kind)
+            elif current is None or (current.state.side, current.state.detail) != (
+                state.side,
+                state.detail,
+            ):
+                self.expect(state, due_now=kind == OBSTACLE)
 
     def answered(self, project_id: str, kind: str) -> bool:
         """The event the task waited for arrived."""
@@ -286,6 +318,17 @@ class Continuity:
 
 def _prompt(kind: str, state: TaskState) -> str:
     where = f"{state.project_id}/{state.side}"
+    if state.kind in ANSWER_TASKS:
+        lead = (
+            "The hub wakes you: an obstacle awaits your answer."
+            if kind == WAKE
+            else "The hub restarts your instance: an obstacle still awaits your answer."
+        )
+        return (
+            f"{lead} Task: {state.kind} ({state.detail}) for {where}. Read it with "
+            "obstacle.read, then answer it with obstacle.answer: clarify the need, amend the "
+            "contract, fix an acceptance test, reject it with your reasons, or escalate it."
+        )
     if kind == WAKE:
         lead = "The hub sees no activity on your task and wakes you."
     elif kind == RESTART:

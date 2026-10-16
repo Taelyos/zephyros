@@ -24,7 +24,8 @@ def test_the_tools_document_lists_every_tool_with_its_rights() -> None:
     assert "| `contract.read` |" in text
     assert (
         "`whoami`, `project.list`, `project.get`, `contract.read`, `delivery.declare`, "
-        "`delivery.status`." in text
+        "`delivery.status`, `obstacle.report`, `obstacle.list`, `obstacle.read`, "
+        "`obstacle.close`." in text
     )
 
 

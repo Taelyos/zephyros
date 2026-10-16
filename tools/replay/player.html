@@ -400,11 +400,11 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
   const CAT_COLOR = {
     contract: '#60a5fa', turn: '#22d3ee', model: '#a78bfa', refusal: '#f87171',
     delivery: '#34d399', gate: '#fbbf24', judgment: '#f472b6', message: '#93c5fd',
-    flag: '#fbbf24', other: '#64748b'
+    flag: '#fbbf24', obstacle: '#fb923c', other: '#64748b'
   };
   const CAT_ICON = {
     contract: 'C', turn: 'T', model: 'M', refusal: 'R', delivery: 'D',
-    gate: 'G', judgment: 'J', message: 'S', flag: 'F', other: '?'
+    gate: 'G', judgment: 'J', message: 'S', flag: 'F', obstacle: 'O', other: '?'
   };
   const KINDS = {
     real: {badge: 'REAL RUN · real models', model: run => 'model: ' + (str(run.model) || 'unknown')},
@@ -582,6 +582,7 @@ table.cost tr.tot td{border-top:1px solid var(--line2); font-weight:700; color:v
     const c = e.category;
     return c === 'gate' || c === 'judgment' || c === 'flag' || c === 'refusal' ||
       c === 'message' || e.outcome === 'refused' || e.outcome === 'error' ||
+      e.type === 'obstacle.report' || e.type === 'obstacle.answer' ||
       e.type === 'contract.propose' || e.type === 'contract.version' ||
       e.type === 'pull_request.open' || e.type === 'delivery.declare';
   }

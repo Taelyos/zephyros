@@ -18,10 +18,14 @@ from zephyros.adapters.memory.continuity_store import InMemoryContinuityStore
 from zephyros.core.continuity import (
     ALERT_HUMAN,
     ALERT_MAIN,
+    ANSWER_TASKS,
     DECISION,
     DELIVERY,
+    MAIN_AGENT,
     NO_ACCEPTANCE_TEST,
+    OBSTACLE,
     PENDING_DECISION,
+    RAISED,
     RESTART,
     WAKE,
     Continuity,
@@ -270,3 +274,55 @@ def test_the_delivery_waits_for_a_test_the_gate_runs_and_for_every_decision() ->
     # the other one was proposed on an older version: it can no longer be approved
     assert len(service.pending(OPERATOR, PROJECT)) == 1
     assert waits_for() is None
+
+
+# ----------------------------------------------------------------------------- ADR 0034
+def obstacle_task(detail: str = "obstacle OB-001 awaits", side: str = "owner") -> TaskState:
+    kind = OBSTACLE if side == "owner" else RAISED
+    return TaskState("p_abcdef12", side, kind, detail, T0)
+
+
+def test_the_owner_side_is_woken_at_once_for_a_blocking_obstacle() -> None:
+    continuity = Continuity(timing(restarts=1))
+    continuity.await_answer("p_abcdef12", OBSTACLE, obstacle_task())
+    (step,) = continuity.due(T0)
+    assert (step.kind, step.expectation.kind) == (WAKE, OBSTACLE)
+    assert "an obstacle awaits your answer" in step.prompt
+    assert "obstacle.read" in step.prompt
+    assert "escalate" in step.prompt
+    continuity.taken(step, T0)
+    (restart,) = continuity.due(T0 + timedelta(seconds=900))
+    assert restart.kind == RESTART
+    assert "an obstacle still awaits your answer" in restart.prompt
+
+
+def test_the_main_agent_is_reminded_of_an_obstacle_after_the_inactivity() -> None:
+    """The event `obstacle.raised` told it already: its ladder starts from the escalation."""
+    continuity = Continuity(timing())
+    continuity.await_answer("p_abcdef12", RAISED, obstacle_task(side=MAIN_AGENT))
+    assert continuity.due(T0 + timedelta(seconds=899)) == []
+    (step,) = continuity.due(T0 + timedelta(seconds=900))
+    assert step.kind == ALERT_MAIN
+
+
+def test_only_an_answer_counts_on_an_obstacle() -> None:
+    continuity = Continuity(timing())
+    continuity.await_answer("p_abcdef12", OBSTACLE, obstacle_task())
+    continuity.observe("p_abcdef12", "owner", T0 + timedelta(seconds=10))
+    (step,) = continuity.due(T0 + timedelta(seconds=10))
+    assert step.kind == WAKE
+    # the same obstacle keeps its place; another one starts again, due at once
+    continuity.taken(step, T0 + timedelta(seconds=10))
+    continuity.await_answer("p_abcdef12", OBSTACLE, obstacle_task())
+    assert continuity.due(T0 + timedelta(seconds=20)) == []
+    later = TaskState("p_abcdef12", "owner", OBSTACLE, "obstacle OB-002 awaits", T0)
+    continuity.await_answer("p_abcdef12", OBSTACLE, later)
+    (again,) = continuity.due(T0 + timedelta(seconds=20))
+    assert (again.kind, again.expectation.detail) == (WAKE, "obstacle OB-002 awaits")
+    continuity.await_answer("p_abcdef12", OBSTACLE, None)
+    assert list(continuity.waiting()) == []
+
+
+def test_obstacle_tasks_are_apart_from_the_delivery_and_the_decision() -> None:
+    assert {OBSTACLE, RAISED} == set(ANSWER_TASKS)
+    assert not {DELIVERY, DECISION} & ANSWER_TASKS

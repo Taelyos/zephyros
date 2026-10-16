@@ -50,6 +50,8 @@ This file is kept in step with `Reason` and `REMEDIES` by `tests/unit/core/test_
 | `protected_path` | The path belongs to the acceptance material; deliver elsewhere. |
 | `egress` | Name the host in the configuration; the hub reaches no other (EXG-48). |
 | `rate_limited` | Wait a minute: this instance sent too many refused actions (ATK-71). |
+| `too_many_obstacles` | Wait for an answer, or close an obstacle that no longer stands: a side has at most 5 awaiting an answer, and reports 3 in a turn. |
+| `acceptance_leak` | Say in your own words what the acceptance test expects: the Contractor reads the answer, never the test. |
 
 ## Codes of the model gateway
 

@@ -14,6 +14,7 @@ from zephyros.adapters.memory.contract_store import InMemoryContractStore
 from zephyros.adapters.memory.delivery_store import InMemoryDeliveryStore
 from zephyros.adapters.memory.instance_control import FakeInstanceControl
 from zephyros.adapters.memory.log_store import InMemoryLogStore
+from zephyros.adapters.memory.obstacle_store import InMemoryObstacleStore
 from zephyros.adapters.memory.project_store import InMemoryProjectStore
 from zephyros.adapters.memory.token_store import InMemoryTokenStore
 from zephyros.core.audit import AuditLog, AuditRecord
@@ -23,6 +24,7 @@ from zephyros.core.contract import ContractService
 from zephyros.core.deliveries import DeliveryService
 from zephyros.core.hub import Caller, Hub, ToolResponse
 from zephyros.core.notifications import Notifier
+from zephyros.core.obstacles import ObstacleService
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import Principal, instance_principal
 from zephyros.core.projects import ProjectService
@@ -56,6 +58,7 @@ class Env:
     notifier: Notifier | None = None
     notifications: list[tuple[str, dict[str, object]]] = field(default_factory=list)
     refuse_notifications: list[str] = field(default_factory=list)
+    obstacles: ObstacleService | None = None
 
     def send_notifications(self) -> list[tuple[str, dict[str, object]]]:
         """Send what the hub queued, as the notifier's worker would; what was sent so far."""
@@ -104,6 +107,7 @@ def make_env(*, refusals_per_minute: int | None = None, simulation: bool = False
         return NotifyResult()
 
     notifier = Notifier(audit, record_notification)
+    obstacles = ObstacleService(InMemoryObstacleStore(), clock)
     hub = Hub(
         audit=audit,
         tokens=tokens,
@@ -115,12 +119,14 @@ def make_env(*, refusals_per_minute: int | None = None, simulation: bool = False
         clock=clock,
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
+        obstacles=obstacles,
     )
     env = Env(clock, log_store, audit, tokens, contracts, projects, instances, hub, "", "")
     env.continuity = continuity
     env.notifier = notifier
     env.notifications = notifications
     env.refuse_notifications = refuse_notifications
+    env.obstacles = obstacles
 
     operator = tokens.issue_operator_token()
     main = tokens.issue_main_agent_token()

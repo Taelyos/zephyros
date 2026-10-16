@@ -84,6 +84,10 @@ def test_tools_list_shows_each_caller_only_what_it_may_use(env: Env) -> None:
         "contract_read",
         "delivery_declare",
         "delivery_status",
+        "obstacle_report",
+        "obstacle_list",
+        "obstacle_read",
+        "obstacle_close",
     }
     operator_app = build_agent_app(env.hub, model_name=MODEL)
     assert operator_app is not None

@@ -67,5 +67,8 @@
   "lsp": false,
   "formatter": false,
   "plugin": [],
-  "compaction": { "auto": true }
+  "compaction": { "auto": true },
+  // The base instruction of the agent (ADR 0034), in the read-only root: OpenCode adds it to the
+  // system prompt of every call of the agent.
+  "instructions": ["/etc/opencode/instructions.md"]
 }

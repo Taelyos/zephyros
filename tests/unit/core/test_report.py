@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from tests.unit.core.test_gate import contract
 from zephyros.core.gate import compute_gate
 from zephyros.core.masking import MASK
+from zephyros.core.obstacles import Decision, Entry, Level, Obstacle, Status
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 from zephyros.core.report import (
     INSPECTIONS_HEADING,
+    LISTED_OBSTACLES,
     LISTED_TESTS,
     Cost,
     ReportInput,
@@ -201,3 +205,81 @@ def test_the_contractors_report_is_the_owners_without_the_output_of_the_run() ->
         outcomes = ["- `tests/t.py::test_add`: passed", "- `tests/t.py::test_sub`: failed"]
         assert theirs.splitlines()[2:4] == mine.splitlines()[2:4] == outcomes
         assert "The output of the run is kept for the Owner side" in theirs
+
+
+# ----------------------------------------------------------------------------- ADR 0034
+def _obstacle(number: int, side: Side, **changes: Any) -> Obstacle:
+    values: dict[str, Any] = {
+        "project_id": "p_x",
+        "number": number,
+        "author": f"{side.value}:p_x",
+        "side": side,
+        "nature": "tool",
+        "blocking": True,
+        "title": "the simulator | never saves\nthe run",
+        "description": "long text that the report never shows",
+        "evidence": ({"kind": "path", "path": "/work/run.dat"},),
+        "tried": "tried",
+        "needed": "needed",
+        "reported_at": T0,
+        "status": Status.OPEN,
+        "level": Level.OWNER if side is Side.CONTRACTOR else Level.OPERATOR,
+    }
+    values.update(changes)
+    return Obstacle(**values)
+
+
+T0 = datetime(2026, 10, 16, 8, 0, tzinfo=UTC)
+
+
+def test_the_report_lists_the_obstacles_and_the_decisions_taken_on_them() -> None:
+    escalated = _obstacle(
+        1,
+        Side.CONTRACTOR,
+        status=Status.ESCALATED,
+        level=Level.OPERATOR,
+        entries=(Entry(Decision.ESCALATE, "owner:p_x", T0, Level.OWNER, "only the operator"),),
+    )
+    rejected = _obstacle(
+        2,
+        Side.CONTRACTOR,
+        blocking=False,
+        status=Status.REJECTED,
+        entries=(Entry(Decision.REJECT, "owner:p_x", T0, Level.OWNER, "a fault of d1"),),
+    )
+    of_owner = _obstacle(3, Side.OWNER, nature="budget", title="the bench needs an hour")
+    text = render(make(obstacles=(escalated, rejected, of_owner)))
+    section = text.split("## Obstacles\n")[1].split("\n## ")[0]
+    assert "3 reported, 2 awaiting an answer, 2 of them blocking." in section
+    assert (
+        "| OB-001 | contractor | tool | yes | escalated, awaits the operator | "
+        "escalate by owner:p_x | `the simulator ? never saves?the run` |" in section
+    )
+    assert "| OB-002 | contractor | tool | no | rejected | reject by owner:p_x |" in section
+    assert "| OB-003 | owner | budget | yes | open, awaits the operator | none |" in section
+    assert "long text" not in text  # titles and decisions, never the texts
+    assert "a fault of d1" not in text
+
+
+def test_the_report_of_the_contractor_leaves_out_the_obstacles_of_the_owner_side() -> None:
+    mine = _obstacle(1, Side.CONTRACTOR)
+    theirs = _obstacle(2, Side.OWNER, title="about the hidden track")
+    text = render(make(obstacles=(mine, theirs)), with_output=False)
+    section = text.split("## Obstacles\n")[1].split("\n## ")[0]
+    assert "| OB-001 |" in section
+    assert "OB-002" not in section
+    assert "hidden track" not in text
+    assert "1 obstacle of the Owner side is kept for the Owner side." in section
+    only_theirs = render(make(obstacles=(theirs,)), with_output=False)
+    assert "None reported." in only_theirs
+
+
+def test_a_report_without_obstacles_says_so_and_a_long_list_is_bounded() -> None:
+    assert "## Obstacles\n\nNone reported.\n" in render(make())
+    many = tuple(
+        _obstacle(n, Side.CONTRACTOR, status=Status.CLOSED) for n in range(1, LISTED_OBSTACLES + 8)
+    )
+    text = render(make(obstacles=many))
+    assert f"| OB-{LISTED_OBSTACLES + 7:03d} |" in text
+    assert "| OB-007 |" not in text
+    assert "And 7 earlier." in text

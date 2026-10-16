@@ -89,6 +89,11 @@ class Action(StrEnum):
     DELIVERY_STATUS = "delivery.status"
     INSPECTION_RECORD = "inspection.record"
     DELIVERY_REVIEW = "delivery.review"
+    OBSTACLE_REPORT = "obstacle.report"
+    OBSTACLE_LIST = "obstacle.list"
+    OBSTACLE_READ = "obstacle.read"
+    OBSTACLE_ANSWER = "obstacle.answer"
+    OBSTACLE_CLOSE = "obstacle.close"
     PULL_REQUEST_COMMENT = "pull_request.comment"
     PULL_REQUEST_RETITLE = "pull_request.retitle"
     STAGING_PREPARE = "staging.prepare"
@@ -127,6 +132,8 @@ class Reason(StrEnum):
     PROTECTED_PATH = "protected_path"
     EGRESS = "egress"
     RATE_LIMITED = "rate_limited"
+    TOO_MANY_OBSTACLES = "too_many_obstacles"
+    ACCEPTANCE_LEAK = "acceptance_leak"
 
 
 @dataclass(frozen=True, slots=True)

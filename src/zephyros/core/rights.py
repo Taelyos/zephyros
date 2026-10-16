@@ -75,6 +75,13 @@ PERMISSIONS: Mapping[Action, Mapping[PrincipalKind, Scope]] = MappingProxyType(
         Action.DELIVERY_STATUS: _row(_ALL, _ALL, _OWN, _OWN),
         Action.INSPECTION_RECORD: _row(_ALL, _ALL, _OWN, _NO),
         Action.DELIVERY_REVIEW: _row(_ALL, _ALL, _OWN, _NO),
+        # ADR 0034: the rows say who may use each tool; which obstacles a principal reads,
+        # answers or closes follows who they concern (`core/obstacles.py`).
+        Action.OBSTACLE_REPORT: _row(_NO, _NO, _OWN, _OWN),
+        Action.OBSTACLE_LIST: _row(_ALL, _ALL, _OWN, _OWN),
+        Action.OBSTACLE_READ: _row(_ALL, _ALL, _OWN, _OWN),
+        Action.OBSTACLE_ANSWER: _row(_ALL, _ALL, _OWN, _NO),
+        Action.OBSTACLE_CLOSE: _row(_ALL, _NO, _OWN, _OWN),
     }
 )
 

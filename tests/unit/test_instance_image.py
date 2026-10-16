@@ -75,7 +75,13 @@ def test_the_model_entry_keeps_the_reasoning_when_the_hub_says_so() -> None:
     assert "reasoning_echo: ${ZEPHYROS_REASONING_ECHO}" in _section("model")
 
 
-HANDED = ("ZEPHYROS_REASONING_ECHO", "ZEPHYROS_CONTEXT_WINDOW", "ZEPHYROS_COMPACTION_TOKENS")
+HANDED = (
+    "ZEPHYROS_REASONING_ECHO",
+    "ZEPHYROS_CONTEXT_WINDOW",
+    "ZEPHYROS_COMPACTION_TOKENS",
+    "HERMES_EPHEMERAL_SYSTEM_PROMPT",
+)
+INSTRUCTIONS = ROOT / "images" / "instance" / "instructions.md"
 
 
 def _entrypoint(tmp_path: Path, environment: dict[str, str]) -> dict[str, str]:
@@ -102,6 +108,7 @@ def _entrypoint(tmp_path: Path, environment: dict[str, str]) -> dict[str, str]:
         "/opt/hermes/.venv/bin/hermes": str(recorder),
         "/opt/hermes/.venv/bin/python": str(helper),
         "/opt/zephyros/seed.yaml": str(seed),
+        "/opt/zephyros/instructions.md": str(INSTRUCTIONS),
     }
     for path, local in replaced.items():
         assert text.count(path) == 1, path
@@ -165,6 +172,47 @@ def test_the_entrypoint_hands_the_context_of_the_hub_or_its_defaults(tmp_path: P
             "256000",
             "224000",
         )
+
+
+# ----------------------------------------------------------------------------- ADR 0034
+def test_the_entrypoint_hands_hermes_the_base_instruction_of_the_image(tmp_path: Path) -> None:
+    """Hermes adds HERMES_EPHEMERAL_SYSTEM_PROMPT to the system prompt of every call, before its
+    configuration's own: the base instruction comes from the read-only root, whole."""
+    handed = _entrypoint(tmp_path, {"HERMES_EPHEMERAL_SYSTEM_PROMPT": "set by someone else"})
+    assert handed["HERMES_EPHEMERAL_SYSTEM_PROMPT"] == INSTRUCTIONS.read_text("utf-8").rstrip("\n")
+    dockerfile = (ROOT / "images" / "instance" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY --chmod=0644 instructions.md /opt/zephyros/instructions.md" in dockerfile
+
+
+def test_both_engines_carry_the_same_base_instruction() -> None:
+    """The two images are built from two directories: one text, kept in two places."""
+    opencode = ROOT / "images" / "instance-opencode" / "instructions.md"
+    assert opencode.read_text("utf-8") == INSTRUCTIONS.read_text("utf-8")
+
+
+def test_the_base_instruction_says_when_to_report_an_obstacle_and_what_it_holds() -> None:
+    text = INSTRUCTIONS.read_text("utf-8")
+    from zephyros.core.obstacles import MAX_AWAITING, MAX_PER_TURN, NATURES
+
+    for nature in NATURES:
+        assert f"`{nature}`" in text
+    for tool in ("obstacle.report", "obstacle.read", "obstacle.list", "obstacle.close"):
+        assert f"`{tool}`" in text
+    assert "`obstacle.answer`" in text  # the Owner side answers
+    assert "after a real attempt" in text.lower()
+    assert "not report an obstacle to ask how to build" in text
+    assert f"At most {MAX_AWAITING} obstacles" in text
+    assert f"reports {MAX_PER_TURN} in a turn" in text
+
+
+def test_the_base_instruction_gives_the_obedient_stub_no_instruction() -> None:
+    """The stub obeys a line of its grammar wherever it reads one, the system prompt included:
+    the base instruction holds none, so the turns of the tests do what their prompt says."""
+    from zephyros.adapters.dummy.obedient_stub import find_instructions
+    from zephyros.core.ports.model_provider import ChatMessage, Role
+
+    message = ChatMessage(Role.SYSTEM, INSTRUCTIONS.read_text("utf-8"))
+    assert find_instructions([message]) == []
 
 
 # ----------------------------------------------------------------------------- session (ADR 0016)

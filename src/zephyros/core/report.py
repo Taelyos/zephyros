@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from zephyros.core.context import CONTEXT_FLOOR, FLOOR_REASON
 from zephyros.core.gate import GateResult
 from zephyros.core.masking import mask_text
+from zephyros.core.obstacles import Obstacle
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery
 from zephyros.core.ports.verification import Outcome
 from zephyros.core.tools import TOOLS_PATH, ToolsDigest
@@ -21,6 +23,8 @@ from zephyros.core.tools import TOOLS_PATH, ToolsDigest
 LOG_EXCERPT = 4000
 LISTED_TESTS = 50
 """The most tests that never ran the report names one by one; it counts the others."""
+LISTED_OBSTACLES = 50
+"""The most obstacles the report names one by one, the latest; it counts the others."""
 INSPECTIONS_HEADING = "## Inspections recorded after the gate"
 
 
@@ -73,6 +77,9 @@ class ReportInput:
     """The context the agents of both sides worked with in the turns before the delivery came
     in (ADR 0033): each (context, window of the model, compaction point, turns), as the starts
     recorded it."""
+    obstacles: tuple[Obstacle, ...] = ()
+    """The obstacles of the project when the report was written, each as it stood then
+    (ADR 0034)."""
 
 
 def mask(text: str, secrets: Iterable[str] = ()) -> str:
@@ -123,6 +130,52 @@ def _context_lines(contexts: tuple[tuple[int, int, int, int], ...]) -> list[str]
             for tokens, window, compaction, turns in contexts
         )
     ]
+
+
+def _obstacle_state(obstacle: Obstacle) -> str:
+    if obstacle.awaiting:
+        who = {"owner": "the Owner side", "operator": "the operator", "human": "the human"}
+        return f"{obstacle.status.value}, awaits {who[obstacle.level.value]}"
+    return obstacle.status.value
+
+
+def _obstacles_lines(obstacles: tuple[Obstacle, ...], *, owner_side: bool) -> list[str]:
+    """The obstacles the agents reported, and the decisions taken on them (ADR 0034). The
+    report the Contractor reads leaves out those of the Owner side, and counts them."""
+    shown = [o for o in obstacles if owner_side or o.side is Side.CONTRACTOR]
+    kept = len(obstacles) - len(shown)
+    if not shown:
+        lines = ["None reported."]
+    else:
+        open_ = [o for o in shown if o.awaiting]
+        blocking = [o for o in open_ if o.blocking]
+        lines = [
+            f"{len(shown)} reported, {len(open_)} awaiting an answer"
+            + (f", {len(blocking)} of them blocking" if blocking else "")
+            + ".",
+            "",
+            "| Obstacle | Side | Nature | Blocking | State | Decisions | Title |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        latest = sorted(shown, key=lambda o: o.number)[-LISTED_OBSTACLES:]
+        for obstacle in latest:
+            decisions = "<br>".join(
+                f"{entry.decision.value} by {_plain(entry.by)}" for entry in obstacle.entries
+            )
+            lines.append(
+                f"| {obstacle.id} | {obstacle.side.value} | {obstacle.nature} | "
+                f"{'yes' if obstacle.blocking else 'no'} | {_obstacle_state(obstacle)} | "
+                f"{decisions or 'none'} | {_code(obstacle.title)} |"
+            )
+        if len(shown) > LISTED_OBSTACLES:
+            lines += ["", f"And {len(shown) - LISTED_OBSTACLES} earlier."]
+    if kept:
+        lines += [
+            "",
+            f"{kept} obstacle{'' if kept == 1 else 's'} of the Owner side "
+            f"{'is' if kept == 1 else 'are'} kept for the Owner side.",
+        ]
+    return lines
 
 
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
@@ -262,6 +315,8 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
         lines += ([""] if number else []) + [intro, ""] + [f"- {item}" for item in items]
     if not shown:
         lines += ["None."]
+    lines += ["", "## Obstacles", ""]
+    lines += _obstacles_lines(report.obstacles, owner_side=with_output)
     lines += [
         "",
         "## Automated delivery checks",

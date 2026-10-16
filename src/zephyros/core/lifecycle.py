@@ -31,6 +31,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Protocol
 
 from zephyros.core.audit import Action, AuditEvent, AuditLog, Outcome, Reason
 from zephyros.core.broker import Broker, BrokerError, ContainerInfo
@@ -38,9 +39,10 @@ from zephyros.core.clock import Clock, format_time
 from zephyros.core.config import DEFAULT_EGRESS, Config
 from zephyros.core.containers import Role, VolumeKind, guard_address
 from zephyros.core.context import DEFAULT_CONTEXT, AgentContext
-from zephyros.core.continuity import RESTART, WAKE, Continuity
+from zephyros.core.continuity import ANSWER_TASKS, RESTART, WAKE, Continuity
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import (
+    MAX_PROMPT,
     InstanceInfo,
     InstanceRecord,
     InstanceState,
@@ -49,6 +51,7 @@ from zephyros.core.instances import (
     allocate_subnet,
 )
 from zephyros.core.notifications import Notifier
+from zephyros.core.obstacles import Briefing
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import instance_principal
 from zephyros.core.tokens import TokenService
@@ -129,6 +132,19 @@ class _Job:
     new_session: bool = False
 
 
+class TurnBriefing(Protocol):
+    """What the hub tells a turn that starts, after its prompt (ADR 0034)."""
+
+    def brief(self, project_id: str, side: Side) -> Briefing | None:
+        """The briefing of a turn of `side` that starts now, or None when there is nothing to
+        tell."""
+        ...
+
+    def briefed(self, project_id: str, briefing: Briefing) -> None:
+        """The turn started with `briefing`."""
+        ...
+
+
 class _CancelledError(Exception):
     """A stop was requested while a start was under way."""
 
@@ -149,6 +165,7 @@ class InstanceManager:
         notifier: Notifier | None = None,
         engines: Mapping[Side, TurnEngine] | None = None,
         tools: ToolsProbe | None = None,
+        briefing: TurnBriefing | None = None,
     ) -> None:
         self._broker = broker
         self._store = store
@@ -162,6 +179,7 @@ class InstanceManager:
         self._notifier = notifier
         self._engines = dict(engines or {})
         self._tools = tools
+        self._briefing = briefing
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         self._live: dict[Key, _Live] = {}
@@ -322,7 +340,12 @@ class InstanceManager:
         # turn finds when it starts; nothing measures them again at its end (ADR 0030).
         tools = None if self._tools is None else self._tools.digest()
         secret = self._token_for_turn(live, record)
+        briefing = self._brief(project_id, side, prompt)
+        if briefing is not None:
+            prompt = f"{prompt}\n\n{briefing.text}"
         self._broker.start_turn(project_id, side, secret, prompt, new_session=new_session)
+        if briefing is not None and self._briefing is not None:
+            self._briefing.briefed(project_id, briefing)
         with self._lock:
             live.turn_started = self._clock.now()
             if live.phase is InstanceState.STARTING:
@@ -342,6 +365,7 @@ class InstanceManager:
             **({} if engine is None else {"engine": engine.name, "engine_version": engine.version}),
             **({} if tools is None else {"tools": tools.fingerprint}),
             session="new" if new_session else "continue",
+            **({} if briefing is None else {"obstacles": list(briefing.named)}),
             context_window=self._timing.context.window,
             context_tokens=self._timing.context.tokens,
             compaction_tokens=self._timing.context.compaction,
@@ -356,6 +380,17 @@ class InstanceManager:
                 level="open",
                 warning="this instance reaches every public destination",
             )
+
+    def _brief(self, project_id: str, side: Side, prompt: str) -> Briefing | None:
+        """What the hub tells the turn after its prompt (ADR 0034): the decisions taken on the
+        obstacles of the side, and those that await its answer. A prompt with no room left for
+        it goes alone: nothing is cut, and the side is told at a later turn."""
+        if self._briefing is None:
+            return None
+        briefing = self._briefing.brief(project_id, side)
+        if briefing is None or len(prompt) + 2 + len(briefing.text) > MAX_PROMPT:
+            return None
+        return briefing
 
     def _token_for_turn(self, live: _Live, record: InstanceRecord) -> str:
         """The secret to give the turn. A new token replaces the old when the hub no longer holds
@@ -533,8 +568,11 @@ class InstanceManager:
             if step.kind in (WAKE, RESTART):
                 restart = step.kind == RESTART
                 if not self.resume(project_id, Side(side), step.prompt, restart=restart):
-                    # the instance is busy: an active instance is not without activity
-                    self._continuity.observe(project_id, side, self._clock.now())
+                    # The instance is busy. An active instance is not without activity, save on
+                    # an obstacle, which only an answer counts on: its step stays due, and is
+                    # taken once the turn ends (ADR 0034).
+                    if step.expectation.kind not in ANSWER_TASKS:
+                        self._continuity.observe(project_id, side, self._clock.now())
                     continue
             elif self._notifier is not None:
                 # queued: the watchdog never waits for the receiver

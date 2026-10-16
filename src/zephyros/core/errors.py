@@ -40,6 +40,14 @@ REMEDIES: dict[Reason, str] = {
     Reason.PROTECTED_PATH: "The path belongs to the acceptance material; deliver elsewhere.",
     Reason.EGRESS: "Name the host in the configuration; the hub reaches no other (EXG-48).",
     Reason.RATE_LIMITED: "Wait a minute: this instance sent too many refused actions (ATK-71).",
+    Reason.TOO_MANY_OBSTACLES: (
+        "Wait for an answer, or close an obstacle that no longer stands: a side has at most 5 "
+        "awaiting an answer, and reports 3 in a turn."
+    ),
+    Reason.ACCEPTANCE_LEAK: (
+        "Say in your own words what the acceptance test expects: the Contractor reads the "
+        "answer, never the test."
+    ),
 }
 
 

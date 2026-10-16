@@ -199,6 +199,13 @@ def test_every_tool_is_allowed_and_nothing_is_shared_updated_or_added() -> None:
     assert (config["lsp"], config["formatter"], config["snapshot"]) == (False, False, False)
 
 
+def test_the_base_instruction_is_read_from_the_read_only_root() -> None:
+    """ADR 0034: OpenCode adds the files of `instructions` to the system prompt of the agent."""
+    assert resolved(TURN)["instructions"] == ["/etc/opencode/instructions.md"]
+    dockerfile = (ROOT / "images" / "instance-opencode" / "Dockerfile").read_text("utf-8")
+    assert "COPY --chmod=0644 instructions.md /etc/opencode/instructions.md" in dockerfile
+
+
 def test_the_hub_address_of_a_real_turn_fills_the_configuration() -> None:
     """The environment the template gives a turn fills every variable the file reads."""
     policy = Policy(

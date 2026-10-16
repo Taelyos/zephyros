@@ -13,7 +13,7 @@ uv run --locked python -m tools.replay.export --db hub.db --project p_0123456789
   --kind real --from-seq 238 --to-seq 501 --output run.replay.json
 ```
 
-Current version: **2.1.0**.
+Current version: **2.2.0**.
 
 ## Versioning
 
@@ -27,7 +27,7 @@ change.
 ```json
 {
   "format": "zephyros-replay",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "run": { ... },
   "integrity": { ... },
   "pricing": { ... },
@@ -110,7 +110,7 @@ object lacks are `null`. A run that starts before any contract has `version` and
 | `source` | string | `hub-log` (a record of the hash-chained log), `hub-state` (read from the hub's tables: contract versions, the protected paths of an old delivery) or `transcript` (an instance's own conversation, not covered by the chain). |
 | `actor` | string | `operator`, `owner`, `contractor`, `hub`, `main-agent`. Only `owner` and `contractor` are sides of the run; the others act on it. |
 | `type` | string | See below. For `hub-log` events this is the hub action, verbatim (`gateway.call`, `contract.propose`, ...). |
-| `category` | string | One of `contract`, `turn`, `model`, `refusal`, `delivery`, `gate`, `judgment`, `message`, `flag`, `other`. A player that does not know a `type` can still place it by its category. |
+| `category` | string | One of `contract`, `turn`, `model`, `refusal`, `delivery`, `gate`, `judgment`, `message`, `flag`, `obstacle`, `other` (`obstacle` since 2.2.0; a reader of 2.1 places it as `other`). A player that does not know a `type` can still place it by its category. |
 | `outcome` | string | `ok`, `refused` or `error`. |
 | `summary` | string | One line, in English, that a player can show as is. It says what happened, whatever the outcome: a failed verification reads as a failure, not as zero tests passed. |
 | `data` | object | The details, by type (below). Unknown keys are allowed. |
@@ -147,6 +147,7 @@ shows its new version, even when that version's own time falls at the edge of th
 | `gate` | `gate.decision` | `delivery_id`, `decision` (`PASS`, `CONCERNS`, `FAIL`), `contract_version`; after an inspection, `after` and `previous` (the decision before). | `outcomes` (test id to result). |
 | `judgment` | `inspection.record`, `delivery.review` | `delivery_id`, `object_id`, `verdict`, `decision` (the gate's decision after the record). | `observation` or `reasons`. |
 | `flag` | `delivery.check`, `delivery.flag` | `delivery.check` (source `hub-log`): the hub flagged a delivery that changes protected paths, `delivery_id`, `flagged` (a count), and, from a hub that logs them, `missing` (the acceptance test files the contract names that nobody put) and `set_aside` (the delivered files at those paths, never run). A check that only reports `missing` files, with `flagged` 0, is no flag: its category is `delivery`. `delivery.flag` (source `hub-state`): a run older than that rule, where the exporter found the protected paths among the delivered ones, `delivery_id`, `paths`, `rule` (`protected-path`), `by` (`exporter`). | `paths` on `delivery.check`. |
+| `obstacle` | `obstacle.report`, `obstacle.answer`, `obstacle.close`, `obstacle.read`, `obstacle.list` ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)) | `obstacle_id`; on a report, `nature`, `blocking`, `title`, `level` (who is to answer: `owner`, `operator`, `human`) and `evidence` (the kinds of its items); on an answer, `decision` (`clarify`, `amend`, `fix_test`, `handle`, `reject`, `escalate`), `status`, `level` and `from_level` (where it stood before), `text_chars`, and `change_id`, `paths` or `action` with the decision they go with; on a close, `status` and `note_chars`. The texts of an obstacle and of its answers stay in the hub: `obstacle.read` shows them. A `notification.sent` of the event `obstacle.raised` (category `other`) tells that one reached the operator or the human. | |
 | `message` | `agent.message` | `side`, `text` (possibly shortened, see `truncated`), `truncated`, `role` (`final` for the last answer of a turn, `note` otherwise). A message the state database holds in several sessions appears once. | |
 | `other` | `project.create`, `token.issue`, `token.revoke`, `notification.sent`, `continuity.step`, ... | The record's parameters. | |
 

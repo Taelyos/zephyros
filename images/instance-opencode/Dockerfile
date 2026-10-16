@@ -45,6 +45,8 @@ RUN python3 -m pip install --no-cache-dir --no-deps --only-binary :all: \
 # after every other scope: a key set there wins over the same key in the agent's own files. The
 # root file system is read-only in a turn, so the agent cannot change it, even inside its turn.
 COPY --chmod=0644 opencode.jsonc /etc/opencode/opencode.jsonc
+# The base instruction of the agent (ADR 0034), which the managed configuration names.
+COPY --chmod=0644 instructions.md /etc/opencode/instructions.md
 COPY --chmod=0755 entrypoint.sh /opt/zephyros/entrypoint.sh
 COPY --chmod=0644 session.py /opt/zephyros/session.py
 

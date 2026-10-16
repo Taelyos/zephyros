@@ -500,6 +500,15 @@ class ContractService:
         self._allow(principal, Action.CONTRACT_PENDING, project_id)
         return self._store.pending(project_id)
 
+    def change(self, principal: Principal, project_id: str, change_id: str) -> PendingChange:
+        """One change of the contract, whatever became of it, for whoever reads the pending
+        ones: an answer to an obstacle names the amendment it made (ADR 0034)."""
+        self._allow(principal, Action.CONTRACT_PENDING, project_id)
+        found = self._store.get_pending(project_id, change_id)
+        if found is None:
+            raise Refusal(Reason.NOT_FOUND, f"there is no change {change_id} in this project")
+        return found
+
     # ------------------------------------------------------------------ writes
     def _new_version(
         self, current: ContractVersion, objects: Objects, author: Principal

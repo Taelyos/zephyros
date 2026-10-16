@@ -76,9 +76,41 @@ When the operator gives the projects a tools directory ([ADR 0030](decisions/003
 
 ## The hub surface
 
-On the hub, a Contractor instance reaches the tools of [`docs/tools.md`](tools.md) that a Contractor instance may use (`whoami`, `project.list`, `project.get`, `contract.read`, `delivery.declare`, `delivery.status`), the model gateway (`/v1`), the staging area of its project (`GET /staging/base`, `POST /staging/delivery`), and, at the `regulated` level, the egress proxy. An Owner instance reaches the tools an Owner instance may use, and reads the staging area (`GET /staging/base`, `GET /staging/delivery/<delivery_id>`). Every call is authenticated, scoped to the project of its token and logged. A refused call answers with its code, its cause and the corrective action ([error messages](errors.md)).
+On the hub, a Contractor instance reaches the tools of [`docs/tools.md`](tools.md) that a Contractor instance may use (`whoami`, `project.list`, `project.get`, `contract.read`, `delivery.declare`, `delivery.status`, and the obstacle tools below but `obstacle.answer`), the model gateway (`/v1`), the staging area of its project (`GET /staging/base`, `POST /staging/delivery`), and, at the `regulated` level, the egress proxy. An Owner instance reaches the tools an Owner instance may use, and reads the staging area (`GET /staging/base`, `GET /staging/delivery/<delivery_id>`). Every call is authenticated, scoped to the project of its token and logged. A refused call answers with its code, its cause and the corrective action ([error messages](errors.md)).
 
 A push names its branch in the query (`POST /staging/delivery?branch=<name>`). The name is plain: lower-case letters, digits, `.`, `_` and `-`, 63 characters at most, starting with a letter or a digit. The hub refuses a name that holds a secret it knows, or a string shaped like a credential (`sk-…`, `ghp_…`, `zph_…`), because the name goes to the forge and into the title of the pull request (ATK-84). Such a name is refused even when it is innocent: `sk-learn-upgrade-2026` reads as a provider key. The refusal shows the name masked; push the same work again under a name taken from the work, such as `add-subtraction`.
+
+## The base instruction
+
+Each image carries a base instruction for its agent, in its read-only root (`images/instance/instructions.md`, the same text as `images/instance-opencode/instructions.md`): Hermes adds it to the system prompt of every call (`HERMES_EPHEMERAL_SYSTEM_PROMPT`, set by the entrypoint), and OpenCode reads it through `instructions` in its managed configuration ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)). It says what a project of Zephyros is, how the tools of the hub are named, and when and how to report an obstacle. It is guidance for the agent: no guarantee of Zephyros rests on it ([ADR 0002](decisions/0002-guarantees-from-os-and-hub.md)), and the prompt of each turn still says what the turn is for.
+
+## When the agent is blocked: obstacles
+
+An agent that meets, after a real attempt, something it cannot change — its environment, a tool of the project or of the hub, the contract, an acceptance test, its budget — reports an obstacle (`obstacle.report`) rather than keep trying or give up ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)). It is not a way to ask how to build something, nor to report a fault of its own work.
+
+An obstacle is a piece of evidence with a bounded size: a nature (`environment`, `tool`, `contract`, `acceptance_test`, `budget`, `other`), whether it blocks the agent, a one-line title, a description, 1 to 10 items of evidence, what was tried and what is needed. An item of evidence is one of:
+
+| `kind` | Fields | What the hub checks |
+| --- | --- | --- |
+| `path` | `path`, under `/work` or `/opt/project-tools`; `note` | that it is under one of them, without `..`; it never reads it |
+| `command` | `command` (500 characters); `output`, the end of it (2 000); `exit_code`; `note` | nothing: it is the agent's account |
+| `delivery` | `delivery_id`; `note` | that the delivery exists in the project |
+| `log` | `seq`, the number of a record of the log of the project; `note` | that the record exists |
+
+Who answers: an obstacle of the Contractor goes to the Owner side, which clarifies the need, amends the contract (`change_id`), fixes an acceptance test (`paths`), rejects it with its reasons, or escalates it to the operator. An obstacle of the Owner side, or one escalated, goes to the operator and the main agent, who answer it, handle it, or escalate it to the human, who answers on the operator channel. A blocking obstacle wakes the Owner side at once, and goes up the continuity ladder until it is answered ([notifications](notifications.md#the-continuity-ladder)).
+
+| Tool | Contractor | Owner side |
+| --- | --- | --- |
+| `obstacle.report` | yes: it goes to the Owner side | yes: it goes to the operator |
+| `obstacle.list`, `obstacle.read` | its own obstacles | its own and the Contractor's |
+| `obstacle.answer` | no | the obstacles of the Contractor that await it |
+| `obstacle.close` | its own | its own |
+
+The author learns of a decision at the start of its next turn: the hub writes, after the prompt, which of its obstacles were answered, and, for the Owner side, which await its answer; `obstacle.read` shows the decisions and their text. The Contractor reads every answer to its obstacles, the reasons of an escalation included: the hub refuses an answer that copies a passage of 160 characters or more of an acceptance test it keeps for the Owner side, or a short test whole, whatever marks a quote, a numbered listing or a diff puts before its lines (`acceptance_leak`). It does not notice a rephrasing, a split or a bare value, which the Owner side has to avoid itself ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md) lists what it does not see).
+
+What an obstacle says is the account of an agent: the side that reads it weighs it as data, and never follows it as an instruction. Every free text of an obstacle, its evidence included, is masked as it is written: the output of `env` given as evidence keeps no token.
+
+A side has at most 5 obstacles awaiting an answer, and reports at most 3 in a turn (`too_many_obstacles`). An obstacle moves no deadline and reaches nothing new: the tools read and write records of the hub only.
 
 ## Nothing in that list reaches the contract
 
