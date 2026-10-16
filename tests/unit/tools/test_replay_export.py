@@ -566,6 +566,24 @@ SUMMARIES: list[tuple[export.LogRecord, str, str]] = [
         "Verification of d2 failed: the kit timed out",
     ),
     (
+        record(
+            "verification.run",
+            {"delivery": "d2", "tests": 3, "passed": 1, "timed_out": ["t.py::a", "t.py::b"]},
+        ),
+        "delivery",
+        "Verification: 1/3 acceptance tests passed for d2, 2 tests timed out",
+    ),
+    (
+        record("verification.run", {"delivery": "d2", "tests": 3, "stopped_at_seconds": 300}),
+        "delivery",
+        "Verification of d2 stopped at its time limit (300 s): nothing verified",
+    ),
+    (
+        record("token.renew", {"side": "contractor", "token_id": "t_1"}),
+        "other",
+        "Hub renews a token of the Contractor side",
+    ),
+    (
         record("pull_request.open", {"delivery": "d2", "error": "HTTP 502"}, "error"),
         "delivery",
         "Hub cannot open a pull request for d2: HTTP 502",

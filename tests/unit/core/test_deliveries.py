@@ -43,6 +43,7 @@ from zephyros.core.ports.forge import (
 )
 from zephyros.core.ports.verification import Outcome as VerificationOutcome
 from zephyros.core.ports.verification import (
+    TimeLimit,
     VerificationError,
     VerificationRequest,
     VerificationResult,
@@ -1376,3 +1377,37 @@ def test_a_report_of_turns_that_recorded_no_context_says_nothing_of_it() -> None
     report = report_after_turns()
     assert "Context of the agents" not in report
     assert "CONTEXT BELOW THE FLOOR" not in report
+
+
+class TimingOutRunner(AssertionRunner):
+    """The assertion runner, whose tests all reach a time limit of their own."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        found = super().run(request)
+        return VerificationResult(
+            dict.fromkeys(found.outcomes, VerificationOutcome.ERROR),
+            found.log,
+            timeouts=dict.fromkeys(found.outcomes, TimeLimit("call", 612.3, 600.0)),
+        )
+
+
+def test_a_test_over_its_time_limit_is_logged_and_reported_as_timed_out() -> None:
+    """AN-023: the cause reaches the log and both reports, not only the raw output."""
+    made, project, audit, _store = service(runner=TimingOutRunner())
+    ready(made, project)
+    found = made.status(project, delivered(made, project))
+    assert found.decision == "FAIL"
+    run = next(
+        json.loads(r.parameters)
+        for r in audit.read(project)
+        if (r.action, r.outcome) == (Action.VERIFICATION_RUN, Outcome.OK)
+    )
+    assert run["timed_out"] == ["checks/add.txt::test_add"]
+    assert "stopped_at_seconds" not in run
+    line = (
+        "- `checks/add.txt::test_add`: error, **timed out**: its call reached its limit of 600 s "
+        "after 612 s"
+    )
+    for report in (found.report, found.contractor_report):
+        assert report is not None
+        assert line in report.splitlines()

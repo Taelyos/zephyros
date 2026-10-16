@@ -11,7 +11,7 @@ from zephyros.core.masking import MASK
 from zephyros.core.obstacles import Decision, Entry, Level, Obstacle, Status
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery
-from zephyros.core.ports.verification import Outcome
+from zephyros.core.ports.verification import Outcome, TimeLimit
 from zephyros.core.report import (
     INSPECTIONS_HEADING,
     LISTED_OBSTACLES,
@@ -283,3 +283,61 @@ def test_a_report_without_obstacles_says_so_and_a_long_list_is_bounded() -> None
     assert f"| OB-{LISTED_OBSTACLES + 7:03d} |" in text
     assert "| OB-007 |" not in text
     assert "And 7 earlier." in text
+
+
+def test_a_test_that_reached_its_time_limit_reads_timed_out_apart_from_an_error() -> None:
+    """AN-023: a test over its limit read `error`, its cause only in the raw output."""
+    outcomes = {"tests/t.py::test_add": Outcome.ERROR, "tests/t.py::test_sub": Outcome.ERROR}
+    objects = contract(
+        (1, "P0", ("test",), ("tests/t.py::test_add",)),
+        (2, "P1", ("test",), ("tests/t.py::test_sub",)),
+    )
+    text = render(
+        make(
+            outcomes=outcomes,
+            gate=compute_gate(objects, outcomes),
+            timeouts={"tests/t.py::test_add": TimeLimit("setup", 612.3, 600.0)},
+        )
+    )
+    assert "| `tests/t.py::test_add` error (timed out) |" in text
+    assert "| `tests/t.py::test_sub` error |" in text
+    assert (
+        "- `tests/t.py::test_add`: error, **timed out**: its setup reached its limit of 600 s "
+        "after 612 s"
+    ) in text.splitlines()
+    assert "- `tests/t.py::test_sub`: error" in text.splitlines()
+    assert "Time limit reached" not in text
+
+
+def test_a_limit_the_kit_did_not_know_is_said_as_a_limit() -> None:
+    text = render(make(timeouts={"tests/t.py::test_sub": TimeLimit("call", 2.5)}))
+    assert (
+        "- `tests/t.py::test_sub`: failed, **timed out**: its call reached a time limit after 2.5 s"
+    ) in text.splitlines()
+
+
+def test_a_run_stopped_at_its_limit_says_so_and_names_the_test_under_way() -> None:
+    outcomes = dict.fromkeys(("tests/t.py::test_add", "tests/t.py::test_sub"), Outcome.NOT_RUN)
+    objects = contract(
+        (1, "P0", ("test",), ("tests/t.py::test_add",)),
+        (2, "P1", ("test",), ("tests/t.py::test_sub",)),
+    )
+    report = make(
+        outcomes=outcomes,
+        gate=compute_gate(objects, outcomes),
+        timeouts={"tests/t.py::test_sub": TimeLimit("run", 3061.0)},
+        stopped_at=3600,
+    )
+    for text in (render(report), render(report, with_output=False)):
+        assert (
+            "**Time limit reached:** the run was stopped at the limit of the verification, "
+            "3600 s (`verification.timeout_seconds`). Nothing it printed is believed, and every "
+            "test reads not_run. Under way when it stopped: `tests/t.py::test_sub`."
+        ) in text.splitlines()
+        assert (
+            "- `tests/t.py::test_sub`: not_run, **timed out**: under way for 3061 s when the "
+            "run reached its limit of 3600 s and was stopped"
+        ) in text.splitlines()
+        assert "- `tests/t.py::test_add`: not_run" in text.splitlines()
+    alone = render(make(stopped_at=300, outcomes=outcomes, gate=compute_gate(objects, outcomes)))
+    assert "The kit had signed no test as under way." in alone

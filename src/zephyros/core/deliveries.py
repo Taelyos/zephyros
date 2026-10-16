@@ -47,6 +47,7 @@ from zephyros.core.ports.verification import (
     Outcome as TestOutcome,
 )
 from zephyros.core.ports.verification import (
+    TimeLimit,
     VerificationError,
     VerificationRequest,
     VerificationResult,
@@ -782,6 +783,8 @@ class DeliveryService:
         outcomes: dict[str, Any] = {}
         log = ""
         never_run: tuple[str, ...] = ()
+        timeouts: dict[str, TimeLimit] = {}
+        stopped_at: int | None = None
         # The tools the sandbox mounts, measured before the run and after it (ADR 0030): a
         # verdict names the tools it was reached with, and is not kept when they differ after
         # the run. A change undone before the run ends is not seen: two measures, not a watch.
@@ -797,6 +800,8 @@ class DeliveryService:
             outcomes = dict(result.outcomes)
             log = result.log
             never_run = deselected_tests(result, tests)
+            timeouts = dict(result.timeouts)
+            stopped_at = result.stopped_at
         self._record_event(
             project_id,
             Action.VERIFICATION_RUN,
@@ -807,6 +812,9 @@ class DeliveryService:
             tests=len(tests),
             passed=sum(1 for o in outcomes.values() if o.value == "passed"),
             never_run=len(never_run),
+            # a time limit reached is a cause, not an error of the run (AN-023)
+            **({} if not timeouts else {"timed_out": sorted(timeouts)[:LOGGED_PATHS]}),
+            **({} if stopped_at is None else {"stopped_at_seconds": stopped_at}),
             **({} if tools is None else {"tools": tools.fingerprint}),
         )
         gate = compute_gate(objects, outcomes)
@@ -836,6 +844,8 @@ class DeliveryService:
             acceptance_files=ran,
             unnamed_acceptance_files=unnamed,
             never_run_tests=never_run,
+            timeouts=timeouts,
+            stopped_at=stopped_at,
             missing_acceptance_files=missing,
             set_aside_paths=set_aside,
             built_by=self._built_by(project_id, record.delivery_id),

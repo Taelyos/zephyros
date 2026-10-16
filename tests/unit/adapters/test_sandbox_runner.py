@@ -17,6 +17,7 @@ from zephyros.core.broker import BrokerError
 from zephyros.core.ports.verification import (
     INTERFACE_VERSION,
     Outcome,
+    TimeLimit,
     VerificationError,
     VerificationRequest,
 )
@@ -265,3 +266,50 @@ def test_a_broker_error_of_the_route_keeps_its_shape() -> None:
     with pytest.raises(BrokerError) as caught:
         client.run_sandbox(b"", 60)
     assert caught.value.code == "bad_request"
+
+
+def _answering(**result: Any) -> Any:
+    """A filter that fails the canaries as an honest kit does, and answers `result` besides."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked = manifest_of(request.content)["tests"]
+        outcomes = {test: "failed" if "canary" in test else "error" for test in asked}
+        return httpx.Response(200, json={"ok": True, "result": {"outcomes": outcomes, **result}})
+
+    return handler
+
+
+def test_a_test_that_reached_its_own_time_limit_says_so() -> None:
+    """AN-023: a test over its limit read `error`, with the cause only in the raw output."""
+    handler = _answering(
+        timed_out=False,
+        duration_seconds=700.0,
+        timeouts={
+            "test_a.py::test_a": {"phase": "setup", "seconds": 612.3, "limit": 600.0},
+            "test_zephyros_canary_x.py::test_x": {"phase": "call", "seconds": 1.0},
+            "test_b.py::test_b": "not a cause",
+        },
+    )
+    result = runner_for(handler).run(request_())
+    assert result.outcomes["test_a.py::test_a"] is Outcome.ERROR  # the gate counts it so
+    assert dict(result.timeouts) == {"test_a.py::test_a": TimeLimit("setup", 612.3, 600.0)}
+    assert result.stopped_at is None
+
+
+def test_a_run_stopped_at_its_limit_names_the_test_under_way() -> None:
+    handler = _answering(
+        timed_out=True,
+        duration_seconds=301.0,
+        started={"test": "test_b.py::test_b", "at": 1.5},
+    )
+    result = runner_for(handler).run(request_())
+    assert set(result.outcomes.values()) == {Outcome.NOT_RUN}
+    assert result.stopped_at == 300
+    assert dict(result.timeouts) == {"test_b.py::test_b": TimeLimit("run", 299.5)}
+
+
+def test_a_run_stopped_with_no_test_under_way_names_none() -> None:
+    for started in (None, {"test": "test_zephyros_canary_x.py::test_x", "at": 1.0}):
+        result = runner_for(_answering(timed_out=True, started=started)).run(request_())
+        assert result.stopped_at == 300
+        assert dict(result.timeouts) == {}

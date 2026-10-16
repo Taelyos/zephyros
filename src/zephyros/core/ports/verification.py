@@ -6,7 +6,9 @@ test with bounded evidence. It renders no decision: the gate does (ADR 0005).
 
 Version 0.x. 0.2.0 adds `VerificationResult.deselected`: the tests the kit found in the asked
 files but did not run because no acceptance criterion named them, so the report can say which
-acceptance tests never ran.
+acceptance tests never ran. 0.3.0 adds `VerificationResult.timeouts` and `stopped_at`: the tests
+that ended on a time limit, and the limit of a run stopped at it, so the report can say "timed
+out" apart from an error (AN-023).
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
-INTERFACE_VERSION = "0.2.0"
+INTERFACE_VERSION = "0.3.0"
 MAX_LOG = 20_000
 
 
@@ -32,6 +34,20 @@ class Outcome(StrEnum):
     """The test could not run to an end: it crashed, or its setup failed."""
     NOT_RUN = "not_run"
     """The test was asked for and did not run: absent, filtered out, or out of time."""
+
+
+@dataclass(frozen=True, slots=True)
+class TimeLimit:
+    """Why a test did not pass: it reached a time limit. Its outcome stays what the kit said
+    (`error`, `failed`, or `not_run` for a run stopped at its limit); this says why."""
+
+    phase: str
+    """setup, call or teardown: the phase of the test that reached a limit of its own; `run`:
+    the test was under way when the run was stopped at the limit of the verification."""
+    seconds: float
+    """How long the phase, or the test under way, had run."""
+    limit: float | None = None
+    """The limit it reached, when it is known."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,10 +81,18 @@ class VerificationResult:
     deselected: tuple[str, ...] = ()
     """Tests the kit found in the asked files but did not run, because no criterion named them
     (`path::name`). None of them is a test asked for. The report lists them as never run."""
+    timeouts: Mapping[str, TimeLimit] = field(default_factory=dict)
+    """The tests asked for that reached a time limit, by name: each is a test of `outcomes`."""
+    stopped_at: int | None = None
+    """The limit of the verification, in seconds, when the run reached it and was stopped:
+    nothing it printed is believed, and every test reads `not_run`."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "outcomes", MappingProxyType(dict(self.outcomes)))
         object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
+        object.__setattr__(self, "timeouts", MappingProxyType(dict(self.timeouts)))
+        if not set(self.timeouts) <= set(self.outcomes):
+            raise ValueError("a time limit is reported for a test that was not asked for")
         object.__setattr__(self, "log", self.log[:MAX_LOG])
         object.__setattr__(self, "deselected", tuple(self.deselected))
 
