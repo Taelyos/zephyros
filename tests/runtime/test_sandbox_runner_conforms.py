@@ -160,13 +160,52 @@ def test_a_kit_that_hangs_is_stopped_at_its_time_limit() -> None:
         "tests",
         {"test_hang.py": b"import time\n\n\ndef test_hang():\n    time.sleep(600)\n"},
         ("test_hang.py::test_hang",),
-        timeout_seconds=5,
+        timeout_seconds=10,
     )
     started = time.monotonic()
     result = runner().run(request)
     assert time.monotonic() - started < 60
     assert "time limit" in result.log
     assert result.outcomes["test_hang.py::test_hang"] is Outcome.NOT_RUN
+    # AN-023: the run says it reached its limit, and which test was under way
+    assert result.stopped_at == 10
+    found = result.timeouts["test_hang.py::test_hang"]
+    assert found.phase == "run"
+    assert 0 < found.seconds <= result.duration_seconds
+
+
+def test_a_test_that_reaches_a_time_limit_of_its_own_is_told_from_an_error() -> None:
+    """AN-023: an acceptance test whose fixture runs the delivery with a limit, and the
+    delivery is slower: the kit says which test timed out, in which phase, after how long and at
+    which limit; a test that breaks for another reason is an error with no time limit."""
+    test_file = (
+        "import subprocess, sys\n\nimport pytest\n\n\n"
+        "@pytest.fixture(scope='module')\n"
+        "def run():\n"
+        "    return subprocess.run([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+        "                          timeout=1)\n\n\n"
+        "def test_slow(run):\n    assert run.returncode == 0\n\n\n"
+        "def test_slow_too(run):\n    assert run.returncode == 0\n\n\n"
+        "@pytest.fixture\n"
+        "def broken():\n    raise RuntimeError('not a time limit')\n\n\n"
+        "def test_broken(broken):\n    assert True\n"
+    )
+    tests = (
+        "test_bench.py::test_slow",
+        "test_bench.py::test_slow_too",
+        "test_bench.py::test_broken",
+    )
+    request = VerificationRequest(
+        "p_rttimeout", "tests", {"test_bench.py": test_file.encode()}, tests, timeout_seconds=60
+    )
+    result = runner().run(request)
+    assert {result.outcomes[test] for test in tests} == {Outcome.ERROR}
+    assert set(result.timeouts) == {"test_bench.py::test_slow", "test_bench.py::test_slow_too"}
+    for test in ("test_bench.py::test_slow", "test_bench.py::test_slow_too"):
+        found = result.timeouts[test]
+        assert (found.phase, found.limit) == ("setup", 1.0)
+        assert found.seconds >= 1.0  # the first time, for the test that shares the fixture too
+    assert result.stopped_at is None
 
 
 # --------------------------------------------------------------- forgery integrity (ATK-22)

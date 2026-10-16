@@ -7,12 +7,12 @@ zephyros config check zephyros.toml     # validate a file
 zephyros config schema                  # print the JSON Schema
 ```
 
-The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.18.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
+The schema is published as [`schemas/configuration.schema.json`](../schemas/configuration.schema.json), version 1.19.0. A file declares the version it was written for in `schema_version`; the hub reads a file of any 1.x version, save the few values a later version refuses (see [Versions](#versions)), and refuses another major version. Unknown keys are refused.
 
 A minimal file:
 
 ```toml
-schema_version = "1.18.0"
+schema_version = "1.19.0"
 
 [images]
 instance = "registry.example/zephyros-instance@sha256:…"   # by digest, always
@@ -242,6 +242,12 @@ refused to start: "core" needs exactly one address of the hub outside the instan
 - **found none**: the instance pool covers the core network too, for example a `ZEPHYROS_POOL` of `172.16.0.0/12` where the runtime gives the core network an address in `172.18.0.0/16`. Choose a pool that no other network of the machine uses (the default, `10.200.0.0/16`, or another range of `10.0.0.0/8`), then `scripts/deploy.sh up` again.
 - **found two or more**: the hub is still attached to instance networks taken from a former pool, outside the current one. `scripts/deploy.sh down` removes every instance network (the instances keep their volumes), and `scripts/deploy.sh up` starts the hub again; the hub creates the networks again from the current pool when it starts the instances.
 
+## The tokens of the turns
+
+Each turn of an instance has a project token of its own, bound to the address of the network guard of the instance ([ADR 0016](decisions/0016-one-agent-container-per-turn.md), amended). The hub issues it when the turn starts (`token.issue`), with the lifetime `tokens.lifetime_seconds`, and revokes it when the turn ends (`token.revoke`, `why: turn_end`): between two turns, no token of the instance works. While the turn runs, the watchdog renews it in a round that sees the turn running, once less than `tokens.rotate_before_seconds` of its lifetime remains, and never later than four rounds before its end (`token.renew`, with the new `expires_at`). The secret does not change: the turn has nothing to read again, and a turn longer than a lifetime keeps its token. A round of the watchdog that cannot see the turn renews nothing, and three such rounds cut the instance off (`supervision_lost`); a token therefore outlives by one lifetime at most the last round that saw its turn. A shorter lifetime is allowed, and bounds that time.
+
+When the hub refuses a token it issued to an instance (revoked, expired, presented from another address or on another endpoint), it logs the refusal (`authentication`, with the identifier of the token), `instance.status` says so (`token_refused`: `at`, `reason`, `token_id`, and `of_turn`, whether it was the token of the turn under way), and the main agent is told once per token (`instance.token_refused`, [notifications](notifications.md)), unless the instance is being stopped. A turn whose own token is refused, expired or revoked, has lost every tool of the hub: the watchdog stops it at its next round (`turn.end`, result `token_refused`) rather than leave it `turn`. A token presented from another address ends nothing: the turn goes on with its own.
+
 ## The operator and main-agent tokens
 
 Both tokens hold every right of their channel, so they expire: `tokens.channel_lifetime_days` after they are issued, 90 days by default ([ADR 0026](decisions/0026-a-lifetime-and-a-rotation-for-the-operator-and-main-agent-tokens.md)). The hub writes each one to its file (`paths.operator_token_file`, `paths.main_agent_token_file`, mode 0600) when it first starts, and again at a start that finds no working token in the file. A token issued before 1.15.0 never expired: the first start of the hub after the update gives it the configured lifetime, counted from that start, and logs it (`token.lifetime`).
@@ -266,7 +272,7 @@ The schema document lists them (`x-zephyros-rules`):
 
 - the four ports of `[hub]` differ;
 - `hub.operator_bind` and `hub.main_agent_bind` are not addresses of `network.instance_pool`;
-- a project token outlives the longest turn, and its rotation starts before its expiry;
+- the renewal of the token of a turn starts before its expiry (`tokens.rotate_before_seconds` is shorter than `tokens.lifetime_seconds`);
 - the subnet prefix of an instance network is longer than the prefix of the pool;
 - no name resolver is in a protected network;
 - a `github` forge has its `token_file`;
@@ -315,8 +321,8 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 | `limits.turn_seconds` | `7200` | 60 to 86400 |
 | `limits.silence_seconds` | `600` | 30 to 86400 |
 | `limits.refusals_per_minute` | `120` | 10 to 100000 |
-| `tokens.lifetime_seconds` | `14400` | 120 to 604800 |
-| `tokens.rotate_before_seconds` | `900` | 30 to 86400 |
+| `tokens.lifetime_seconds` | `14400` | 120 to 604800; the lifetime of the token of a turn, renewed while the turn runs (see [the tokens of the turns](#the-tokens-of-the-turns)) |
+| `tokens.rotate_before_seconds` | `900` | 30 to 86400; the hub renews the token of a running turn when less than this remains, and never later than four rounds of the watchdog (`runtime.poll_seconds`) before its end |
 | `tokens.channel_lifetime_days` | `90` | 1 to 3650 |
 | `gateway.provider` | `"stub"` | `stub` or `openai-compatible` |
 | `gateway.upstream_url` | unset | an http or https URL; required with `openai-compatible` |
@@ -348,6 +354,6 @@ A key that a file leaves out takes its default. "Unset" means that the key has n
 
 ## Versions
 
-1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029); 1.17.0 added `[tools]` and raised the bound of `verification.timeout_seconds` from 3 600 to 86 400 (ADR 0030); 1.18.0 added `gateway.reasoning_echo` (ADR 0032), `gateway.context_window` and `gateway.context_tokens` (ADR 0033).
+1.1.0 added `runtime.guard_health_seconds`, `runtime.poll_seconds` and `limits.silence_seconds`; 1.2.0 added `[forge]` and `[verification]`, and local image identifiers; 1.3.0 added `network.resolvers` (default `9.9.9.9`, Quad9); 1.4.0 added `[notifications]` and the signed webhooks (EXG-43); 1.5.0 added `[continuity]` (US-E7-01, EXG-23); 1.6.0 added `limits.refusals_per_minute` (ATK-71); 1.7.0 added `gateway.simulation` (EXG-46); 1.8.0 added `gateway.models`, checked against a list of models held in the code; 1.9.0 added the GitHub forge (`forge.provider` `github` and `forge.token_file`); 1.10.0 added `gateway.session_header`; 1.11.0 added `gateway.timeout_seconds`; 1.12.0 added `verification.protected_paths` and raised the defaults of `limits.memory_mib` (1536) and `limits.turn_seconds` (7200) to the measures of the second real run (ADR 0020); 1.13.0 removed the list of models from the code: `gateway.models` alone says which models the gateway may serve; 1.14.0 added `network.egress`, `network.allowed_hosts` and `hub.egress_port`, and made `regulated` the default: an instance no longer reaches the whole Internet unless the file says `open` (ADR 0024); 1.15.0 refused a wildcard or an instance-pool address in `hub.operator_bind` and `hub.main_agent_bind` and added the value `"core"` (ADR 0025), and added `tokens.channel_lifetime_days` and `paths.control_socket` (ADR 0026); 1.16.0 added `images.opencode` and `instances.contractor.engine` (ADR 0029); 1.17.0 added `[tools]` and raised the bound of `verification.timeout_seconds` from 3 600 to 86 400 (ADR 0030); 1.18.0 added `gateway.reasoning_echo` (ADR 0032), `gateway.context_window` and `gateway.context_tokens` (ADR 0033); 1.19.0 let `tokens.lifetime_seconds` be shorter than `limits.turn_seconds`, since the hub renews the token of a turn while it runs (ADR 0016, amended).
 
 Each addition has a default, except one: since 1.8.0, an `openai-compatible` provider needs `gateway.models`, so a file older than 1.8.0 that uses one must add it. Since 1.15.0, a file that binds the operator channel or the main-agent endpoint to `0.0.0.0` is refused: write `"core"` for a hub in a container. Any other 1.x file still reads.

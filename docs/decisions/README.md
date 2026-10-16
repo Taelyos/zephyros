@@ -19,7 +19,7 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0013 | [Tokens are opaque, bound to their instance and checked against server-side records](0013-opaque-server-side-tokens.md) | Accepted; in part replaced by 0016 |
 | 0014 | [The container filter is a typed broker, not a pass-through proxy](0014-container-filter-as-typed-broker.md) | Accepted |
 | 0015 | [Each instance has its own network and a network guard that enforces egress](0015-per-instance-networks-with-a-network-guard.md) | Accepted; revised by 0027 |
-| 0016 | [An instance is its network guard and its volumes; each agent container is one turn](0016-one-agent-container-per-turn.md) | Accepted; amended (Proposed) for a new session |
+| 0016 | [An instance is its network guard and its volumes; each agent container is one turn](0016-one-agent-container-per-turn.md) | Accepted; amended (Proposed) for a new session, and for a token per turn |
 | 0017 | [A verification runner runs one verification kit; the method does not change with the project](0017-verification-runner-and-kits.md) | Accepted |
 | 0018 | [An instance resolves names through configured resolvers, never through the host's resolver chain](0018-instance-name-resolution.md) | Accepted |
 | 0019 | [An anchor for the log head, outside the store](0019-anchor-outside-the-store.md) | Accepted |
