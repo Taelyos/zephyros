@@ -833,6 +833,73 @@ SUMMARIES: list[tuple[export.LogRecord, str, str]] = [
         "delivery",
         "Hub opens pull request #? for d2",
     ),
+    (
+        record(
+            "obstacle.report",
+            {
+                "obstacle_id": "OB-001",
+                "nature": "tool",
+                "blocking": True,
+                "title": "the bench never starts a run",
+                "level": "owner",
+            },
+            principal=CONTRACTOR,
+        ),
+        "obstacle",
+        "Contractor reports blocking obstacle OB-001 (tool): the bench never starts a run",
+    ),
+    (
+        record(
+            "obstacle.answer",
+            {
+                "obstacle_id": "OB-001",
+                "decision": "escalate",
+                "status": "escalated",
+                "level": "operator",
+            },
+            principal=OWNER,
+        ),
+        "obstacle",
+        "Owner answers obstacle OB-001: escalate, now awaits the operator",
+    ),
+    (
+        record(
+            "obstacle.answer",
+            {
+                "obstacle_id": "OB-002",
+                "decision": "fix_test",
+                "status": "answered",
+                "level": "owner",
+            },
+            principal=OWNER,
+        ),
+        "obstacle",
+        "Owner answers obstacle OB-002: fix test",
+    ),
+    (
+        record("obstacle.close", {"obstacle_id": "OB-001"}, principal=CONTRACTOR),
+        "obstacle",
+        "Contractor closes obstacle OB-001",
+    ),
+    (
+        record(
+            "obstacle.answer",
+            {"obstacle_id": "OB-001", "decision": "clarify"},
+            "refused",
+            OWNER,
+            "acceptance_leak",
+        ),
+        "refusal",
+        "Refused (acceptance_leak): obstacle.answer",
+    ),
+    (
+        record(
+            "notification.sent",
+            {"event": "obstacle.raised", "obstacle_id": "OB-001", "level": "human"},
+        ),
+        "other",
+        "Hub notifies the operator: obstacle.raised for OB-001 (to the human)",
+    ),
 ]
 
 

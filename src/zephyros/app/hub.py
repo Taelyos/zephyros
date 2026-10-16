@@ -54,6 +54,7 @@ from zephyros.adapters.sqlite.database import Database
 from zephyros.adapters.sqlite.delivery_store import SqliteDeliveryStore
 from zephyros.adapters.sqlite.instance_store import SqliteInstanceStore
 from zephyros.adapters.sqlite.log_store import SqliteLogStore
+from zephyros.adapters.sqlite.obstacle_store import SqliteObstacleStore
 from zephyros.adapters.sqlite.project_store import SqliteProjectStore
 from zephyros.adapters.sqlite.token_store import SqliteTokenStore
 from zephyros.adapters.system_clock import SystemClock
@@ -75,6 +76,7 @@ from zephyros.core.hub import Hub
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager, Timing, TurnEngine
 from zephyros.core.notifications import Notifier, Send
+from zephyros.core.obstacles import ObstacleService
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.forge import Forge
 from zephyros.core.ports.model_provider import ModelProvider
@@ -96,9 +98,10 @@ CONTROL_MODE = 0o600
 
 
 InstanceFactory = Callable[
-    [TokenService, AuditLog, Clock, Notifier, Continuity | None], InstanceControl
+    [TokenService, AuditLog, Clock, Notifier, Continuity | None, ObstacleService], InstanceControl
 ]
-"""Builds the instance control from services the hub creates, which it needs."""
+"""Builds the instance control from services the hub creates, which it needs: the obstacles
+brief each turn that starts (ADR 0034)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +114,7 @@ class HubRuntime:
     notifier: Notifier
     deliveries: DeliveryService | None = None
     continuity: Continuity | None = None
+    obstacles: ObstacleService | None = None
 
 
 def build_forge(config: Config) -> tuple[Forge | None, CredentialSource | None]:
@@ -253,6 +257,7 @@ def build_hub(
     contracts = ContractService(SqliteContractStore(database), clock)
     projects = ProjectService(SqliteProjectStore(database), clock)
     notifier = Notifier(audit, notify)
+    obstacles = ObstacleService(SqliteObstacleStore(database), clock)
     # The ladder of each task is kept in the database: a restart takes it back (T12).
     ladders = (
         Continuity(continuity, SqliteContinuityStore(database)) if continuity is not None else None
@@ -261,7 +266,7 @@ def build_hub(
         control = instances
     else:
         assert instance_factory is not None  # noqa: S101  # reason: checked at the top
-        control = instance_factory(tokens, audit, clock, notifier, ladders)
+        control = instance_factory(tokens, audit, clock, notifier, ladders, obstacles)
     deliveries = None
     hub_box: list[Hub] = []
 
@@ -289,6 +294,7 @@ def build_hub(
             rejections_alert=rejections_alert,
             simulation=simulation,
             tools=tools,
+            obstacles=obstacles.of_project,
         )
     hub = Hub(
         audit=audit,
@@ -302,6 +308,7 @@ def build_hub(
         clock=clock,
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
+        obstacles=obstacles,
     )
     hub_box.append(hub)
     hub.check_tasks()
@@ -312,7 +319,9 @@ def build_hub(
         credentials=credentials,
         limits=GatewayLimits.for_window(context_window),
     )
-    return HubRuntime(hub, tokens, gateway, audit, control, notifier, deliveries, ladders)
+    return HubRuntime(
+        hub, tokens, gateway, audit, control, notifier, deliveries, ladders, obstacles
+    )
 
 
 def record_context(gateway: GatewayConfig, audit: AuditLog) -> None:
@@ -375,6 +384,7 @@ async def run(
             clock: Clock,
             notifier: Notifier,
             continuity: Continuity | None,
+            obstacles: ObstacleService,
         ) -> InstanceControl:
             return InstanceManager(
                 filter_client,
@@ -387,6 +397,7 @@ async def run(
                 notifier=notifier,
                 engines=turn_engines(config),
                 tools=tools,
+                briefing=obstacles,
             )
 
     forge, forge_credentials = build_forge(config)

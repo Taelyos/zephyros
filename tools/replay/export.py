@@ -48,7 +48,7 @@ from zephyros.core.deliveries import flagged_paths
 from zephyros.core.masking import mask_text
 
 FORMAT = "zephyros-replay"
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 EXPORTER = f"tools.replay.export {VERSION}"
 KINDS = ("real", "scripted", "synthetic")
 PLAYER_TEMPLATE = Path(__file__).with_name("player.html")
@@ -127,6 +127,11 @@ CATEGORY_BY_ACTION: dict[str, str] = {
     "gate.decision": "gate",
     "inspection.record": "judgment",
     "delivery.review": "judgment",
+    "obstacle.report": "obstacle",
+    "obstacle.answer": "obstacle",
+    "obstacle.close": "obstacle",
+    "obstacle.list": "obstacle",
+    "obstacle.read": "obstacle",
 }
 """A `delivery.check` the hub accepts is a flag when the delivery changes a protected path; one
 that only says acceptance test files are missing is a `delivery` event (`hub_log_event`). One it
@@ -818,6 +823,20 @@ def _delivery_review(actor: str, _outcome: str, data: dict[str, Any]) -> str:
     return f"{label(actor)} reviews {data.get('delivery_id', '?')}: {data.get('verdict', '?')}"
 
 
+def _obstacle_report(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    blocking = "blocking " if data.get("blocking") else ""
+    return (
+        f"{label(actor)} reports {blocking}obstacle {data.get('obstacle_id', '?')} "
+        f"({data.get('nature', '?')}): {data.get('title', '?')}"
+    )
+
+
+def _obstacle_answer(actor: str, _outcome: str, data: dict[str, Any]) -> str:
+    decision = str(data.get("decision", "?")).replace("_", " ")
+    then = f", now awaits the {data['level']}" if data.get("status") == "escalated" else ""
+    return f"{label(actor)} answers obstacle {data.get('obstacle_id', '?')}: {decision}{then}"
+
+
 def _token(verb: str, preposition: str) -> Summary:
     def summary(_actor: str, _outcome: str, data: dict[str, Any]) -> str:
         count = data.get("count")
@@ -832,7 +851,11 @@ def _notified(data: Mapping[str, Any]) -> str:
     """What a notification was about: an event of the delivery loop, or a continuity step."""
     if data.get("event"):
         subject = str(data["event"])
-        if data.get("delivery_id"):
+        if data.get("obstacle_id"):
+            subject += f" for {data['obstacle_id']}"
+            if data.get("level"):
+                subject += f" (to the {data['level']})"
+        elif data.get("delivery_id"):
             subject += f" for {data['delivery_id']}"
             if data.get("decision"):
                 subject += f" ({data['decision']})"
@@ -888,6 +911,11 @@ SUMMARIES: dict[str, Summary] = {
     "token.revoke": _token("revokes", "of"),
     "notification.sent": _notification,
     "continuity.step": _continuity,
+    "obstacle.report": _obstacle_report,
+    "obstacle.answer": _obstacle_answer,
+    "obstacle.close": _says("{actor} closes obstacle {obstacle_id}"),
+    "obstacle.read": _says("{actor} reads obstacle {obstacle_id}"),
+    "obstacle.list": _says("{actor} lists the obstacles ({count})"),
 }
 
 

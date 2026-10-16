@@ -621,12 +621,16 @@ def test_adr_0029_what_a_turn_leaves_in_its_home_or_work_is_not_loaded_by_the_ne
     seen = instance_config(project)
     assert "planted" not in seen.get("mcp", {})
     assert "planted" not in seen.get("agent", {})
-    assert not seen.get("instructions")
+    assert seen.get("instructions") == ["/etc/opencode/instructions.md"]  # the image's own
     assert seen["username"] != "planted-witness"
     # The witness: OpenCode, pointed at the directories the agent wrote, loads all of it.
     pointed = instance_config(project, *AGENT_LAYERS)
     assert pointed["username"] == "planted-witness"
-    assert set(pointed["instructions"]) == {"/opt/data/planted.md", "/opt/data/home.md"}
+    assert set(pointed["instructions"]) == {
+        "/opt/data/planted.md",
+        "/opt/data/home.md",
+        "/etc/opencode/instructions.md",
+    }
     assert "planted" in pointed["mcp"]
     assert "planted" in pointed["agent"]
 

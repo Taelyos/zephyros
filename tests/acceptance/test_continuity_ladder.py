@@ -48,6 +48,7 @@ from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.instances import InstanceControl
 from zephyros.core.lifecycle import InstanceManager
 from zephyros.core.notifications import Notifier
+from zephyros.core.obstacles import ObstacleService
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import TokenService
 
@@ -84,6 +85,7 @@ class LadderWorld(World):
             clock: Clock,
             notifier: Notifier,
             continuity: Continuity | None,
+            obstacles: ObstacleService,
         ) -> InstanceControl:
             self.manager = InstanceManager(
                 broker,
@@ -95,6 +97,7 @@ class LadderWorld(World):
                 sleep=self.clock.advance,
                 continuity=continuity,
                 notifier=notifier,
+                briefing=obstacles,
             )
             return self.manager
 

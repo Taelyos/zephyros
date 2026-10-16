@@ -23,4 +23,8 @@ export ZEPHYROS_REASONING_ECHO ZEPHYROS_CONTEXT_WINDOW ZEPHYROS_COMPACTION_TOKEN
 if [ "${ZEPHYROS_SESSION:-continue}" = "new" ]; then
   /opt/hermes/.venv/bin/python -I /opt/zephyros/new_session.py
 fi
+# The base instruction of the agent (ADR 0034), from the read-only root: Hermes adds it to the
+# system prompt of every call, and keeps it out of the conversation.
+HERMES_EPHEMERAL_SYSTEM_PROMPT=$(cat /opt/zephyros/instructions.md)
+export HERMES_EPHEMERAL_SYSTEM_PROMPT
 exec /opt/hermes/.venv/bin/hermes "$@"

@@ -176,6 +176,11 @@ class World:
         while self.notifier.step():
             pass
 
+    def run_notifications(self) -> None:
+        """Send what the notifier queued, as its own worker would."""
+        while self.notifier.step():
+            pass
+
     def restart_hub(self) -> None:
         """Stop the hub and start it again on the same database."""
         self.database.close()

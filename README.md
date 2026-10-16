@@ -61,6 +61,11 @@ from recorded results and written rules, the same way every time.
   from a queue of its own, and its outcome is logged; one that fails is not sent again (see
   [Limits](#limits)). The continuity ladder that wakes, restarts and escalates a stalled instance
   survives a restart of the hub.
+- **Obstacles go up a chain** ([ADR 0034](docs/decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)).
+  An agent blocked by what it cannot change (its environment, a tool, the contract, a test) reports
+  it with its evidence. The Owner side answers the Contractor's or escalates them to the operator,
+  who may escalate them to the human; a blocking one wakes whoever is to answer, and each step is
+  logged and in the evidence report.
 - **A threat model of 93 attacks**, kept with the project's working documents (not published).
   66 have at least one automated test that carries their identifier: 60 in the acceptance and
   runtime suites, run as the attacker would, and 6 in unit tests only. 25 of the others belong to
@@ -193,6 +198,9 @@ What holds and what does not, in version 0.2.0:
   ends its decision task each time
   ([ADR 0021](docs/decisions/0021-the-ladder-waits-for-a-ready-contract.md),
   [ADR 0023](docs/decisions/0023-a-decision-is-awaited-from-whoever-takes-it.md)).
+- **An answer to an obstacle can still tell the Contractor what a test checks.** The hub refuses
+  an answer that copies a long passage of an acceptance test it keeps, not one that says it in
+  other words ([ADR 0034](docs/decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)).
 - **The log anchor is a file next to the database.** It detects a database replaced or cut on its
   own, but whoever can write the hub's data directory can forge both the log and the anchor; the
   anchor belongs on another medium when that matters. A lost anchor keeps the log verification

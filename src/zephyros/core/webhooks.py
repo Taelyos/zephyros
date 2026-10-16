@@ -21,10 +21,12 @@ TIMESTAMP_HEADER = "X-Zephyros-Timestamp"
 TOLERANCE_SECONDS = 300
 """How far the timestamp of a delivery may be from the receiver's clock."""
 
-EVENTS_SCHEMA_VERSION = "2.0.0"
+EVENTS_SCHEMA_VERSION = "2.1.0"
 """The version of the event payloads, part of the public API: every notification carries it.
 2.0.0: `delivery.decided` can say `REFUSED` or `ERROR`, and an alert of the continuity ladder
-can carry `side: main-agent`; a receiver that checked a closed list of values breaks."""
+can carry `side: main-agent`; a receiver that checked a closed list of values breaks.
+2.1.0: the event `obstacle.raised` (ADR 0034), and the tasks `obstacle` and `obstacle_raised`
+in the alerts of the continuity ladder."""
 
 
 def sign(secret: str | bytes, delivery_id: str, timestamp: int, body: bytes) -> str:

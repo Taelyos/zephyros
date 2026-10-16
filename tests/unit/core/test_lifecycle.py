@@ -32,12 +32,13 @@ from zephyros.core.broker import BrokerError
 from zephyros.core.containers import Policy, guard_name, network_name, turn_name, volume_name
 from zephyros.core.containers import VolumeKind as Volume
 from zephyros.core.context import AgentContext
-from zephyros.core.continuity import Continuity, TaskState
+from zephyros.core.continuity import OBSTACLE, Continuity, TaskState
 from zephyros.core.continuity import Timing as ContinuityTiming
 from zephyros.core.errors import Refusal
 from zephyros.core.instances import InstanceState as State
-from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing, TurnEngine
+from zephyros.core.lifecycle import LOST_ROUNDS, InstanceManager, Timing, TurnBriefing, TurnEngine
 from zephyros.core.notifications import Notifier
+from zephyros.core.obstacles import Briefing
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.tokens import Authenticated, Endpoint, Rejected, TokenService
 from zephyros.core.tools import ToolsDigest, ToolsError, ToolsProbe
@@ -120,6 +121,7 @@ class Rig:
         notify: Any = None,
         engines: Mapping[Side, TurnEngine] | None = None,
         tools: ToolsProbe | None = None,
+        briefing: TurnBriefing | None = None,
     ) -> InstanceManager:
         self.notifier = Notifier(self.audit, notify)
         return InstanceManager(
@@ -134,6 +136,7 @@ class Rig:
             notifier=self.notifier,
             engines=engines,
             tools=tools,
+            briefing=briefing,
         )
 
     # -- driving
@@ -842,6 +845,88 @@ def test_a_busy_instance_is_not_woken_and_its_activity_counts(rig: Rig) -> None:
     # the step that could not be taken was not consumed: the wake is still the one proposed
     (step,) = continuity.due(rig.clock.now() + timedelta(seconds=900))
     assert step.kind == "wake"
+
+
+# ----------------------------------------------------------------------------- ADR 0034
+class Briefer:
+    """Tells each turn of the Contractor of one decision, once."""
+
+    def __init__(self, text: str = "[Zephyros hub] A decision was taken on OB-001.") -> None:
+        self.text = text
+        self.told: list[tuple[str, Briefing]] = []
+
+    def brief(self, project_id: str, side: Side) -> Briefing | None:
+        if project_id != PROJECT or side is not CONTRACTOR or self.told:
+            return None
+        return Briefing(self.text, ("OB-001",), ())
+
+    def briefed(self, project_id: str, briefing: Briefing) -> None:
+        self.told.append((project_id, briefing))
+
+
+def test_a_turn_is_told_after_its_prompt_of_the_decisions_on_its_obstacles(rig: Rig) -> None:
+    briefer = Briefer()
+    rig.manager = rig.make_manager(briefing=briefer)
+    rig.manager.reconcile()
+    rig.start(prompt="Work.")
+    command = rig.docker.containers[turn_name(PROJECT, CONTRACTOR)]["Config"]["Cmd"]
+    assert command[1] == "--query=Work.\n\n[Zephyros hub] A decision was taken on OB-001."
+    assert [project for project, _ in briefer.told] == [PROJECT]
+    (start,) = [r for r in rig.records() if r.action is Action.TURN_START]
+    parameters = json.loads(start.parameters)
+    assert parameters["obstacles"] == ["OB-001"]
+    assert parameters["prompt_chars"] == len("Work.\n\n") + len(briefer.text)
+    # told once: the next turn starts with its prompt alone, and records no obstacle
+    rig.docker.finish(turn_name(PROJECT, CONTRACTOR))
+    rig.manager.tick()
+    rig.start(prompt="Again.")
+    command = rig.docker.containers[turn_name(PROJECT, CONTRACTOR)]["Config"]["Cmd"]
+    assert command[1] == "--query=Again."
+    starts = [json.loads(r.parameters) for r in rig.records() if r.action is Action.TURN_START]
+    assert "obstacles" not in starts[-1]
+
+
+def test_a_prompt_with_no_room_left_goes_alone_and_the_side_is_told_later(rig: Rig) -> None:
+    from zephyros.core.instances import MAX_PROMPT
+
+    briefer = Briefer()
+    rig.manager = rig.make_manager(briefing=briefer)
+    rig.manager.reconcile()
+    long = "x" * (MAX_PROMPT - 10)
+    rig.start(prompt=long)
+    command = rig.docker.containers[turn_name(PROJECT, CONTRACTOR)]["Config"]["Cmd"]
+    assert command[1] == f"--query={long}"
+    assert briefer.told == []
+
+
+def test_a_busy_owner_side_is_woken_for_an_obstacle_once_its_turn_ends(rig: Rig) -> None:
+    """ADR 0034: only an answer counts on an obstacle. A turn under way delays its wake to the
+    end of that turn, never by another `continuity.inactivity_seconds`."""
+    continuity = Continuity(
+        ContinuityTiming(inactivity_seconds=900, restarts=1, unblock_seconds=600)
+    )
+    manager = rig.make_manager(
+        replace(TIMING, turn_seconds=10**6, silence_seconds=10**6), continuity=continuity
+    )
+    manager.reconcile()
+    rig.manager = manager
+    rig.start(side=OWNER, prompt="Writing the tests.")
+    continuity.expect(
+        TaskState(PROJECT, "owner", OBSTACLE, "obstacle OB-001 awaits", rig.clock.now()),
+        due_now=True,
+    )
+    manager.tick()  # busy: nothing is woken, and the step stays due
+    rig.run_jobs()
+    owner_turn = turn_name(PROJECT, OWNER)
+    assert "obstacle" not in str(rig.docker.containers[owner_turn]["Config"]["Cmd"][1])
+    assert [s.kind for s in continuity.due(rig.clock.now())] == ["wake"]
+    rig.clock.advance(30)
+    rig.docker.finish(owner_turn)
+    manager.tick()  # the turn ended: the wake goes at once
+    rig.run_jobs()
+    prompt = str(rig.docker.containers[owner_turn]["Config"]["Cmd"][1])
+    assert "an obstacle awaits your answer" in prompt
+    assert "obstacle.answer" in prompt
 
 
 def test_an_alert_refused_by_the_egress_policy_is_logged(rig: Rig) -> None:

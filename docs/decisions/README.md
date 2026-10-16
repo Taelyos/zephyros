@@ -36,3 +36,4 @@ Architecture Decision Records (ADRs) record the significant design choices behin
 | 0031 | [The agent has every power inside its instance](0031-the-agent-has-every-power-inside-its-instance.md) | Accepted |
 | 0032 | [The gateway carries the reasoning of the model, and the configuration says whether it goes back](0032-the-gateway-carries-the-reasoning-of-the-model.md) | Accepted |
 | 0033 | [The agents work with the context of the model](0033-the-agents-work-with-the-context-of-the-model.md) | Accepted |
+| 0034 | [A blocked agent reports an obstacle, and decisions take it up a chain](0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md) | Accepted |

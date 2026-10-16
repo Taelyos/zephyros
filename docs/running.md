@@ -49,6 +49,16 @@ Each turn of an instance continues its conversation ([ADR 0016](decisions/0016-o
 scripts/deploy.sh call instance.start '{"project_id": "p_…", "side": "owner", "prompt": "…", "session": "new"}'
 ```
 
+An agent that is blocked by what it cannot change reports an obstacle; the Owner side answers those of the Contractor, and escalates to the operator what only the operator can act on ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)). The main agent hears of each obstacle that reaches the operator or the human (`obstacle.raised`, [notifications](notifications.md)). The operator follows and answers them on its channel:
+
+```bash
+scripts/deploy.sh call obstacle.list '{"status": "awaiting", "level": "human"}'   # every project
+scripts/deploy.sh call obstacle.read '{"project_id": "p_…", "obstacle_id": "OB-001"}'
+scripts/deploy.sh call obstacle.answer '{"project_id": "p_…", "obstacle_id": "OB-001", "decision": "handle", "action": "new_session", "text": "…"}'
+```
+
+`handle` records what the operator did: a new turn (`relaunched`), a new session (`new_session`, with `instance.start` and `"session": "new"`), a stop (`stopped`), a fixed environment (`environment_fixed`). The answer does not act by itself. The Contractor reads every answer to its obstacles: say what an acceptance test expects in your own words, never with its code.
+
 `down` stops the hub and the filter, then removes what the filter created outside compose: the guards, turns and sandboxes, and their networks. The instances keep their volumes; the hub creates a guard and a network again when it starts an instance. `down` removes every container and network labelled `org.zephyros.managed` on the host: run one deployment per machine. The model behind the gateway is the obedient stub unless the configuration names a provider (`ZEPHYROS_EXTRA_CONFIG`, see [configuration](configuration.md)).
 
 Both listeners are published on the loopback interface of the machine only, and never listen on an instance network ([ADR 0025](decisions/0025-operator-and-main-agent-off-the-instance-networks.md)). Their tokens are in the hub's data volume (`/var/lib/zephyros/operator.token` and `main-agent.token`, mode 0600) and expire after 90 days by default. To replace one, before or after it expires:

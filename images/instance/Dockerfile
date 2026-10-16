@@ -1,8 +1,8 @@
 # The instance image of Zephyros: the upstream Hermes Agent image, pinned by the digest of its
-# multi-architecture index (release v0.21.6, upstream commit 818c13be), with four additions:
+# multi-architecture index (release v0.21.6, upstream commit 818c13be), with five additions:
 # a managed-scope policy, a seed configuration, an entrypoint that starts one Hermes process
-# as a non-root user without the upstream supervisor, and the helper with which it starts a new
-# session when the operator asks for one. Each turn is one container of this image
+# as a non-root user without the upstream supervisor, the helper with which it starts a new
+# session when the operator asks for one, and the base instruction of the agent. Each turn is one container of this image
 # (ADR 0016): `--oneshot=<prompt> --continue`, see src/zephyros/adapters/hermes/engine.py.
 FROM nousresearch/hermes-agent@sha256:9774f4f39a9bb8c2f68ce728ed5e99ddbad282163be56764afacf88ed952b784
 
@@ -14,6 +14,9 @@ COPY --chmod=0644 managed.yaml /etc/hermes/config.yaml
 COPY --chmod=0644 seed.yaml /opt/zephyros/seed.yaml
 COPY --chmod=0755 entrypoint.sh /opt/zephyros/entrypoint.sh
 COPY --chmod=0644 new_session.py /opt/zephyros/new_session.py
+# The base instruction of every turn (ADR 0034): the entrypoint hands it to Hermes, which adds it
+# to the system prompt of each call, out of the conversation it keeps.
+COPY --chmod=0644 instructions.md /opt/zephyros/instructions.md
 
 # The work volume. A new named volume mounted here takes this owner, so the turn can write it.
 RUN mkdir -p /work && chown 10000:10000 /work

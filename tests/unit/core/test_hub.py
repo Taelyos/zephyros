@@ -48,8 +48,10 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
         return {spec.name for spec in env.hub.tools_for(env.callers[who])}
 
     reading = {"whoami", "project.list", "project.get", "contract.read", "delivery.status"}
-    assert names("contractor_a") == reading | {"delivery.declare"}
-    assert names("owner_a") == reading | {
+    obstacles = {"obstacle.report", "obstacle.list", "obstacle.read", "obstacle.close"}
+    assert names("contractor_a") == reading | obstacles | {"delivery.declare"}
+    assert names("owner_a") == reading | obstacles | {
+        "obstacle.answer",
         "contract.pending",
         "contract.propose",
         "contract.approve",
@@ -65,8 +67,10 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
         "log.verify",
         "acceptance.put",
         "delivery.declare",
+        "obstacle.report",
     }
-    assert names("operator") == set(TOOL_SPECS) - {"delivery.declare"}  # only the Contractor
+    # only an instance reports an obstacle; only the Contractor declares a delivery
+    assert names("operator") == set(TOOL_SPECS) - {"delivery.declare", "obstacle.report"}
 
 
 def test_a_tool_is_found_by_its_name_or_its_mcp_name(env: Env) -> None:
