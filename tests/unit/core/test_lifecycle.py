@@ -858,7 +858,7 @@ class Briefer:
     def brief(self, project_id: str, side: Side) -> Briefing | None:
         if project_id != PROJECT or side is not CONTRACTOR or self.told:
             return None
-        return Briefing(self.text, ("OB-001",), ())
+        return Briefing(self.text, ("OB-001",), (), (1,))
 
     def briefed(self, project_id: str, briefing: Briefing) -> None:
         self.told.append((project_id, briefing))

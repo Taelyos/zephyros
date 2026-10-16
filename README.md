@@ -199,8 +199,11 @@ What holds and what does not, in version 0.2.0:
   ([ADR 0021](docs/decisions/0021-the-ladder-waits-for-a-ready-contract.md),
   [ADR 0023](docs/decisions/0023-a-decision-is-awaited-from-whoever-takes-it.md)).
 - **An answer to an obstacle can still tell the Contractor what a test checks.** The hub refuses
-  an answer that copies a long passage of an acceptance test it keeps, not one that says it in
-  other words ([ADR 0034](docs/decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)).
+  an answer that copies 160 characters or more of an acceptance test it keeps, or a short test
+  whole, not one that says it in other words, splits it, or quotes a test under 40 characters.
+  It compares the current version of each test only (the hub keeps no earlier one), and not the
+  output of a run, which the Owner side reads in its report
+  ([ADR 0034](docs/decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)).
 - **The log anchor is a file next to the database.** It detects a database replaced or cut on its
   own, but whoever can write the hub's data directory can forge both the log and the anchor; the
   anchor belongs on another medium when that matters. A lost anchor keeps the log verification

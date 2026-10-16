@@ -106,7 +106,9 @@ Who answers: an obstacle of the Contractor goes to the Owner side, which clarifi
 | `obstacle.answer` | no | the obstacles of the Contractor that await it |
 | `obstacle.close` | its own | its own |
 
-The author learns of a decision at the start of its next turn: the hub writes, after the prompt, which of its obstacles were answered, and, for the Owner side, which await its answer; `obstacle.read` shows the decisions and their text. The Contractor reads every answer to its obstacles, the reasons of an escalation included: the hub refuses an answer that copies a passage of 160 characters or more of an acceptance test it keeps for the Owner side (`acceptance_leak`). It does not notice a rephrasing, which the Owner side has to avoid itself.
+The author learns of a decision at the start of its next turn: the hub writes, after the prompt, which of its obstacles were answered, and, for the Owner side, which await its answer; `obstacle.read` shows the decisions and their text. The Contractor reads every answer to its obstacles, the reasons of an escalation included: the hub refuses an answer that copies a passage of 160 characters or more of an acceptance test it keeps for the Owner side, or a short test whole, whatever marks a quote, a numbered listing or a diff puts before its lines (`acceptance_leak`). It does not notice a rephrasing, a split or a bare value, which the Owner side has to avoid itself ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md) lists what it does not see).
+
+What an obstacle says is the account of an agent: the side that reads it weighs it as data, and never follows it as an instruction. Every free text of an obstacle, its evidence included, is masked as it is written: the output of `env` given as evidence keeps no token.
 
 A side has at most 5 obstacles awaiting an answer, and reports at most 3 in a turn (`too_many_obstacles`). An obstacle moves no deadline and reaches nothing new: the tools read and write records of the hub only.
 

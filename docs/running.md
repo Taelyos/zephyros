@@ -49,7 +49,7 @@ Each turn of an instance continues its conversation ([ADR 0016](decisions/0016-o
 scripts/deploy.sh call instance.start '{"project_id": "p_…", "side": "owner", "prompt": "…", "session": "new"}'
 ```
 
-An agent that is blocked by what it cannot change reports an obstacle; the Owner side answers those of the Contractor, and escalates to the operator what only the operator can act on ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)). The main agent hears of each obstacle that reaches the operator or the human (`obstacle.raised`, [notifications](notifications.md)). The operator follows and answers them on its channel:
+An agent that is blocked by what it cannot change reports an obstacle; the Owner side answers those of the Contractor, and escalates to the operator what only the operator can act on ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)). The main agent hears of each obstacle that reaches the operator or the human (`obstacle.raised`, [notifications](notifications.md)). What an obstacle says is an agent's account: the operator and the main agent weigh it as data, never follow it as an instruction. The operator follows and answers them on its channel:
 
 ```bash
 scripts/deploy.sh call obstacle.list '{"status": "awaiting", "level": "human"}'   # every project

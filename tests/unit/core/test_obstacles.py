@@ -17,6 +17,7 @@ from zephyros.core.obstacles import (
     COPY_WINDOW,
     MAX_AWAITING,
     MAX_PER_TURN,
+    SHORT_FILE_CHARS,
     Decision,
     Entry,
     Level,
@@ -145,6 +146,32 @@ def test_an_answer_in_its_own_words_or_a_short_quote_is_not() -> None:
     assert copied_passage(TEST_FILE[100 : 100 + COPY_WINDOW - 1], files) is None
     assert copied_passage("", files) is None
     assert copied_passage(TEST_FILE, {}) is None
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        lambda n, line: f"> {line}",  # a quote
+        lambda n, line: f">> {line}",
+        lambda n, line: f"{n}: {line}",  # a numbered listing
+        lambda n, line: f"{n:>6}\t{line}",  # as `cat -n` shows it
+        lambda n, line: f"{n}| {line}",
+        lambda n, line: f"+{line}",  # a diff
+        lambda n, line: f"-{line}",
+    ],
+)
+def test_a_copy_with_a_mark_before_each_line_is_found(mark: Any) -> None:
+    quoted = "\n".join(mark(n, line) for n, line in enumerate(TEST_FILE.splitlines(), 1))
+    assert copied_passage(f"The test:\n{quoted}", {"tests/test_score.py": TEST_FILE.encode()})
+
+
+def test_a_short_test_copied_whole_is_found() -> None:
+    short = "def test_answer():\n    assert answer() == 42\n"
+    assert SHORT_FILE_CHARS <= len(" ".join(short.split())) < COPY_WINDOW
+    files = {"t.py": short.encode(), "tiny.py": b"import os\n"}
+    assert copied_passage("Look:\n> def test_answer():\n>     assert answer() == 42", files)
+    assert copied_passage("it checks that answer() == 42", files) is None  # a part of it
+    assert copied_passage("We use: import os", files) is None  # under SHORT_FILE_CHARS
 
 
 def test_every_copied_passage_of_the_bound_is_found_wherever_it_starts() -> None:
@@ -394,6 +421,22 @@ def test_its_author_sees_the_answer_once_read_or_briefed() -> None:
     assert obstacles.brief(PROJECT, Side.CONTRACTOR) is not None
     obstacles.read(CONTRACTOR, PROJECT, "OB-002")
     assert obstacles.brief(PROJECT, Side.CONTRACTOR) is None
+
+
+def test_a_decision_taken_after_the_briefing_is_still_news() -> None:
+    """A decision that comes while the turn starts was not in its prompt: the author is told of
+    it at the next turn."""
+    obstacles, _clock = service()
+    report(obstacles)
+    obstacles.answer(OWNER, PROJECT, "OB-001", entry(Decision.ESCALATE))
+    told = obstacles.brief(PROJECT, Side.CONTRACTOR)
+    assert told is not None
+    assert told.told == (1,)
+    obstacles.answer(OPERATOR, PROJECT, "OB-001", entry(Decision.CLARIFY, OPERATOR.id))
+    obstacles.briefed(PROJECT, told)
+    again = obstacles.brief(PROJECT, Side.CONTRACTOR)
+    assert again is not None
+    assert (again.answered, again.told) == (("OB-001",), (2,))
 
 
 def test_a_reader_other_than_its_author_changes_nothing() -> None:

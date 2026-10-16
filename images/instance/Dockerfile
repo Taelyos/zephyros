@@ -2,8 +2,9 @@
 # multi-architecture index (release v0.21.6, upstream commit 818c13be), with five additions:
 # a managed-scope policy, a seed configuration, an entrypoint that starts one Hermes process
 # as a non-root user without the upstream supervisor, the helper with which it starts a new
-# session when the operator asks for one, and the base instruction of the agent. Each turn is one container of this image
-# (ADR 0016): `--oneshot=<prompt> --continue`, see src/zephyros/adapters/hermes/engine.py.
+# session when the operator asks for one, and the base instruction of the agent. Each turn is
+# one container of this image (ADR 0016): `--oneshot=<prompt> --continue`, see
+# src/zephyros/adapters/hermes/engine.py.
 FROM nousresearch/hermes-agent@sha256:9774f4f39a9bb8c2f68ce728ed5e99ddbad282163be56764afacf88ed952b784
 
 # /opt/data, the Hermes home, is a volume of the upstream image (owned by 10000, mode 0700), so

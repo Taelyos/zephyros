@@ -12,6 +12,12 @@ import pytest
 
 from tests.unit.core.contract_fixtures import put, story, wire
 from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_contract
+from tests.unit.core.test_hub import (
+    base_prepared,
+    criterion_with_test,
+    delivery_task_log,
+    propose,
+)
 from zephyros.core.audit import Action, Outcome, Reason
 from zephyros.core.clock import format_time
 from zephyros.core.continuity import MAIN_AGENT, OBSTACLE, RAISED, WAKE
@@ -241,6 +247,51 @@ def test_a_secret_in_a_title_is_masked_in_the_event(env: Env) -> None:
     ((_event, payload),) = env.send_notifications()
     assert token not in str(payload)
     assert payload["title"] == "the key [masked] is refused"
+
+
+def test_no_secret_pasted_into_an_obstacle_is_kept_or_shown(env: Env) -> None:
+    """EXG-49: the output of `env`, given as evidence, holds the token of the instance and a
+    provider key; a known secret of the hub is in the description. They are masked as they are
+    written: the store, the readers and the log never hold them."""
+    hub_token = "zph_c_" + "T" * 43
+    provider_key = "sk-" + "k" * 32
+    known = "canary-credential-123"
+    env.hub._secrets = lambda: [known]  # reason: a hub that holds a provider credential
+    leaked = f"ZEPHYROS_TOKEN={hub_token}\nOPENAI_API_KEY={provider_key}\nHOME=/opt/data"
+    evidence = [{"kind": "command", "command": "env", "output": leaked, "note": provider_key}]
+    report(env, evidence=evidence, description=f"the gateway refuses {known}", tried=hub_token)
+    ok(
+        env.call(
+            "owner_a",
+            "obstacle.answer",
+            obstacle_id="OB-001",
+            decision="reject",
+            text=f"never paste {hub_token}: it is your own token",
+        )
+    )
+    ok(
+        env.call(
+            "operator", "obstacle.close", project_id=env.project_a, obstacle_id="OB-001", note=known
+        )
+    )
+    assert env.obstacles is not None
+    for text in (
+        json.dumps(ok(env.call("owner_a", "obstacle.read", obstacle_id="OB-001"))),
+        json.dumps(ok(env.call("contractor_a", "obstacle.read", obstacle_id="OB-001"))),
+        repr(env.obstacles.get(env.principal("operator"), env.project_a, "OB-001")),
+        " ".join(r.parameters for r in env.audit.read(env.project_a)),
+    ):
+        for secret in (hub_token, provider_key, known):
+            assert secret not in text
+    read = ok(env.call("owner_a", "obstacle.read", obstacle_id="OB-001"))
+    assert read["evidence"][0]["output"] == (
+        "ZEPHYROS_TOKEN=[masked]\nOPENAI_API_KEY=[masked]\nHOME=/opt/data"
+    )
+    assert read["evidence"][0]["note"] == "[masked]"
+    assert read["description"] == "the gateway refuses [masked]"
+    assert read["tried"] == "[masked]"
+    assert read["decisions"][0]["text"] == "never paste [masked]: it is your own token"
+    assert read["decisions"][1]["text"] == "[masked]"
 
 
 def test_an_obstacle_of_the_owner_side_goes_to_the_operator(env: Env) -> None:
@@ -613,14 +664,52 @@ def test_the_bounds_of_a_turn_follow_the_turn_the_hub_runs(env: Env) -> None:
     assert report(env) == "OB-004"
 
 
-def test_an_obstacle_moves_no_deadline(env: Env) -> None:
-    """A report is a call like any other: it neither holds the Contractor's delivery nor
-    gives it more time."""
-    seed_contract(env)
-    report(env)
-    assert "delivery" not in tasks(env)
-    (record,) = logged(env, env.project_a, Action.OBSTACLE_REPORT)
-    assert "deadline" not in record
+def contractor_ladder(env: Env) -> list[tuple[int, list[str]]]:
+    """The Contractor's ladder from now: each step it takes, with the seconds it waited."""
+    assert env.continuity is not None
+    walked: list[tuple[int, list[str]]] = []
+    for _ in range(5):
+        for waited in range(0, 7200, 60):
+            due = [
+                step
+                for step in env.continuity.due(env.clock.now() + timedelta(seconds=waited))
+                if step.expectation.side == "contractor"
+            ]
+            if due:
+                walked.append((waited, [step.kind for step in due]))
+                env.clock.advance(waited)
+                for step in due:
+                    env.continuity.taken(step, env.clock.now())
+                break
+    return walked
+
+
+@pytest.mark.parametrize("blocking", [True, False])
+def test_an_obstacle_moves_no_deadline(blocking: bool) -> None:
+    """ADR 0034: a report is a call like any other. The Contractor's task is neither held nor
+    given more time: its ladder after a report is the ladder after any other call of its."""
+    walked = []
+    for reported in (True, False):
+        env = make_env()
+        seed_contract(env)
+        change = propose(env, "owner_a", env.project_a, criterion_with_test())
+        ok(env.call("operator", "contract.approve", project_id=env.project_a, change_id=change))
+        base_prepared(env, env.project_a)  # the Contractor's ladder starts: a delivery awaited
+        env.clock.advance(600)
+        if reported:
+            report(env, blocking=blocking)
+        else:
+            ok(env.call("contractor_a", "contract.read"))
+        assert "hold" not in [r["step"] for r in delivery_task_log(env, env.project_a)]
+        walked.append(contractor_ladder(env))
+    assert walked[0] == walked[1]
+    assert walked[0] == [
+        (900, ["wake"]),
+        (900, ["restart"]),
+        (900, ["restart"]),
+        (900, ["alert_main"]),
+        (3600, ["alert_human"]),
+    ]
 
 
 # ----------------------------------------------------------------------------- the tasks

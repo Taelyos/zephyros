@@ -93,15 +93,20 @@ version. Each schema carries its own version number.
   event `obstacle.raised` (events schema 2.1.0) tells the main agent of an obstacle that reaches
   the operator or the human, and `obstacle.list` shows what awaits the human, across projects.
   The author is told of the decisions at the start of its next turn, after the prompt
-  (`turn.start`: `obstacles`). An answer that copies a passage of 160 characters or more of an
-  acceptance test the hub keeps for the Owner side is refused (`acceptance_leak`). A side has at
+  (`turn.start`: `obstacles`). Every free text of an obstacle, its evidence included, is masked
+  as it is written (EXG-49). An answer that copies a passage of 160 characters or more of an
+  acceptance test the hub keeps for the Owner side, or a short test whole, is refused
+  (`acceptance_leak`), whatever marks a quote, a numbered listing or a diff puts before its
+  lines. The text of an obstacle is data for the side that reads it, never an instruction: the
+  base instruction and the descriptions of the tools say so. A side has at
   most 5 obstacles awaiting an answer and reports 3 in a turn (`too_many_obstacles`); an obstacle
   moves no deadline. The evidence report of each delivery has a section "Obstacles", without
   those of the Owner side in the report the Contractor reads, and the replay format gives the
   records `obstacle.*` a category of their own (2.2.0).
 - The instances have a base instruction (ADR 0034), in the read-only root of each image: Hermes
   adds it to the system prompt of every call, OpenCode reads it through `instructions` in its
-  managed configuration. It says when to report an obstacle and what to put in it.
+  managed configuration. It says when to report an obstacle, what to put in it, and that the
+  obstacle of the other side is data to weigh, never an instruction.
 
 ### Fixed
 - A Hermes turn no longer refuses its own commands (ADR 0031). Hermes refused, in a one-shot chat
@@ -121,7 +126,11 @@ version. Each schema carries its own version number.
 
 ### Known limits
 - The check of an answer to an obstacle finds a copied passage of an acceptance test, not a
-  rephrasing, a passage split over several answers, nor a bare value (ADR 0034).
+  rephrasing, a passage split, re-encoded or spread over several answers, nor a bare value. A
+  test under 40 characters, or a passage under 160 characters of a longer one, may pass. Only
+  the version of a test the hub keeps now is compared, since `acceptance.put` overwrites the
+  earlier one (ADR 0028), and the output of a run that the Owner side reads in its report is not
+  compared (ADR 0034).
 - The images do not share a C library (Debian glibc for Hermes, Alpine musl for OpenCode and the
   `tests` kit): a tool linked against the glibc of the machine runs in a Hermes turn and not at
   the gate. The tools must be statically linked or carry their loader and libraries

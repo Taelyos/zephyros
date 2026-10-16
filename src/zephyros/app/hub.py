@@ -269,13 +269,16 @@ def build_hub(
         control = instance_factory(tokens, audit, clock, notifier, ladders, obstacles)
     deliveries = None
     hub_box: list[Hub] = []
+    known = credentials
+
+    def secrets() -> list[str]:
+        return known.secrets() if known is not None else []
 
     def events(event: str, payload: Mapping[str, object]) -> None:
         if hub_box:
             hub_box[0].notified(event, payload)
 
     if delivery is not None:
-        known = credentials
         deliveries = DeliveryService(
             GitDeliveryArea(delivery.staging_root),
             delivery.runner,
@@ -289,7 +292,7 @@ def build_hub(
             timeout_seconds=delivery.timeout_seconds,
             protected_paths=delivery.protected_paths,
             version="Zephyros " + __version__,
-            secrets=lambda: known.secrets() if known is not None else [],
+            secrets=secrets,
             events=events,
             rejections_alert=rejections_alert,
             simulation=simulation,
@@ -309,6 +312,7 @@ def build_hub(
         refusals_per_minute=refusals_per_minute,
         simulation=simulation,
         obstacles=obstacles,
+        secrets=secrets,
     )
     hub_box.append(hub)
     hub.check_tasks()

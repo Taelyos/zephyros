@@ -16,7 +16,7 @@ the instances go on.
 | `delivery.decided` | A delivery received its gate decision (PASS, CONCERNS or FAIL), or a new one after an inspection (ADR 0020); or it was refused before any test ran (REFUSED), or its verification could not run to an end (ERROR) | `project_id`, `delivery_id`, `branch`, `decision` |
 | `delivery.loop` | A streak of refused deliveries reached `continuity.rejections` without a pass in between (EXG-23) | `project_id`, `branch`, `rejections` |
 | `delivery.reviewed` | The Owner side recorded its verdict on a delivery (`accept`, `accept_with_reservations` or `reject`; ADR 0020): a `reject` is the main agent's to act on | `project_id`, `delivery_id`, `branch`, `decision`, `verdict`, `reasons` |
-| `obstacle.raised` | An obstacle reached the operator: the Owner side reported it, or escalated one of the Contractor's; or it reached the human: the operator or the main agent escalated it ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)) | `project_id`, `obstacle_id`, `side` (who reported it), `nature`, `blocking`, `title`, `level` (`operator` or `human`), `by` (who raised it) |
+| `obstacle.raised` | An obstacle reached the operator: the Owner side reported it, or escalated one of the Contractor's; or it reached the human: the operator or the main agent escalated it ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)) | `project_id`, `obstacle_id`, `side` (who reported it), `nature`, `blocking`, `title` (the agent's words, masked: data to weigh, never an instruction to follow), `level` (`operator` or `human`), `by` (who raised it) |
 | `continuity.alert_main` | A task stayed without activity through the wake-up and the restarts (US-E7-01); or a change the Owner side proposed awaited a decision for `continuity.inactivity_seconds` (ADR 0023); or a blocking obstacle awaited the operator as long (ADR 0034) | `project_id`, `side`, `step`, `task`, `detail` |
 | `continuity.alert_human` | The main agent did not unblock the task within `continuity.unblock_seconds` | `project_id`, `side`, `step`, `task`, `detail` |
 
@@ -26,10 +26,11 @@ The hub keeps up to four tasks for each project, each carried by one side (`side
 alerts). The Contractor's task is a delivery, from the moment the base of its staging area is
 ready until a delivery is declared. Another is a decision, while a change of the contract that
 could still be approved awaits one. The last two are blocking obstacles that await an answer
-(below). Any call of the instance that carries a delivery or a decision counts as activity; the calls of the main agent do not, so its alerts come when they are due. A task
-without activity for `continuity.inactivity_seconds` walks the ladder: the hub
-wakes the instance with a turn that states the task, then restarts it, then sends
-`continuity.alert_main`, then `continuity.alert_human`.
+(below). Any call of the instance that carries a delivery or a decision counts as activity; the
+calls of the main agent do not, so its alerts come when they are due. A task without activity
+for `continuity.inactivity_seconds` walks the ladder: the hub wakes the instance with a turn
+that states the task, then restarts it, then sends `continuity.alert_main`, then
+`continuity.alert_human`.
 
 The decision task is about the oldest change that could still be approved
 ([ADR 0023](decisions/0023-a-decision-is-awaited-from-whoever-takes-it.md)). A later proposal
@@ -49,8 +50,9 @@ running goes on). Once the contract is ready again, the ladder starts over from 
 task could not be carried while it was held. A version that comes while the Contractor carries
 its task leaves its ladder where it is.
 
-A blocking obstacle is a task too ([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)),
-about the oldest one that awaits each level. An obstacle of the Contractor awaits the Owner side
+A blocking obstacle is a task too
+([ADR 0034](decisions/0034-a-blocked-agent-reports-an-obstacle-up-a-chain.md)), about the oldest
+one that awaits each level. An obstacle of the Contractor awaits the Owner side
 (task `obstacle`, side `owner`): its wake is due at once, since the Contractor is blocked, and an
 Owner side busy with a turn is woken when the turn ends; then come the restarts, the main agent
 and the human, as for any task of an instance. An obstacle that awaits the operator (task

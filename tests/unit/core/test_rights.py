@@ -53,7 +53,7 @@ EXPECTED = {
     "obstacle.list": ("any", "any", "own", "own"),
     "obstacle.read": ("any", "any", "own", "own"),
     "obstacle.answer": ("any", "any", "own", "none"),
-    "obstacle.close": ("any", "any", "own", "own"),
+    "obstacle.close": ("any", "none", "own", "own"),
 }
 KINDS = (
     PrincipalKind.OPERATOR,

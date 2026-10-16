@@ -78,10 +78,17 @@ COPY_STRIDE = 40
 COPIED_CHARS = COPY_WINDOW + COPY_STRIDE
 """A passage of an acceptance test this long, whitespace aside, is always found in an answer;
 a shorter one may be, from COPY_WINDOW characters."""
+SHORT_FILE_CHARS = 40
+"""A file shorter than COPY_WINDOW, and at least this long, is found when copied whole."""
 
 OBSTACLE_ID = r"OB-[0-9]{3,6}"
 _OBSTACLE_ID = re.compile(OBSTACLE_ID)
 _WHITESPACE = re.compile(r"\s+")
+_LINE_PREFIX = re.compile(
+    r"^[ \t]*(?:>[ \t]?)*[ \t]*(?:\d+(?::|\||\t| {2,}))?[ \t]*(?:[+-](?![+-]))?", re.MULTILINE
+)
+"""What a quote (`> `), a numbered listing (`12: `, `12|`, `12<tab>`) or a diff (`+`, `-`) puts
+before a line."""
 
 
 class Status(StrEnum):
@@ -345,26 +352,36 @@ def _check_path(path: str, where: str) -> None:
 
 # ----------------------------------------------------------------------------- copies
 def _normalised(text: str) -> str:
-    return _WHITESPACE.sub(" ", text).strip()
+    """The text as the check compares it: the marks before each line taken off, and every run
+    of whitespace one space."""
+    return _WHITESPACE.sub(" ", _LINE_PREFIX.sub("", text)).strip()
 
 
 def copied_passage(text: str, files: Mapping[str, bytes]) -> str | None:
     """The first acceptance test file, by path, of which `text` copies a passage of
-    COPIED_CHARS characters or more, whitespace aside; None when it copies none.
+    COPIED_CHARS characters or more, or the whole when the file is shorter than COPY_WINDOW and
+    at least SHORT_FILE_CHARS long; None when it copies none. Both are compared without the
+    marks a quote, a numbered listing or a diff puts before a line, whitespace aside.
 
     The windows of the text taken every COPY_STRIDE characters, COPY_WINDOW long, are looked
-    for in each file: a copied passage of COPIED_CHARS characters holds one of them whole. A
-    passage rephrased, split, re-encoded or given over several answers is not found."""
+    for in each file: a copied passage of COPIED_CHARS characters holds one of them whole. Not
+    found: a passage rephrased, split, re-encoded, marked otherwise or given over several
+    answers; a bare value; a file under SHORT_FILE_CHARS characters."""
     answer = _normalised(text)
-    if len(answer) < COPY_WINDOW:
-        return None
-    windows = {
-        answer[start : start + COPY_WINDOW]
-        for start in range(0, len(answer) - COPY_WINDOW + 1, COPY_STRIDE)
-    }
+    windows = (
+        {
+            answer[start : start + COPY_WINDOW]
+            for start in range(0, len(answer) - COPY_WINDOW + 1, COPY_STRIDE)
+        }
+        if len(answer) >= COPY_WINDOW
+        else set()
+    )
     for path in sorted(files):
         content = _normalised(files[path].decode("utf-8", errors="replace"))
-        if len(content) >= COPY_WINDOW and any(window in content for window in windows):
+        if len(content) >= COPY_WINDOW:
+            if any(window in content for window in windows):
+                return path
+        elif len(content) >= SHORT_FILE_CHARS and content in answer:
             return path
     return None
 
@@ -503,6 +520,9 @@ class Briefing:
     author has been told of them."""
     awaiting: tuple[str, ...]
     """The obstacles that await an answer of the side."""
+    told: tuple[int, ...] = ()
+    """For each of `answered`, how many decisions it had when the briefing was written: those
+    are the ones the turn is told of, and no decision taken since."""
 
     @property
     def named(self) -> tuple[str, ...]:
@@ -661,7 +681,8 @@ class ObstacleService:
         """What to tell a turn of `side` that starts: the decisions on its obstacles it has not
         been told of, and, for the Owner side, the obstacles that await its answer."""
         obstacles = self._store.of_project(project_id)
-        answered = [item.id for item in obstacles if item.side is side and item.unseen]
+        unseen = [item for item in obstacles if item.side is side and item.unseen]
+        answered = [item.id for item in unseen]
         awaiting = [
             item
             for item in obstacles
@@ -681,15 +702,21 @@ class ObstacleService:
                 f"Obstacles of the Contractor await your answer: {_named(ids)}; read them with "
                 "obstacle.read and answer with obstacle.answer."
             )
-        return Briefing(" ".join(parts), tuple(answered), tuple(item.id for item in awaiting))
+        return Briefing(
+            " ".join(parts),
+            tuple(answered),
+            tuple(item.id for item in awaiting),
+            tuple(len(item.entries) for item in unseen),
+        )
 
     def briefed(self, project_id: str, briefing: Briefing) -> None:
-        """The turn started with `briefing`: its author has been told of those decisions."""
+        """The turn started with `briefing`: its author has been told of the decisions it named,
+        and of none taken since it was written."""
         with self._lock:
-            for text_id in briefing.answered:
+            for text_id, count in zip(briefing.answered, briefing.told, strict=True):
                 obstacle = self._store.get(project_id, parse_obstacle_id(text_id))
-                if obstacle is not None and obstacle.seen < len(obstacle.entries):
-                    self._store.put(replace(obstacle, seen=len(obstacle.entries)))
+                if obstacle is not None and obstacle.seen < count:
+                    self._store.put(replace(obstacle, seen=count))
 
 
 def serialise(obstacle: Obstacle) -> str:

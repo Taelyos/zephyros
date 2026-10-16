@@ -68,6 +68,7 @@ def test_a_tool_is_listed_to_a_caller_only_if_the_caller_may_use_it(env: Env) ->
         "acceptance.put",
         "delivery.declare",
         "obstacle.report",
+        "obstacle.close",  # its author's or the operator's
     }
     # only an instance reports an obstacle; only the Contractor declares a delivery
     assert names("operator") == set(TOOL_SPECS) - {"delivery.declare", "obstacle.report"}

@@ -81,7 +81,7 @@ PERMISSIONS: Mapping[Action, Mapping[PrincipalKind, Scope]] = MappingProxyType(
         Action.OBSTACLE_LIST: _row(_ALL, _ALL, _OWN, _OWN),
         Action.OBSTACLE_READ: _row(_ALL, _ALL, _OWN, _OWN),
         Action.OBSTACLE_ANSWER: _row(_ALL, _ALL, _OWN, _NO),
-        Action.OBSTACLE_CLOSE: _row(_ALL, _ALL, _OWN, _OWN),
+        Action.OBSTACLE_CLOSE: _row(_ALL, _NO, _OWN, _OWN),
     }
 )
 
