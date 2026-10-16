@@ -129,7 +129,8 @@ class SandboxRunner:
             if isinstance(started, dict) and started.get("test") in request.tests:
                 at = started.get("at")
                 ran = max(0.0, duration - float(at)) if isinstance(at, int | float) else duration
-                timeouts[str(started["test"])] = TimeLimit("run", round(ran, 1))
+                # rounded, never past the run it was part of
+                timeouts[str(started["test"])] = TimeLimit("run", min(round(ran, 1), duration))
         else:
             _check_canaries(canaries, outcomes)
             raw = answer.get("timeouts")

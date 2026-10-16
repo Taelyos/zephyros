@@ -306,6 +306,8 @@ def test_a_run_stopped_at_its_limit_names_the_test_under_way() -> None:
     assert set(result.outcomes.values()) == {Outcome.NOT_RUN}
     assert result.stopped_at == 300
     assert dict(result.timeouts) == {"test_b.py::test_b": TimeLimit("run", 299.5)}
+    edge = _answering(timed_out=True, duration_seconds=10.152, started={"test": TESTS[0], "at": 0})
+    assert runner_for(edge).run(request_()).timeouts[TESTS[0]].seconds == 10.152
 
 
 def test_a_run_stopped_with_no_test_under_way_names_none() -> None:
