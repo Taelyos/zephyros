@@ -22,6 +22,8 @@ from zephyros.adapters.filter.journal import MemoryJournal
 from zephyros.adapters.filter.sandbox import (
     MANIFEST,
     parse_outcomes,
+    parse_started,
+    parse_timeouts,
     read_archive,
     run_sandbox,
     sweep_sandboxes,
@@ -572,3 +574,90 @@ def test_the_route_refuses_a_body_past_the_limit(monkeypatch: pytest.MonkeyPatch
     response = rig.client.post("/sandbox", content=good_tar() + b"\0" * 1024, headers=TAR)
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "too_large"
+
+
+# ----------------------------------------------------------------------------- time limits
+def signed_line(mark: str, payload: object, nonce: str = NONCE) -> str:
+    text = json.dumps(payload, sort_keys=True)
+    return f"{mark}{text} {hmac.new(nonce.encode(), text.encode(), hashlib.sha256).hexdigest()}"
+
+
+TIMEOUT = {"phase": "setup", "seconds": 612.3, "limit": 600}
+
+
+def test_the_time_limits_a_test_reached_are_read_from_the_signed_line() -> None:
+    """The kit says which tests ended on a time limit of their own, inside the signed
+    payload, with the phase, the duration and the limit."""
+    payload = {
+        "outcomes": {"test_a.py::test_a": "error"},
+        "deselected": [],
+        "timeouts": {
+            "test_a.py::test_a": TIMEOUT,
+            "test_b.py::test_b": {"phase": "lunch", "seconds": 1},
+            "test_c.py::test_c": TIMEOUT,
+        },
+    }
+    log = f"ZEPHYROS-RUN {NONCE}\n" + signed_line("ZEPHYROS-OUTCOMES ", payload)
+    assert parse_timeouts(log, TESTS) == {
+        "test_a.py::test_a": {"phase": "setup", "seconds": 612.3, "limit": 600.0}
+    }
+    forged = log[:-1] + ("0" if log[-1] != "0" else "1")
+    assert parse_timeouts(forged, TESTS) == {}
+    assert parse_timeouts("nothing", TESTS) == {}
+
+
+def test_the_test_under_way_is_the_last_one_the_kit_signed_as_started() -> None:
+    log = "\n".join(
+        [
+            "",
+            f"ZEPHYROS-RUN {NONCE}",
+            signed_line("ZEPHYROS-STARTED ", {"test": "test_a.py::test_a", "at": 0.4}),
+            signed_line("ZEPHYROS-STARTED ", {"test": "test_b.py::test_b", "at": 30.2}),
+            # a subprocess can write a line, not sign one
+            'ZEPHYROS-STARTED {"at": 31, "test": "test_a.py::test_a"} ' + "0" * 64,
+            signed_line("ZEPHYROS-STARTED ", {"test": "not_asked.py::t", "at": 32}),
+            signed_line("ZEPHYROS-STARTED ", {"test": "test_a.py::test_a", "at": -1}),
+            "... the output of the test, and no outcome line: the run was stopped",
+        ]
+    )
+    assert parse_started(log, TESTS) == {"test": "test_b.py::test_b", "at": 30.2}
+    assert parse_started("garbage first\n" + log, TESTS) is None
+    assert parse_started(log + f"\nZEPHYROS-RUN {NONCE}", TESTS) is None
+    assert parse_started("", TESTS) is None
+
+
+def test_a_run_stopped_at_its_limit_says_which_test_was_under_way() -> None:
+    log = "\n".join(
+        [
+            f"ZEPHYROS-RUN {NONCE}",
+            signed_line("ZEPHYROS-STARTED ", {"test": "test_a.py::test_a", "at": 0.5}),
+        ]
+    )
+    answer = SandboxRig(lambda archive: (None, log)).run()
+    assert answer["timed_out"] is True
+    assert answer["started"] == {"test": "test_a.py::test_a", "at": 0.5}
+    assert answer["timeouts"] == {}
+    assert set(answer["outcomes"].values()) == {"not_run"}
+
+
+def test_a_run_that_ended_carries_the_time_limits_of_its_tests() -> None:
+    payload = {
+        "outcomes": {"test_a.py::test_a": "error", "test_b.py::test_b": "passed"},
+        "deselected": [],
+        "timeouts": {"test_a.py::test_a": TIMEOUT},
+    }
+    log = f"ZEPHYROS-RUN {NONCE}\n" + signed_line("ZEPHYROS-OUTCOMES ", payload)
+    answer = SandboxRig(lambda archive: (1, log)).run()
+    assert answer["timeouts"] == {
+        "test_a.py::test_a": {"phase": "setup", "seconds": 612.3, "limit": 600.0}
+    }
+    assert answer["started"] is None
+
+
+def test_a_started_line_after_what_pytest_wrote_on_the_same_line_is_still_read() -> None:
+    """In its classic style pytest writes the name of the file with no line end: the kit begins
+    its line with a newline, and a line that does not begin with the mark is not read."""
+    started = signed_line("ZEPHYROS-STARTED ", {"test": "test_a.py::test_a", "at": 0.5})
+    log = f"ZEPHYROS-RUN {NONCE}\ntest_a.py \n{started}\n"
+    assert parse_started(log, TESTS) == {"test": "test_a.py::test_a", "at": 0.5}
+    assert parse_started(f"ZEPHYROS-RUN {NONCE}\ntest_a.py {started}\n", TESTS) is None

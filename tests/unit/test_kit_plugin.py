@@ -9,12 +9,16 @@ tests/runtime/test_sandbox_runner_conforms.py.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib.util
+import io
+import json
 import marshal
 import os
 import subprocess
 import sys
 import textwrap
+import types
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -293,3 +297,64 @@ def test_the_process_is_made_non_dumpable() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+# ----------------------------------------------------------------------------- time limits
+class _Node:
+    def __init__(self, nodeid: str) -> None:
+        self.nodeid = nodeid
+
+
+def _call(error: BaseException, when: str, duration: float) -> Any:
+    try:
+        raise error
+    except BaseException:  # any exception, as pytest catches it
+        excinfo = pytest.ExceptionInfo.from_current()
+    return types.SimpleNamespace(excinfo=excinfo, when=when, duration=duration)
+
+
+def _signed_payload(kit: ModuleType, line: str, mark: str) -> Any:
+    assert line.startswith(mark)
+    text, _, mac = line[len(mark) :].rpartition(" ")
+    assert mac == hmac.new(kit._NONCE.encode(), text.encode(), hashlib.sha256).hexdigest()
+    return json.loads(text)
+
+
+def test_a_test_that_reaches_a_time_limit_is_named_in_the_signed_line(kit: ModuleType) -> None:
+    """The cause of a test that timed out used to be in its output alone."""
+    kit.OUTCOMES.clear()
+    kit.OUTCOMES.update(dict.fromkeys(["t.py::slow", "t.py::shared", "t.py::other"], "error"))
+    expired = subprocess.TimeoutExpired(["bench", "run"], 600)
+    kit.pytest_exception_interact(_Node("t.py::slow"), _call(expired, "setup", 612.34), None)
+    # a module fixture that timed out is raised again, at once, for the next test using it
+    again = types.SimpleNamespace(
+        excinfo=_call(expired, "setup", 0.0).excinfo, when="setup", duration=0.0
+    )
+    kit.pytest_exception_interact(_Node("t.py::shared"), again, None)
+    kit.pytest_exception_interact(_Node("t.py::other"), _call(ValueError("no"), "call", 1), None)
+    kit.pytest_exception_interact(_Node("t.py::other"), _call(TimeoutError(), "call", 3.0), None)
+    kit.pytest_exception_interact(_Node("x.py::not_asked"), _call(expired, "call", 9), None)
+    payload = _signed_payload(kit, kit._outcomes_line(), kit.MARK)
+    assert payload["timeouts"] == {
+        "t.py::slow": {"phase": "setup", "seconds": 612.3, "limit": 600.0},
+        "t.py::shared": {"phase": "setup", "seconds": 612.3, "limit": 600.0},
+        "t.py::other": {"phase": "call", "seconds": 3.0, "limit": None},
+    }
+    assert payload["outcomes"]["t.py::slow"] == "error"  # the outcome stays the kit's
+
+
+def test_each_test_that_starts_is_signed_at_once(kit: ModuleType) -> None:
+    kit.OUTCOMES.clear()
+    kit.OUTCOMES["t.py::slow"] = "not_run"
+    out = io.StringIO()
+    kit.REAL_OUT.close()
+    setattr(kit, "REAL_OUT", out)  # noqa: B010  # reason: the module is loaded from a file
+    kit.pytest_runtest_logstart("t.py::slow", None)
+    kit.pytest_runtest_logstart("x.py::not_asked", None)
+    lines = [line for line in out.getvalue().splitlines() if line]
+    assert out.getvalue().startswith("\n")  # whole, whatever pytest wrote before it
+    assert len(lines) == 1
+    payload = _signed_payload(kit, lines[0], kit.STARTED_MARK)
+    assert payload["test"] == "t.py::slow"
+    assert payload["at"] >= 0
+    setattr(kit, "REAL_OUT", open(os.devnull, "w"))  # noqa: B010, SIM115  # reason: closed by the fixture

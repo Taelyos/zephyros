@@ -11,7 +11,7 @@ from zephyros.core.masking import MASK
 from zephyros.core.obstacles import Decision, Entry, Level, Obstacle, Status
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery
-from zephyros.core.ports.verification import Outcome
+from zephyros.core.ports.verification import Outcome, TimeLimit
 from zephyros.core.report import (
     INSPECTIONS_HEADING,
     LISTED_OBSTACLES,
@@ -23,6 +23,7 @@ from zephyros.core.report import (
     render,
     with_addendum,
 )
+from zephyros.core.tools import ToolsDigest
 
 TOKEN = "zph_c_" + "Q" * 43
 
@@ -283,3 +284,95 @@ def test_a_report_without_obstacles_says_so_and_a_long_list_is_bounded() -> None
     assert f"| OB-{LISTED_OBSTACLES + 7:03d} |" in text
     assert "| OB-007 |" not in text
     assert "And 7 earlier." in text
+
+
+def test_a_test_that_reached_its_time_limit_reads_timed_out_apart_from_an_error() -> None:
+    """A test over its limit used to read `error`, its cause only in the raw output."""
+    outcomes = {"tests/t.py::test_add": Outcome.ERROR, "tests/t.py::test_sub": Outcome.ERROR}
+    objects = contract(
+        (1, "P0", ("test",), ("tests/t.py::test_add",)),
+        (2, "P1", ("test",), ("tests/t.py::test_sub",)),
+    )
+    text = render(
+        make(
+            outcomes=outcomes,
+            gate=compute_gate(objects, outcomes),
+            timeouts={"tests/t.py::test_add": TimeLimit("setup", 612.3, 600.0)},
+        )
+    )
+    assert "| `tests/t.py::test_add` error (timed out) |" in text
+    assert "| `tests/t.py::test_sub` error |" in text
+    assert (
+        "- `tests/t.py::test_add`: error, **timed out**: its setup reached its limit of 600 s "
+        "after 612 s"
+    ) in text.splitlines()
+    assert "- `tests/t.py::test_sub`: error" in text.splitlines()
+    assert "Time limit reached" not in text
+
+
+def test_a_limit_the_kit_did_not_know_is_said_as_a_limit() -> None:
+    text = render(make(timeouts={"tests/t.py::test_sub": TimeLimit("call", 2.5)}))
+    assert (
+        "- `tests/t.py::test_sub`: failed, **timed out**: its call reached a time limit after 2.5 s"
+    ) in text.splitlines()
+
+
+def test_a_run_stopped_at_its_limit_says_so_and_names_the_test_under_way() -> None:
+    outcomes = dict.fromkeys(("tests/t.py::test_add", "tests/t.py::test_sub"), Outcome.NOT_RUN)
+    objects = contract(
+        (1, "P0", ("test",), ("tests/t.py::test_add",)),
+        (2, "P1", ("test",), ("tests/t.py::test_sub",)),
+    )
+    report = make(
+        outcomes=outcomes,
+        gate=compute_gate(objects, outcomes),
+        timeouts={"tests/t.py::test_sub": TimeLimit("run", 3061.0)},
+        stopped_at=3600,
+    )
+    for text in (render(report), render(report, with_output=False)):
+        assert (
+            "**Time limit reached:** the run was stopped at the limit of the verification, "
+            "3600 s (`verification.timeout_seconds`). Nothing it printed is believed, and every "
+            "test reads not_run. Under way when it stopped: `tests/t.py::test_sub`."
+        ) in text.splitlines()
+        assert (
+            "- `tests/t.py::test_sub`: not_run, **timed out**: under way for about 3061 s when the "
+            "run reached its limit of 3600 s and was stopped"
+        ) in text.splitlines()
+        assert "- `tests/t.py::test_add`: not_run" in text.splitlines()
+    alone = render(make(stopped_at=300, outcomes=outcomes, gate=compute_gate(objects, outcomes)))
+    assert "The kit had signed no test as under way." in alone
+
+
+OLD, NEW = "sha256:" + "a1" * 32, "sha256:" + "0f" * 32
+
+
+def flags_of(text: str) -> str:
+    return text.split("## Flags\n\n", 1)[1].split("\n\n## ", 1)[0]
+
+
+def test_tools_changed_between_two_turns_are_said_so_old_then_new() -> None:
+    """After a fix of the tools, the old fingerprint was flagged and not explained."""
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((OLD, 4), (NEW, 2)))
+    assert flags_of(render(report)) == (
+        "The project tools changed between two turns before this delivery (the fingerprints the "
+        "turns found, in order; the last turns found the tools verified):\n"
+        "\n"
+        f"- `{OLD}` (4 turns) → `{NEW}` (2 turns)"
+    )
+
+
+def test_tools_changed_after_the_last_turn_are_said_apart() -> None:
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((OLD, 1),))
+    assert flags_of(render(report)) == (
+        "The project tools changed after the last turn before this delivery: it was built with "
+        "other tools than the ones it was verified with (the fingerprints the turns found, in "
+        "order, then the verification's):\n"
+        "\n"
+        f"- `{OLD}` (1 turn) → `{NEW}` (the verification)"
+    )
+
+
+def test_turns_that_all_found_the_tools_verified_raise_no_flag() -> None:
+    report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((NEW, 5),))
+    assert flags_of(render(report)) == "None."

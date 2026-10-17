@@ -34,6 +34,19 @@ class InstanceState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class TokenRefusal:
+    """The latest token of an instance that the hub refused (ADR 0016, amended): the operator
+    sees that a turn lost the hub, or that an old token was presented."""
+
+    at: str
+    reason: str
+    """revoked, expired, wrong_source or wrong_endpoint."""
+    token_id: str
+    of_turn: bool
+    """The token was that of the turn under way."""
+
+
+@dataclass(frozen=True, slots=True)
 class InstanceInfo:
     project_id: str
     side: Side
@@ -42,6 +55,7 @@ class InstanceInfo:
     turn_started: str | None = None
     last_turn: str | None = None
     """How the latest turn or start ended: completed, failed, timeout, silent, stopped, ..."""
+    token_refused: TokenRefusal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +92,11 @@ class InstanceControl(Protocol):
         ...
 
     def status(self, project_id: str, side: Side) -> InstanceInfo: ...
+
+    def token_refused(self, project_id: str, side: Side, token_id: str, reason: str) -> None:
+        """The hub refused a token it issued to the instance: say so in its status and tell
+        the main agent; a turn whose own token was refused has lost the hub, and ends."""
+        ...
 
 
 class NoFreeSubnetError(Exception):

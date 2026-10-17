@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.support.sockets import socket_path
+from tests.support.sockets import free_port, socket_path
 from zephyros.adapters.hermes.engine import HERMES_VERSION
 from zephyros.adapters.opencode.engine import OPENCODE_VERSION
 from zephyros.app import hub as program
@@ -25,12 +25,6 @@ from zephyros.core.lifecycle import TurnEngine
 from zephyros.core.ports.agent_engine import Side
 
 DIGEST = "ghcr.io/example/app@sha256:" + "e" * 64
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
 
 
 def make_config(tmp_path: Path) -> Config:

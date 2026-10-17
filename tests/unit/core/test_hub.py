@@ -22,9 +22,10 @@ from tests.unit.core.hub_fixtures import Env, attach_deliveries, make_env, seed_
 from zephyros.core.audit import Action, Outcome, Reason
 from zephyros.core.contract import PendingChange
 from zephyros.core.hub import NOTIFIED_EVENTS, TOOL_SPECS
+from zephyros.core.ports.agent_engine import Side
 from zephyros.core.principals import OPERATOR, Principal
 from zephyros.core.rights import PERMISSIONS
-from zephyros.core.tokens import Endpoint
+from zephyros.core.tokens import Endpoint, Rejected
 
 
 @pytest.fixture
@@ -514,6 +515,39 @@ def test_the_operator_starts_and_stops_an_instance_through_the_control(env: Env)
     gone = env.call("operator", "instance.status", project_id=env.project_a, side="contractor")
     assert gone.data is not None
     assert gone.data["state"] == "absent"
+
+
+def test_a_refused_token_of_an_instance_reaches_its_status(env: Env) -> None:
+    """A turn that lost its token used to look `turn` and nothing more."""
+    caller = env.callers["contractor_a"]
+    assert env.tokens.revoke(caller.token_id)
+    found = env.hub.identify(
+        env.secrets["contractor_a"],
+        peer_address=env.addresses["contractor_a"],
+        endpoint=Endpoint.AGENT,
+    )
+    assert isinstance(found, Rejected)
+    assert env.instances.refused == [(env.project_a, Side.CONTRACTOR, caller.token_id, "revoked")]
+    status = env.call("operator", "instance.status", project_id=env.project_a, side="contractor")
+    assert status.data is not None
+    refused = status.data["token_refused"]
+    assert isinstance(refused, dict)
+    assert (refused["reason"], refused["token_id"]) == ("revoked", caller.token_id)
+    clean = env.call("operator", "instance.status", project_id=env.project_a, side="owner")
+    assert clean.data is not None
+    assert clean.data["token_refused"] is None
+
+
+def test_a_refusal_that_names_no_instance_reaches_no_instance(env: Env) -> None:
+    assert env.tokens.revoke(env.callers["main"].token_id)
+    for secret, endpoint in (
+        (env.secrets["main"], Endpoint.MAIN_AGENT),
+        ("zph_c_" + "x" * 43, Endpoint.AGENT),
+        ("not a token", Endpoint.AGENT),
+    ):
+        found = env.hub.identify(secret, peer_address="10.200.0.18", endpoint=endpoint)
+        assert isinstance(found, Rejected)
+    assert env.instances.refused == []
 
 
 def test_the_operator_starts_a_turn_in_a_new_session(env: Env) -> None:
@@ -1238,3 +1272,30 @@ def test_acceptance_put_ignores_a_change_that_can_no_longer_be_approved(env: Env
     assert response.data is not None
     assert response.data["named_by_pending"] == {}
     assert response.data["warning"] == _NOT_RUN
+
+
+@pytest.mark.parametrize(
+    ("tool", "field", "extra"),
+    [
+        ("instance.start", "prompt", {"side": "contractor"}),
+        ("delivery.review", "reasons", {"delivery_id": "d1", "verdict": "reject"}),
+    ],
+)
+def test_a_text_over_its_limit_is_refused_with_the_field_the_limit_and_the_length(
+    env: Env, tool: str, field: str, extra: dict[str, str]
+) -> None:
+    """A relaunch and the reasons of a verdict over 4 000 characters used to be refused without
+    saying how long the text was."""
+    response = env.call("operator", tool, project_id=env.project_a, **extra, **{field: "x" * 4321})
+    assert response.failure is not None
+    assert response.failure.reason is Reason.INVALID_REQUEST
+    assert response.failure.message == (
+        f"arguments.{field}: must have at most 4000 characters; it has 4321"
+    )
+    assert env.instances.prompts == []
+
+
+def test_the_page_of_the_tools_gives_the_limit_of_every_prompt_and_of_the_reasons() -> None:
+    page = (Path(__file__).parents[3] / "docs" / "tools.md").read_text(encoding="utf-8")
+    assert "| `instance.start` | `prompt` | 4 000 |" in page
+    assert "| `delivery.review` | `reasons` | 4 000 |" in page

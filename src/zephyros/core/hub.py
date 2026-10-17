@@ -119,6 +119,8 @@ NOTIFIED_EVENTS: Final = ("delivery.decided", "delivery.loop", "delivery.reviewe
 """The events of the delivery loop the main agent is told of (docs/notifications.md)."""
 MASKED_FIELDS: Final = ("title", "description", "tried", "needed")
 """The free texts of a report, masked as they are written (EXG-49)."""
+REASONS_CHARS: Final = 4000
+"""The longest reasons of a verdict on a delivery (`delivery.review`)."""
 OBSTACLE_RAISED: Final = "obstacle.raised"
 """An obstacle reached the operator or the human (ADR 0034, docs/notifications.md)."""
 
@@ -274,7 +276,7 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             Field(
                 "prompt",
                 Text(min_length=1, max_length=MAX_PROMPT, multiline=True),
-                "The first prompt of the turn",
+                f"The first prompt of the turn, {MAX_PROMPT} characters at most, whichever turn",
                 required=True,
             ),
             Field(
@@ -480,8 +482,9 @@ TOOL_SPECS: Mapping[str, ToolSpec] = {
             ),
             Field(
                 "reasons",
-                Text(min_length=1, max_length=4000, multiline=True),
-                "Why: what you checked, what holds, what does not",
+                Text(min_length=1, max_length=REASONS_CHARS, multiline=True),
+                f"Why: what you checked, what holds, what does not; {REASONS_CHARS} characters "
+                "at most",
                 required=True,
             ),
             scoped=True,
@@ -790,6 +793,17 @@ class Hub:
         if isinstance(result, Authenticated):
             return Caller(result.principal, result.record.token_id, peer_address or "", endpoint)
         self._log_authentication_refusal(result, peer_address, endpoint)
+        principal = result.principal
+        if (
+            principal is not None
+            and principal.side is not None
+            and principal.project_id is not None
+            and result.token_id is not None
+        ):
+            # A token the hub issued to an instance, refused: the operator sees it.
+            self._instances.token_refused(
+                principal.project_id, principal.side, result.token_id, result.reason.value
+            )
         return result
 
     def _log_authentication_refusal(
@@ -1486,6 +1500,14 @@ class Hub:
                 "turn_started": info.turn_started,
                 "last_turn": info.last_turn,
                 "address": info.address,
+                "token_refused": None
+                if info.token_refused is None
+                else {
+                    "at": info.token_refused.at,
+                    "reason": info.token_refused.reason,
+                    "token_id": info.token_refused.token_id,
+                    "of_turn": info.token_refused.of_turn,
+                },
             },
             {"project_id": project_id, "side": side.value},
             project_id,

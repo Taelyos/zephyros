@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from zephyros.core.instances import InstanceInfo, InstanceState
+from zephyros.core.instances import InstanceInfo, InstanceState, TokenRefusal
 from zephyros.core.ports.agent_engine import Side
 
 
@@ -11,6 +11,8 @@ class FakeInstanceControl:
         self._states: dict[tuple[str, Side], InstanceState] = {}
         self.prompts: list[tuple[str, Side, str]] = []
         self.new_sessions: list[tuple[str, Side]] = []
+        self.refused: list[tuple[str, Side, str, str]] = []
+        self._refusals: dict[tuple[str, Side], TokenRefusal] = {}
 
     def start(
         self, project_id: str, side: Side, prompt: str, *, new_session: bool = False
@@ -27,5 +29,12 @@ class FakeInstanceControl:
 
     def status(self, project_id: str, side: Side) -> InstanceInfo:
         return InstanceInfo(
-            project_id, side, self._states.get((project_id, side), InstanceState.ABSENT)
+            project_id,
+            side,
+            self._states.get((project_id, side), InstanceState.ABSENT),
+            token_refused=self._refusals.get((project_id, side)),
         )
+
+    def token_refused(self, project_id: str, side: Side, token_id: str, reason: str) -> None:
+        self.refused.append((project_id, side, token_id, reason))
+        self._refusals[(project_id, side)] = TokenRefusal("", reason, token_id, of_turn=False)

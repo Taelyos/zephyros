@@ -4,8 +4,17 @@ It reads the acceptance tests asked for (`path::name`) from /work/zephyros-reque
 only their files, runs only them, and prints their outcomes on one signed line at the end:
 
     ZEPHYROS-RUN <nonce>
+    ZEPHYROS-STARTED {"test": "path::name", "at": 12.3} <hmac>      (one as each test starts)
     ZEPHYROS-OUTCOMES {"outcomes": {"path::name": "passed|failed|error|not_run"},
-                       "deselected": ["path::name", ...]} <hmac>
+                       "deselected": ["path::name", ...],
+                       "timeouts": {"path::name": {"phase": "setup", "seconds": 612.3,
+                                                   "limit": 600.0}}} <hmac>
+
+`timeouts` names the tests that ended on a time limit of their own: a `subprocess.TimeoutExpired`
+or a `TimeoutError` raised in their setup, call or teardown, with the limit when the exception
+carries it. A run stopped at the limit of the whole verification prints no outcome line; the last
+signed `ZEPHYROS-STARTED` line then says which test was under way, and since when (seconds from
+the start of the kit). Neither changes an outcome: they say why a test did not pass.
 
 Why a signature is not enough on its own. The nonce and the outcomes both live in this process's
 memory. Any code that runs in this interpreter can read the nonce (a plain attribute of this
@@ -56,7 +65,9 @@ import hmac
 import json
 import os
 import secrets
+import subprocess
 import sys
+import time
 import types
 from collections.abc import Mapping
 from importlib.machinery import PathFinder
@@ -70,6 +81,7 @@ NO_BYTECODE = "/opt/kit/no-bytecode"
 """A directory that does not exist, on the read-only root of the image."""
 MARK = "ZEPHYROS-OUTCOMES "
 RUN_MARK = "ZEPHYROS-RUN "
+STARTED_MARK = "ZEPHYROS-STARTED "
 PR_SET_DUMPABLE = 4
 
 # The container's own stdout, taken before pytest replaces fd 1 with its capture file: the run line
@@ -78,6 +90,7 @@ PR_SET_DUMPABLE = 4
 # do is write to the same log by other means; it cannot read it back, so the nonce stays unknown.
 REAL_OUT = os.fdopen(os.dup(1), "w", buffering=1)
 _NONCE = secrets.token_hex(16)
+_STARTED = time.monotonic()
 
 
 def _manifest() -> dict[str, object]:
@@ -110,6 +123,12 @@ PINNED: dict[str, bytes] = {}
 OUTCOMES: dict[str, str] = dict.fromkeys(ASKED, "not_run")
 DESELECTED: list[str] = []
 BROKEN_FILES: set[str] = set()
+TIMEOUTS: dict[str, dict[str, object]] = {}
+"""The asked tests that ended on a time limit of their own, with the phase, its duration and the
+limit, when the exception gives it."""
+_TIMEOUT_SECONDS: dict[int, float] = {}
+"""How long the phase ran that raised each time-out first: a fixture that timed out is raised
+again, at once, for every test that uses it, and its duration is that of the first time."""
 
 
 def _set_non_dumpable() -> bool:
@@ -305,13 +324,53 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         OUTCOMES[report.nodeid] = "not_run"
 
 
+def pytest_runtest_logstart(nodeid: str, location: object) -> None:
+    # Signed, so that a line a subprocess writes cannot name another test; printed at once, so
+    # that a run stopped at its limit still says which test was under way. The leading newline
+    # keeps the line whole: pytest has just written the name of the file, with no line end.
+    if nodeid in OUTCOMES:
+        line = _signed(STARTED_MARK, {"test": nodeid, "at": _elapsed()})
+        print("\n" + line, file=REAL_OUT, flush=True)
+
+
+def pytest_exception_interact(
+    node: pytest.Item | pytest.Collector,
+    call: pytest.CallInfo[object],
+    report: pytest.TestReport | pytest.CollectReport,
+) -> None:
+    excinfo = call.excinfo
+    if node.nodeid not in OUTCOMES or excinfo is None:
+        return
+    if not excinfo.errisinstance((subprocess.TimeoutExpired, TimeoutError)):
+        return
+    seconds = _TIMEOUT_SECONDS.setdefault(id(excinfo.value), round(call.duration, 1))
+    limit = getattr(excinfo.value, "timeout", None)
+    TIMEOUTS.setdefault(
+        node.nodeid,
+        {
+            "phase": call.when,
+            "seconds": seconds,
+            "limit": float(limit) if isinstance(limit, int | float) else None,
+        },
+    )
+
+
+def _elapsed() -> float:
+    return round(time.monotonic() - _STARTED, 1)
+
+
+def _signed(mark: str, payload: object) -> str:
+    text = json.dumps(payload, sort_keys=True)
+    mac = hmac.new(_NONCE.encode(), text.encode(), hashlib.sha256).hexdigest()
+    return mark + text + " " + mac
+
+
 def _outcomes_line() -> str:
-    """The signed outcome line. Its payload carries the outcome of every test asked for and the
-    tests deselected for want of a criterion; the HMAC under the nonce covers the whole payload,
-    so neither the outcomes nor the deselected list can be changed without breaking the pair."""
-    payload = json.dumps({"outcomes": OUTCOMES, "deselected": DESELECTED}, sort_keys=True)
-    mac = hmac.new(_NONCE.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return MARK + payload + " " + mac
+    """The signed outcome line. Its payload carries the outcome of every test asked for, the
+    tests deselected for want of a criterion, and the tests that ended on a time limit of their
+    own; the HMAC under the nonce covers the whole payload, so none of them can be changed
+    without breaking the pair."""
+    return _signed(MARK, {"outcomes": OUTCOMES, "deselected": DESELECTED, "timeouts": TIMEOUTS})
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

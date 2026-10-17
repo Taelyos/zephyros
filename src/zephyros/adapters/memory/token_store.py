@@ -47,3 +47,16 @@ class InMemoryTokenStore:
             return False
         self._records[token_id] = dataclasses.replace(record, expires_at=at)
         return True
+
+    def extend(self, token_id: str, at: datetime, now: datetime) -> bool:
+        record = self._records.get(token_id)
+        if (
+            record is None
+            or record.revoked_at is not None
+            or record.expires_at is None
+            or record.expires_at <= now
+            or at <= record.expires_at
+        ):
+            return False
+        self._records[token_id] = dataclasses.replace(record, expires_at=at)
+        return True

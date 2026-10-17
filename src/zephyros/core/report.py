@@ -7,6 +7,7 @@ delivery chose (paths, the output of its tests): such text is shown as code, nev
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ from zephyros.core.masking import mask_text
 from zephyros.core.obstacles import Obstacle
 from zephyros.core.ports.agent_engine import Side
 from zephyros.core.ports.delivery import Delivery
-from zephyros.core.ports.verification import Outcome
+from zephyros.core.ports.verification import Outcome, TimeLimit
 from zephyros.core.tools import TOOLS_PATH, ToolsDigest
 
 LOG_EXCERPT = 4000
@@ -61,6 +62,11 @@ class ReportInput:
     never_run_tests: tuple[str, ...] = ()
     """The tests the kit found in the files it ran and did not run, since no criterion names
     them (`path::name`, as the kit names them)."""
+    timeouts: Mapping[str, TimeLimit] = dataclasses.field(default_factory=dict)
+    """The tests that reached a time limit: the report says "timed out", not only the
+    outcome the gate counts."""
+    stopped_at: int | None = None
+    """The limit of the verification, when the run reached it and was stopped."""
     missing_acceptance_files: tuple[str, ...] = ()
     """The files a criterion names that neither the Owner side nor the base holds (ATK-16)."""
     set_aside_paths: tuple[str, ...] = ()
@@ -71,8 +77,8 @@ class ReportInput:
     tools: ToolsDigest | None = None
     """The tools the sandbox mounted, as the hub measured them around the run (ADR 0030)."""
     tools_of_turns: tuple[tuple[str, int], ...] = ()
-    """The tools the turns of both sides found before the delivery came in: each fingerprint
-    (or "none"), with how many turns found it."""
+    """The tools the turns of both sides found before the delivery came in, in the order of the
+    turns: each fingerprint (or "none"), with how many turns in a row found it."""
     context_of_turns: tuple[tuple[int, int, int, int], ...] = ()
     """The context the agents of both sides worked with in the turns before the delivery came
     in (ADR 0033): each (context, window of the model, compaction point, turns), as the starts
@@ -116,6 +122,44 @@ def _tools_lines(tools: ToolsDigest | None, sandbox: bool) -> list[str]:
     return [
         f"- Project tools: {_code(tools.fingerprint)} ({tools.files} files, {tools.bytes} bytes), "
         f"mounted read-only at {_code(TOOLS_PATH)} {where}"
+    ]
+
+
+def _seconds(value: float) -> str:
+    return f"{value:g} s" if value < 100 else f"{round(value):d} s"
+
+
+def _outcome(test: str, outcome: Outcome, timeouts: Mapping[str, TimeLimit]) -> str:
+    """An outcome as the report gives it: a test that reached a time limit says so, apart from
+    an error or a failure; the gate counts the outcome all the same."""
+    return f"{outcome.value} (timed out)" if test in timeouts else outcome.value
+
+
+def _time_limit(found: TimeLimit, stopped_at: int | None) -> str:
+    if found.phase == "run":
+        limit = "" if stopped_at is None else f" of {_seconds(stopped_at)}"
+        return (
+            f"under way for about {_seconds(found.seconds)} when the run reached its limit{limit} "
+            "and was stopped"
+        )
+    limit = "a time limit" if found.limit is None else f"its limit of {_seconds(found.limit)}"
+    return f"its {_plain(found.phase)} reached {limit} after {_seconds(found.seconds)}"
+
+
+def _stopped_lines(report: ReportInput) -> list[str]:
+    if report.stopped_at is None:
+        return []
+    under_way = [test for test, found in report.timeouts.items() if found.phase == "run"]
+    return [
+        f"**Time limit reached:** the run was stopped at the limit of the verification, "
+        f"{_seconds(report.stopped_at)} (`verification.timeout_seconds`). Nothing it printed is "
+        "believed, and every test reads not_run. "
+        + (
+            f"Under way when it stopped: {_code(under_way[0])}."
+            if under_way
+            else "The kit had signed no test as under way."
+        ),
+        "",
     ]
 
 
@@ -176,6 +220,33 @@ def _obstacles_lines(obstacles: tuple[Obstacle, ...], *, owner_side: bool) -> li
             f"{'is' if kept == 1 else 'are'} kept for the Owner side.",
         ]
     return lines
+
+
+def _tools_flag(report: ReportInput) -> tuple[str, list[str]]:
+    """The tools the turns found, when they are not the ones verified all along. A
+    change between two turns, the last of them finding the tools verified, is the expected
+    course after a fix of the tools, and is said so; a change after the last turn means the
+    delivery was built with other tools than the ones it was verified with. A change during the
+    verification never reaches a report: its results are not kept."""
+    verified = None if report.tools is None else report.tools.fingerprint
+    runs = report.tools_of_turns
+    if verified is None or all(found == verified for found, _turns in runs):
+        return "", []
+    chain = " → ".join(
+        f"{_code(found)} ({turns} turn{'' if turns == 1 else 's'})" for found, turns in runs
+    )
+    if runs[-1][0] == verified:
+        return (
+            "The project tools changed between two turns before this delivery (the "
+            "fingerprints the turns found, in order; the last turns found the tools verified):",
+            [chain],
+        )
+    return (
+        "The project tools changed after the last turn before this delivery: it was built with "
+        "other tools than the ones it was verified with (the fingerprints the turns found, in "
+        "order, then the verification's):",
+        [f"{chain} → {_code(verified)} (the verification)"],
+    )
 
 
 def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: bool = True) -> str:
@@ -247,7 +318,10 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for judged in gate.requirements:
-        tests = "<br>".join(f"{_code(t)} {o.value}" for t, o in judged.tests) or "none"
+        tests = (
+            "<br>".join(f"{_code(t)} {_outcome(t, o, report.timeouts)}" for t, o in judged.tests)
+            or "none"
+        )
         stories = "<br>".join(_code(s) for s in judged.stories) or "none"
         lines.append(
             f"| {judged.id} | {stories} | {judged.priority} | {', '.join(judged.methods)} | "
@@ -266,7 +340,13 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
             f"{'yes' if check.met else 'no'} |"
         )
     lines += ["", f"## Verification (kit: {_plain(report.kit)})", ""]
-    lines += [f"- {_code(test)}: {outcome.value}" for test, outcome in report.outcomes.items()]
+    lines += _stopped_lines(report)
+    for test, outcome in report.outcomes.items():
+        found = report.timeouts.get(test)
+        lines.append(
+            f"- {_code(test)}: {outcome.value}"
+            + ("" if found is None else f", **timed out**: {_time_limit(found, report.stopped_at)}")
+        )
     if with_output:
         excerpt = report.log[-LOG_EXCERPT:]
         lines += ["", "Output of the run (the end of it):", "", _fence(excerpt), ""]
@@ -287,15 +367,7 @@ def render(report: ReportInput, secrets: Iterable[str] = (), *, with_output: boo
                 else []
             ),
         ),
-        (
-            "Turns before this delivery found other tools than the verification (each "
-            "fingerprint, with how many turns found it):",
-            [
-                f"{_code(found)} ({turns} turn{'' if turns == 1 else 's'})"
-                for found, turns in report.tools_of_turns
-                if report.tools is not None and found != report.tools.fingerprint
-            ],
-        ),
+        _tools_flag(report),
         (
             "Acceptance test files that a criterion names and neither the Owner side nor the "
             "base holds (their tests cannot pass):",

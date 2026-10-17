@@ -83,3 +83,12 @@ It does not guarantee, because the tools are the operator's and trusted:
 - **The tools on the `PATH` first**: a tool could then hide `python` or `pytest`, in a turn and at the gate.
 - **One directory per project now**: the operator would name a project identifier the hub issues at run time, then restart the hub; a named choice at `project.create` is the better form, left for when a deployment runs projects with different tools.
 - **A fingerprint at the start of the hub only**: a change on the machine while the hub runs would go unseen, and the report would name tools the gate did not run with.
+
+## Amendment (Proposed, 2026-10-17): the flag of the fingerprints says which change it was
+
+The report flagged the fingerprints the turns had found other than the one verified, with a count each, and no more. After the tools were fixed between two turns, as expected, the old fingerprint stood among the flags with nothing to tell it from a delivery built with other tools than the ones it was verified with.
+
+- The flag gives the fingerprints in the order of the turns of both sides before the delivery, each with how many turns in a row found it: `old (4 turns) → new (2 turns)`.
+- When the last turns found the tools verified, it says the tools changed between two turns before the delivery, the course a fix of the tools takes.
+- When they did not, it says the tools changed after the last turn: the delivery was built with other tools than the ones it was verified with, and the chain ends with the fingerprint of the verification.
+- A change during a verification is not a flag: its results are still dropped, and the delivery ends in an error.

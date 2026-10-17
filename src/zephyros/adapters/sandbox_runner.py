@@ -25,6 +25,7 @@ from zephyros.core.broker import BrokerError
 from zephyros.core.ports.verification import (
     INTERFACE_VERSION,
     Outcome,
+    TimeLimit,
     VerificationError,
     VerificationRequest,
     VerificationResult,
@@ -116,15 +117,38 @@ class SandboxRunner:
         deselected = tuple(t for t in answer.get("deselected", []) if isinstance(t, str))
         log = str(answer.get("log", ""))
         timed_out = bool(answer.get("timed_out"))
+        duration = float(answer.get("duration_seconds", 0.0))
+        timeouts: dict[str, TimeLimit] = {}
         if timed_out:
             log += "\n[the run reached its time limit and was stopped]"
             # ATK-22: a run stopped at its limit proves nothing — nothing was verified, and a
             # results line printed before the kill is not believed either, deselected included.
             outcomes = dict.fromkeys(asked.tests, Outcome.NOT_RUN)
             deselected = ()
+            started = answer.get("started")
+            if isinstance(started, dict) and started.get("test") in request.tests:
+                at = started.get("at")
+                ran = max(0.0, duration - float(at)) if isinstance(at, int | float) else duration
+                # rounded, never past the run it was part of
+                timeouts[str(started["test"])] = TimeLimit("run", min(round(ran, 1), duration))
         else:
             _check_canaries(canaries, outcomes)
+            raw = answer.get("timeouts")
+            for test, entry in (raw if isinstance(raw, dict) else {}).items():
+                if test in request.tests and isinstance(entry, dict):
+                    limit = entry.get("limit")
+                    timeouts[test] = TimeLimit(
+                        str(entry.get("phase", "call")),
+                        float(entry.get("seconds", 0.0)),
+                        float(limit) if isinstance(limit, int | float) else None,
+                    )
         mine = {test: outcomes[test] for test in request.tests}
         return VerificationResult(
-            mine, log, {}, float(answer.get("duration_seconds", 0.0)), deselected
+            mine,
+            log,
+            {},
+            duration,
+            deselected,
+            timeouts,
+            request.timeout_seconds if timed_out else None,
         )

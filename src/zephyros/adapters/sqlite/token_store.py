@@ -107,3 +107,13 @@ class SqliteTokenStore:
                 (format_time(at), token_id),
             )
             return cursor.rowcount == 1
+
+    def extend(self, token_id: str, at: datetime, now: datetime) -> bool:
+        # The times are stored in one fixed-width form, so they compare as text.
+        with self._db.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE tokens SET expires_at = ? WHERE token_id = ? AND revoked_at IS NULL"
+                " AND expires_at IS NOT NULL AND expires_at > ? AND expires_at < ?",
+                (format_time(at), token_id, format_time(now), format_time(at)),
+            )
+            return cursor.rowcount == 1

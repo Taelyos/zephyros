@@ -66,7 +66,9 @@ MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_MEMBERS = 20_000
 OUTCOME_MARK = "ZEPHYROS-OUTCOMES "
 RUN_MARK = "ZEPHYROS-RUN "
+STARTED_MARK = "ZEPHYROS-STARTED "
 OUTCOMES = ("passed", "failed", "error", "not_run")
+PHASES = ("setup", "call", "teardown")
 LOG_LIMIT = 20_000
 LOG_READ_LIMIT = 16 * 1024 * 1024
 """The most of a sandbox's log the filter reads to find the kit's lines, from its beginning, as a
@@ -129,18 +131,9 @@ def read_archive(raw: bytes) -> tuple[SandboxManifest, bytes]:
     return manifest, clean.getvalue()
 
 
-def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
-    """The outcome of each test asked for and the tests the kit deselected, from its signed line.
-
-    The kit prints a run line carrying a nonce (which only ever lands in the container's log —
-    write-only from the inside) and one outcome line signed with it. The signed payload is
-    `{"outcomes": {name: outcome}, "deselected": [name, ...]}`, so the HMAC covers both. An
-    honest kit prints the pair once, the run line first of the whole log; anything else — a
-    missing run line, a log that begins with something else (it lost its head), a second line, a
-    signature that does not match — means the log was written by someone else too (a black-box
-    test's subprocess can reach it, ATK-22), and nothing is believed: every test reads `error`
-    and nothing is reported deselected, so the run verifies nothing. A run that printed no
-    outcome line at all (it died before its end) claims nothing: its tests read `not_run`."""
+def _signed_payload(log: str) -> tuple[str, dict[str, Any] | None]:
+    """The payload of the kit's signed outcome line, and what the log is: `absent` (no outcome
+    line, at most one run line), `forged` (anything that is not an honest pair), or `signed`."""
     runs: list[str] = []
     lines: list[str] = []
     first = ""
@@ -152,22 +145,48 @@ def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tu
         elif line.startswith(OUTCOME_MARK):
             lines.append(line[len(OUTCOME_MARK) :])
     if not lines and len(runs) <= 1:
-        return dict.fromkeys(tests, "not_run"), ()
+        return "absent", None
     # The run line is the first thing an honest kit prints: a log that begins with anything else
     # has lost its head, and the pair left at its end is no longer anchored to the kit's nonce.
     if len(runs) != 1 or len(lines) != 1 or not first.startswith(RUN_MARK):
-        return dict.fromkeys(tests, "error"), ()
-    payload, _, mac = lines[0].rpartition(" ")
-    if not payload or not mac:
-        return dict.fromkeys(tests, "error"), ()
-    expected = hmac.new(runs[0].encode(), payload.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, mac):
-        return dict.fromkeys(tests, "error"), ()
-    try:
-        found = json.loads(payload)
-    except ValueError:
-        return dict.fromkeys(tests, "error"), ()
+        return "forged", None
+    found = _verified(runs[0], lines[0])
     if not isinstance(found, dict) or not isinstance(found.get("outcomes"), dict):
+        return "forged", None
+    return "signed", found
+
+
+def _verified(nonce: str, line: str) -> object:
+    """What a line signed under the nonce carries (`<json> <hmac>`), or None."""
+    payload, _, mac = line.rpartition(" ")
+    if not payload or not mac:
+        return None
+    expected = hmac.new(nonce.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, mac):
+        return None
+    try:
+        return json.loads(payload)
+    except ValueError:
+        return None
+
+
+def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The outcome of each test asked for and the tests the kit deselected, from its signed line.
+
+    The kit prints a run line carrying a nonce (which only ever lands in the container's log —
+    write-only from the inside) and one outcome line signed with it. The signed payload is
+    `{"outcomes": {name: outcome}, "deselected": [name, ...], "timeouts": {...}}`, so the HMAC
+    covers all of it. An honest kit prints the pair once, the run line first of the whole log;
+    anything else — a missing run line, a log that begins with something else (it lost its head),
+    a second line, a signature that does not match — means the log was written by someone else
+    too (a black-box test's subprocess can reach it, ATK-22), and nothing is believed: every test
+    reads `error` and nothing is reported deselected, so the run verifies nothing. A run that
+    printed no outcome line at all (it died before its end) claims nothing: its tests read
+    `not_run`."""
+    state, found = _signed_payload(log)
+    if state == "absent":
+        return dict.fromkeys(tests, "not_run"), ()
+    if found is None:
         return dict.fromkeys(tests, "error"), ()
     reported = found["outcomes"]
     outcomes = {
@@ -177,6 +196,62 @@ def parse_outcomes(log: str, tests: tuple[str, ...]) -> tuple[dict[str, str], tu
     items = raw if isinstance(raw, list) else []
     deselected = tuple(item for item in items if isinstance(item, str))
     return outcomes, deselected
+
+
+def _seconds(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or not value >= 0:
+        return None
+    return round(float(value), 1)
+
+
+def parse_timeouts(log: str, tests: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """The tests asked for that ended on a time limit of their own, from the signed
+    outcome line: the phase that reached it, how long it ran, and the limit when the kit knew it.
+    A log whose pair is not believed says nothing of them."""
+    _state, found = _signed_payload(log)
+    raw = found.get("timeouts") if found is not None else None
+    if not isinstance(raw, dict):
+        return {}
+    timeouts: dict[str, dict[str, Any]] = {}
+    for test in tests:
+        entry = raw.get(test)
+        if not isinstance(entry, dict) or entry.get("phase") not in PHASES:
+            continue
+        seconds = _seconds(entry.get("seconds"))
+        if seconds is None:
+            continue
+        timeouts[test] = {
+            "phase": entry["phase"],
+            "seconds": seconds,
+            "limit": _seconds(entry.get("limit")),
+        }
+    return timeouts
+
+
+def parse_started(log: str, tests: tuple[str, ...]) -> dict[str, Any] | None:
+    """The test that was under way when a run was stopped at its limit, and when it started
+    (seconds from the start of the kit): the last line the kit signed as a test started. Only a
+    log that begins with the one run line is read; a line not signed under its nonce is
+    ignored."""
+    nonce = ""
+    started: dict[str, Any] | None = None
+    for line in log.splitlines():
+        if not nonce:
+            if not line.strip():
+                continue
+            if not line.startswith(RUN_MARK):
+                return None  # the log lost its head
+            nonce = line[len(RUN_MARK) :].strip()
+        elif line.startswith(RUN_MARK):
+            return None  # a second run line: the log was written by someone else too
+        elif line.startswith(STARTED_MARK):
+            found = _verified(nonce, line[len(STARTED_MARK) :])
+            if not isinstance(found, dict) or found.get("test") not in tests:
+                continue
+            at = _seconds(found.get("at"))
+            if at is not None:
+                started = {"test": found["test"], "at": at}
+    return started
 
 
 def run_sandbox(
@@ -217,12 +292,18 @@ def run_sandbox(
     duration = monotonic() - started
     outcomes: dict[str, str]
     deselected: tuple[str, ...]
+    timeouts: dict[str, dict[str, Any]] = {}
+    under_way: dict[str, Any] | None = None
     if cut:
         # Code that floods the log can push the kit's lines out of any window and leave a pair
         # of its own at the end; a log that was cut proves nothing, so the run verifies nothing.
         outcomes, deselected = dict.fromkeys(manifest.tests, "error"), ()
     else:
         outcomes, deselected = parse_outcomes(log, manifest.tests)
+        if exit_code is None:
+            under_way = parse_started(log, manifest.tests)
+        else:
+            timeouts = parse_timeouts(log, manifest.tests)
     journal.record("done", "sandbox.run", "ok", project_id=manifest.project_id, run=run)
     return {
         "outcomes": outcomes,
@@ -231,6 +312,8 @@ def run_sandbox(
         "exit_code": exit_code,
         "timed_out": exit_code is None,
         "duration_seconds": round(duration, 3),
+        "timeouts": timeouts,
+        "started": under_way,
     }
 
 

@@ -14,6 +14,7 @@ from zephyros.core.contract import contract_json_schema
 from zephyros.core.hub import TOOL_SPECS
 from zephyros.core.principals import PrincipalKind
 from zephyros.core.rights import PERMISSIONS
+from zephyros.core.schema import Array, Spec, Table, Text
 
 
 def render(document: Mapping[str, object]) -> str:
@@ -45,6 +46,22 @@ _KINDS = (
 _SCOPE = {"none": "no", "own": "own project", "any": "yes"}
 
 
+def _free_texts(spec: Spec, path: str) -> list[tuple[str, int]]:
+    """The texts of a tool's arguments that hold what the caller writes (no pattern, no kind),
+    each with its limit, by dotted path."""
+    if isinstance(spec, Table):
+        return [
+            found
+            for field in spec.fields
+            for found in _free_texts(field.spec, f"{path}.{field.name}" if path else field.name)
+        ]
+    if isinstance(spec, Array):
+        return _free_texts(spec.item, f"{path}[]")
+    if isinstance(spec, Text) and spec.pattern is None and spec.kind is None:
+        return [(path, spec.max_length)]
+    return []
+
+
 def render_tools_doc() -> str:
     """The text of docs/tools.md: the tools of the hub and who may use each (US-E1-07)."""
     header = "| Tool | What it does | " + " | ".join(name for _, name in _KINDS) + " |"
@@ -53,6 +70,11 @@ def render_tools_doc() -> str:
     for spec in TOOL_SPECS.values():
         scopes = " | ".join(_SCOPE[PERMISSIONS[spec.action][kind].value] for kind, _ in _KINDS)
         rows.append(f"| `{spec.name}` | {spec.description} | {scopes} |")
+    limits = [
+        f"| `{spec.name}` | `{path}` | {limit:,} |".replace(",", " ")
+        for spec in TOOL_SPECS.values()
+        for path, limit in _free_texts(spec.inputs, "")
+    ]
     contractor = [
         f"`{spec.name}`"
         for spec in TOOL_SPECS.values()
@@ -77,6 +99,19 @@ def render_tools_doc() -> str:
             header,
             divider,
             *rows,
+            "",
+            "## Limits of the free texts",
+            "",
+            "Every free text of a call has a limit, in characters, whoever calls: the prompt of "
+            "every `instance.start`, the first of an instance and every later one alike, and the "
+            "reasons of a `delivery.review` among them. A text over its limit is refused, and "
+            "nothing is cut: the refusal (`invalid_request`) names the field, the limit and the "
+            "length received, for example `arguments.prompt: must have at most 4000 "
+            "characters; it has 5210`. A list over its bounds says how many items it holds.",
+            "",
+            "| Tool | Field | At most |",
+            "| --- | --- | --- |",
+            *limits,
             "",
             "## What a Contractor instance reaches on the hub",
             "",

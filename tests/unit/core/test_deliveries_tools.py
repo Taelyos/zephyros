@@ -136,13 +136,13 @@ def test_the_report_flags_the_turns_that_found_other_tools_before_the_delivery()
     assert report is not None
     lines = report.splitlines()
     flag = lines.index(
-        "Turns before this delivery found other tools than the verification (each fingerprint, "
-        "with how many turns found it):"
+        "The project tools changed between two turns before this delivery (the fingerprints the "
+        "turns found, in order; the last turns found the tools verified):"
     )
-    assert lines[flag + 2 : flag + 4] == [
-        "- `none` (1 turn)",
-        f"- `{OTHER_TOOLS.fingerprint}` (1 turn)",
-    ]
+    first, other = FIRST_TOOLS.fingerprint, OTHER_TOOLS.fingerprint
+    assert lines[flag + 2] == (
+        f"- `none` (1 turn) → `{first}` (1 turn) → `{other}` (1 turn) → `{first}` (1 turn)"
+    )
 
 
 def test_turns_that_all_found_the_tools_of_the_gate_raise_no_flag() -> None:
@@ -159,4 +159,4 @@ def test_turns_that_all_found_the_tools_of_the_gate_raise_no_flag() -> None:
     )
     report = made.status(project, delivered(made, project)).report
     assert report is not None
-    assert "found other tools" not in report
+    assert "project tools changed" not in report

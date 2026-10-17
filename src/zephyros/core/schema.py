@@ -204,10 +204,18 @@ class Text(Spec):
     def check(self, value: object, key: str) -> list[Problem]:
         if not isinstance(value, str):
             return [Problem(key, f"must be a string, not a {_type_name(value)}")]
+        # The refusal says the limit and the length received: nothing is cut, and the caller
+        # knows by how much to shorten the text.
         if len(value) < self.min_length:
-            return [Problem(key, f"must have at least {self.min_length} characters")]
+            return [
+                Problem(
+                    key, f"must have at least {self.min_length} characters; it has {len(value)}"
+                )
+            ]
         if len(value) > self.max_length:
-            return [Problem(key, f"must have at most {self.max_length} characters")]
+            return [
+                Problem(key, f"must have at most {self.max_length} characters; it has {len(value)}")
+            ]
         if _has_control(value, self.multiline):
             return [Problem(key, "must not contain control characters")]
         if self.kind is not None:
@@ -316,9 +324,13 @@ class Array(Spec):
         if isinstance(value, str | bytes) or not isinstance(value, Sequence):
             return [Problem(key, f"must be a list, not a {_type_name(value)}")]
         if len(value) < self.min_items:
-            return [Problem(key, f"must hold at least {self.min_items} item(s)")]
+            return [
+                Problem(key, f"must hold at least {self.min_items} item(s); it holds {len(value)}")
+            ]
         if len(value) > self.max_items:
-            return [Problem(key, f"must hold at most {self.max_items} item(s)")]
+            return [
+                Problem(key, f"must hold at most {self.max_items} item(s); it holds {len(value)}")
+            ]
         problems: list[Problem] = []
         for index, item in enumerate(value):
             problems.extend(self.item.check(item, f"{key}[{index}]"))

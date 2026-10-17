@@ -106,6 +106,11 @@ class TokenStore(Protocol):
         """Give a token that has no expiry one. False when it is unknown or already has one."""
         ...
 
+    def extend(self, token_id: str, at: datetime, now: datetime) -> bool:
+        """Move the expiry of a live token later, to `at`. False when it is unknown, revoked,
+        has no expiry, has expired by `now`, or would not expire later."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class IssuedToken:
@@ -295,6 +300,19 @@ class TokenService:
             if record.revoked_at is None and self._store.revoke(record.token_id, self._clock.now()):
                 count += 1
         return count
+
+    def renew(self, token_id: str, lifetime_seconds: int) -> datetime | None:
+        """Give a live project token a new lifetime, counted from now: the token of a turn that
+        is still running (ADR 0016, amended). Returns the new expiry, or None when the token is
+        unknown, revoked or expired: a token that died stays dead."""
+        if lifetime_seconds <= 0:
+            raise ValueError("a token has a positive lifetime")
+        record = self._store.get(token_id)
+        if record is None or record.kind is not TokenKind.PROJECT:
+            return None
+        now = self._clock.now()
+        expires = now + timedelta(seconds=lifetime_seconds)
+        return expires if self._store.extend(token_id, expires, now) else None
 
     def needs_rotation(self, record: TokenRecord, rotate_before_seconds: int) -> bool:
         """True when less than `rotate_before_seconds` of the lifetime remains."""

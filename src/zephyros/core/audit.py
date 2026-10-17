@@ -75,6 +75,7 @@ class Action(StrEnum):
     INSTANCE_EGRESS = "instance.egress"
     TOKEN_ISSUE = "token.issue"  # noqa: S105  # reason: an action name, not a secret
     TOKEN_REVOKE = "token.revoke"  # noqa: S105  # reason: an action name, not a secret
+    TOKEN_RENEW = "token.renew"  # noqa: S105  # reason: an action name, not a secret
     TOKEN_LIFETIME = "token.lifetime"  # noqa: S105  # reason: an action name, not a secret
     GATEWAY_CALL = "gateway.call"
     LOG_READ = "log.read"

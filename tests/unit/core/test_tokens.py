@@ -418,3 +418,32 @@ def test_an_expired_refusal_says_when(service: TokenService, clock: FakeClock) -
         OPERATOR,
         issued.record.expires_at,
     )
+
+
+def test_a_live_project_token_is_renewed_and_a_dead_one_stays_dead(
+    service: TokenService, store: TokenStore, clock: FakeClock
+) -> None:
+    """The token of a running turn gets a new lifetime (ADR 0016, amended); the secret stays."""
+    issued = service.issue_project_token(CONTRACTOR, "i_1", CONTRACTOR_ADDRESS, LIFETIME)
+    clock.advance(LIFETIME - 60)
+    expires = service.renew(issued.token_id, LIFETIME)
+    assert expires == clock.now() + timedelta(seconds=LIFETIME)
+    clock.advance(LIFETIME - 1)
+    found = service.authenticate(
+        issued.secret, peer_address=CONTRACTOR_ADDRESS, endpoint=Endpoint.AGENT
+    )
+    assert isinstance(found, Authenticated)
+    # never shorter: a renewal that would end it sooner changes nothing
+    assert service.renew(issued.token_id, 1) is None
+    clock.advance(1)
+    assert service.renew(issued.token_id, LIFETIME) is None  # expired: it stays so
+    revoked = service.issue_project_token(CONTRACTOR, "i_1", CONTRACTOR_ADDRESS, LIFETIME)
+    service.revoke(revoked.token_id)
+    assert service.renew(revoked.token_id, LIFETIME) is None
+    assert service.renew("t_unknown", LIFETIME) is None
+    operator = service.issue_operator_token(LIFETIME)
+    assert service.renew(operator.token_id, LIFETIME) is None  # a channel token is rotated
+    unbounded = service.issue_main_agent_token()
+    assert store.extend(unbounded.token_id, clock.now(), clock.now()) is False
+    with pytest.raises(ValueError, match="positive lifetime"):
+        service.renew(issued.token_id, 0)

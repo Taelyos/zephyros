@@ -785,9 +785,16 @@ def _verification_run(_actor: str, outcome: str, data: dict[str, Any]) -> str:
     delivery = data.get("delivery_id", "?")
     if outcome == OUTCOME_ERROR:
         return f"Verification of {delivery} failed: {_failure(data)}"
+    if data.get("stopped_at_seconds"):
+        return (
+            f"Verification of {delivery} stopped at its time limit "
+            f"({data['stopped_at_seconds']} s): nothing verified"
+        )
+    timed_out = data.get("timed_out")
+    late = f", {plural(len(timed_out), 'test')} timed out" if isinstance(timed_out, list) else ""
     return (
         f"Verification: {data.get('passed', '?')}/{data.get('tests', '?')} acceptance tests "
-        f"passed for {delivery}"
+        f"passed for {delivery}{late}"
     )
 
 
@@ -909,6 +916,7 @@ SUMMARIES: dict[str, Summary] = {
     "delivery.review": _delivery_review,
     "token.issue": _token("issues", "to"),
     "token.revoke": _token("revokes", "of"),
+    "token.renew": _token("renews", "of"),
     "notification.sent": _notification,
     "continuity.step": _continuity,
     "obstacle.report": _obstacle_report,
