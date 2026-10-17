@@ -1,4 +1,4 @@
-"""AN-021 on a whole Zephyros (scripts/deploy.sh), with the obedient stub as the model.
+"""The token of a long turn, on a whole Zephyros (scripts/deploy.sh), the stub as the model.
 
 The lifetime of a project token is cut to two minutes, the shortest the configuration takes. A
 Contractor turn of Hermes keeps the hub busy for three: its last call of a tool of the hub still

@@ -38,7 +38,7 @@ An agent reaches the hub through MCP on its agent endpoint, and the operator rea
 
 ## Limits of the free texts
 
-Every free text of a call has a limit, in characters, whoever calls: the prompt of every `instance.start`, the first of an instance and every later one alike, and the reasons of a `delivery.review` among them. A text over its limit is refused, and nothing is cut: the refusal (`invalid_request`) names the field, the limit and the length received, for example `arguments.prompt: must have at most 4000 characters; it has 5210`.
+Every free text of a call has a limit, in characters, whoever calls: the prompt of every `instance.start`, the first of an instance and every later one alike, and the reasons of a `delivery.review` among them. A text over its limit is refused, and nothing is cut: the refusal (`invalid_request`) names the field, the limit and the length received, for example `arguments.prompt: must have at most 4000 characters; it has 5210`. A list over its bounds says how many items it holds.
 
 | Tool | Field | At most |
 | --- | --- | --- |

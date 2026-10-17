@@ -586,7 +586,7 @@ TIMEOUT = {"phase": "setup", "seconds": 612.3, "limit": 600}
 
 
 def test_the_time_limits_a_test_reached_are_read_from_the_signed_line() -> None:
-    """AN-023: the kit says which tests ended on a time limit of their own, inside the signed
+    """The kit says which tests ended on a time limit of their own, inside the signed
     payload, with the phase, the duration and the limit."""
     payload = {
         "outcomes": {"test_a.py::test_a": "error"},

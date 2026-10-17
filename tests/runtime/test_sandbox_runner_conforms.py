@@ -167,7 +167,7 @@ def test_a_kit_that_hangs_is_stopped_at_its_time_limit() -> None:
     assert time.monotonic() - started < 60
     assert "time limit" in result.log
     assert result.outcomes["test_hang.py::test_hang"] is Outcome.NOT_RUN
-    # AN-023: the run says it reached its limit, and which test was under way
+    # the run says it reached its limit, and which test was under way
     assert result.stopped_at == 10
     found = result.timeouts["test_hang.py::test_hang"]
     assert found.phase == "run"
@@ -175,7 +175,7 @@ def test_a_kit_that_hangs_is_stopped_at_its_time_limit() -> None:
 
 
 def test_a_test_that_reaches_a_time_limit_of_its_own_is_told_from_an_error() -> None:
-    """AN-023: an acceptance test whose fixture runs the delivery with a limit, and the
+    """An acceptance test whose fixture runs the delivery with a limit, and the
     delivery is slower: the kit says which test timed out, in which phase, after how long and at
     which limit; a test that breaks for another reason is an error with no time limit."""
     test_file = (

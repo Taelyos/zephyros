@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import pytest
 
 from zephyros.core.schema import (
+    Array,
     Choice,
     Field,
     Flag,
@@ -189,3 +190,12 @@ def test_json_schema_export_of_every_kind() -> None:
     assert properties["c"]["enum"] == ["x", "y"]  # type: ignore[index]  # reason: shape asserted here
     assert properties["f"]["type"] == "boolean"  # type: ignore[index]  # reason: shape asserted here
     assert properties["n"]["type"] == "number"  # type: ignore[index]  # reason: shape asserted here
+
+
+def test_a_text_or_a_list_out_of_its_bounds_says_what_it_received() -> None:
+    text = Text(min_length=2, max_length=4)
+    assert text.check("x", "k") == [Problem("k", "must have at least 2 characters; it has 1")]
+    assert text.check("xxxxx", "k") == [Problem("k", "must have at most 4 characters; it has 5")]
+    items = Array(Text(), min_items=1, max_items=2)
+    assert items.check([], "k") == [Problem("k", "must hold at least 1 item(s); it holds 0")]
+    assert items.check(["a"] * 3, "k") == [Problem("k", "must hold at most 2 item(s); it holds 3")]

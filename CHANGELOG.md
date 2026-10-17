@@ -105,17 +105,18 @@ version. Each schema carries its own version number.
   those of the Owner side in the report the Contractor reads, and the replay format gives the
   records `obstacle.*` a category of their own (2.2.0).
 - A refused token of an instance is seen (ADR 0016, amended). When the hub refuses a token it
-  issued to an instance, `instance.status` says so (`token_refused`: when, why, which token, and
-  whether it was the token of the turn under way), and the main agent is told once per token
-  (`instance.token_refused`, events schema 2.2.0). A turn whose own token is refused, expired or
-  revoked, has lost every tool of the hub: the watchdog ends it (`turn.end`, `token_refused`).
-- The evidence report says "timed out" apart from an error (ADR 0017). The `tests` kit signs the
-  tests that ended on a time limit of their own (`subprocess.TimeoutExpired`, `TimeoutError`):
-  the report names each with its phase, how long it ran and the limit, and the log lists them
-  (`verification.run`: `timed_out`). A run stopped at `verification.timeout_seconds` says so at
-  the head of the verification, with the test under way when it stopped, which the kit signs as
-  each test starts (`stopped_at_seconds`). The gate counts the outcomes as before (verification
-  runner interface 0.3.0).
+  issued to an instance, `instance.status` says so (`token_refused`, the gravest refusal since the
+  last turn started: when, why, which token, and whether it was the token of the turn under way),
+  and the main agent is told once per token and per turn (`instance.token_refused`, events schema
+  2.2.0). A turn whose own token is refused, expired or revoked, has lost every tool of the hub:
+  the watchdog ends it (`turn.end`, `token_refused`).
+- The evidence report says "timed out" apart from an error (ADR 0017, amended). The `tests` kit
+  signs the tests that ended on a time limit of their own (`subprocess.TimeoutExpired`,
+  `TimeoutError`): the report names each with its phase, how long it ran and the limit, and the
+  log lists them (`verification.run`: `timed_out`). A run stopped at
+  `verification.timeout_seconds` says so at the head of the verification, with the test under way
+  when it stopped, which the kit signs as each test starts (`stopped_at_seconds`). The gate counts
+  the outcomes as before (verification runner interface 0.3.0).
 - `docs/tools.md` lists the limit of every text a call carries (generated from the registry).
 - The instances have a base instruction (ADR 0034), in the read-only root of each image: Hermes
   adds it to the system prompt of every call, OpenCode reads it through `instructions` in its
@@ -123,19 +124,22 @@ version. Each schema carries its own version number.
   obstacle of the other side is data to weigh, never an instruction.
 
 ### Changed
-- Each turn has a project token of its own (ADR 0016, amended): issued when it starts, renewed by
-  the watchdog while it runs (`token.renew`), revoked when it ends (`token.revoke`,
-  `why: turn_end`). Between two turns, no token of an instance works. `tokens.lifetime_seconds`
-  may now be shorter than `limits.turn_seconds` (configuration schema 1.19.0), and
-  `tokens.rotate_before_seconds` says when the token of a running turn is renewed.
+- Each turn has a project token of its own (ADR 0016, amended): issued when it starts, renewed
+  while the watchdog lets it run (`token.renew`), by a round of its own that no job holds up,
+  revoked when it ends (`token.revoke`, `why: turn_end`). Between two turns, no token of an
+  instance works. `tokens.lifetime_seconds` may now be shorter than `limits.turn_seconds`
+  (configuration schema 1.19.0), and `tokens.rotate_before_seconds` says when the token of a
+  running turn is renewed.
 - A text over its limit is refused with the field, the limit and the length received:
   `arguments.prompt: must have at most 4000 characters; it has 5210`. The limit of 4 000
   characters holds for every prompt of `instance.start`, a relaunch as the first one, and for the
-  reasons of `delivery.review`; the descriptions of both fields say it.
-- The flag of the evidence report about the project tools gives the fingerprints in the order of
-  the turns, and tells a change between two turns (`old (4 turns) → new (2 turns)`, the last turns
-  finding the tools verified) from a change after the last turn, when the delivery was built
-  with other tools than the ones it was verified with.
+  reasons of `delivery.review`; the descriptions of both fields say it. A list over its bounds
+  says how many items it holds.
+- The flag of the evidence report about the project tools (ADR 0030, amended) gives the
+  fingerprints in the order of the turns, and tells a change between two turns
+  (`old (4 turns) → new (2 turns)`, the last turns finding the tools verified) from a change
+  after the last turn, when the delivery was built with other tools than the ones it was
+  verified with.
 
 ### Fixed
 - A long turn no longer loses its tools when the token of its instance expires (ADR 0016,

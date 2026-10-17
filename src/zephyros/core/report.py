@@ -63,7 +63,7 @@ class ReportInput:
     """The tests the kit found in the files it ran and did not run, since no criterion names
     them (`path::name`, as the kit names them)."""
     timeouts: Mapping[str, TimeLimit] = dataclasses.field(default_factory=dict)
-    """The tests that reached a time limit (AN-023): the report says "timed out", not only the
+    """The tests that reached a time limit: the report says "timed out", not only the
     outcome the gate counts."""
     stopped_at: int | None = None
     """The limit of the verification, when the run reached it and was stopped."""
@@ -131,7 +131,7 @@ def _seconds(value: float) -> str:
 
 def _outcome(test: str, outcome: Outcome, timeouts: Mapping[str, TimeLimit]) -> str:
     """An outcome as the report gives it: a test that reached a time limit says so, apart from
-    an error or a failure (AN-023); the gate counts the outcome all the same."""
+    an error or a failure; the gate counts the outcome all the same."""
     return f"{outcome.value} (timed out)" if test in timeouts else outcome.value
 
 
@@ -139,7 +139,7 @@ def _time_limit(found: TimeLimit, stopped_at: int | None) -> str:
     if found.phase == "run":
         limit = "" if stopped_at is None else f" of {_seconds(stopped_at)}"
         return (
-            f"under way for {_seconds(found.seconds)} when the run reached its limit{limit} "
+            f"under way for about {_seconds(found.seconds)} when the run reached its limit{limit} "
             "and was stopped"
         )
     limit = "a time limit" if found.limit is None else f"its limit of {_seconds(found.limit)}"
@@ -223,7 +223,7 @@ def _obstacles_lines(obstacles: tuple[Obstacle, ...], *, owner_side: bool) -> li
 
 
 def _tools_flag(report: ReportInput) -> tuple[str, list[str]]:
-    """The tools the turns found, when they are not the ones verified all along (AN-026). A
+    """The tools the turns found, when they are not the ones verified all along. A
     change between two turns, the last of them finding the tools verified, is the expected
     course after a fix of the tools, and is said so; a change after the last turn means the
     delivery was built with other tools than the ones it was verified with. A change during the

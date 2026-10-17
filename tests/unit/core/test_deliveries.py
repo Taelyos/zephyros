@@ -1392,7 +1392,7 @@ class TimingOutRunner(AssertionRunner):
 
 
 def test_a_test_over_its_time_limit_is_logged_and_reported_as_timed_out() -> None:
-    """AN-023: the cause reaches the log and both reports, not only the raw output."""
+    """The cause of a time limit reaches the log and both reports, not only the raw output."""
     made, project, audit, _store = service(runner=TimingOutRunner())
     ready(made, project)
     found = made.status(project, delivered(made, project))
@@ -1411,3 +1411,38 @@ def test_a_test_over_its_time_limit_is_logged_and_reported_as_timed_out() -> Non
     for report in (found.report, found.contractor_report):
         assert report is not None
         assert line in report.splitlines()
+
+
+class StoppedRunner(AssertionRunner):
+    """The assertion runner, whose run reaches the limit of the verification."""
+
+    def run(self, request: VerificationRequest) -> VerificationResult:
+        found = super().run(request)
+        first = next(iter(found.outcomes))
+        return VerificationResult(
+            dict.fromkeys(found.outcomes, VerificationOutcome.NOT_RUN),
+            found.log,
+            timeouts={first: TimeLimit("run", 290.0)},
+            stopped_at=request.timeout_seconds,
+        )
+
+
+def test_a_run_stopped_at_its_limit_is_logged_and_reported_with_the_limit() -> None:
+    made, project, audit, _store = service(runner=StoppedRunner())
+    ready(made, project)
+    found = made.status(project, delivered(made, project))
+    assert found.decision == "FAIL"
+    run = next(
+        json.loads(r.parameters)
+        for r in audit.read(project)
+        if (r.action, r.outcome) == (Action.VERIFICATION_RUN, Outcome.OK)
+    )
+    assert run["stopped_at_seconds"] == 300
+    assert run["timed_out"] == ["checks/add.txt::test_add"]
+    for report in (found.report, found.contractor_report):
+        assert report is not None
+        assert (
+            "**Time limit reached:** the run was stopped at the limit of the verification, 300 s "
+            "(`verification.timeout_seconds`). Nothing it printed is believed, and every test "
+            "reads not_run. Under way when it stopped: `checks/add.txt::test_add`."
+        ) in report.splitlines()

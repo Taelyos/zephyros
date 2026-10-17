@@ -205,7 +205,7 @@ def _seconds(value: object) -> float | None:
 
 
 def parse_timeouts(log: str, tests: tuple[str, ...]) -> dict[str, dict[str, Any]]:
-    """The tests asked for that ended on a time limit of their own (AN-023), from the signed
+    """The tests asked for that ended on a time limit of their own, from the signed
     outcome line: the phase that reached it, how long it ran, and the limit when the kit knew it.
     A log whose pair is not believed says nothing of them."""
     _state, found = _signed_payload(log)

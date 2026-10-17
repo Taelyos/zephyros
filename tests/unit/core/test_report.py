@@ -287,7 +287,7 @@ def test_a_report_without_obstacles_says_so_and_a_long_list_is_bounded() -> None
 
 
 def test_a_test_that_reached_its_time_limit_reads_timed_out_apart_from_an_error() -> None:
-    """AN-023: a test over its limit read `error`, its cause only in the raw output."""
+    """A test over its limit used to read `error`, its cause only in the raw output."""
     outcomes = {"tests/t.py::test_add": Outcome.ERROR, "tests/t.py::test_sub": Outcome.ERROR}
     objects = contract(
         (1, "P0", ("test",), ("tests/t.py::test_add",)),
@@ -336,7 +336,7 @@ def test_a_run_stopped_at_its_limit_says_so_and_names_the_test_under_way() -> No
             "test reads not_run. Under way when it stopped: `tests/t.py::test_sub`."
         ) in text.splitlines()
         assert (
-            "- `tests/t.py::test_sub`: not_run, **timed out**: under way for 3061 s when the "
+            "- `tests/t.py::test_sub`: not_run, **timed out**: under way for about 3061 s when the "
             "run reached its limit of 3600 s and was stopped"
         ) in text.splitlines()
         assert "- `tests/t.py::test_add`: not_run" in text.splitlines()
@@ -352,7 +352,7 @@ def flags_of(text: str) -> str:
 
 
 def test_tools_changed_between_two_turns_are_said_so_old_then_new() -> None:
-    """AN-026: after a fix of the tools, the old fingerprint was flagged and not explained."""
+    """After a fix of the tools, the old fingerprint was flagged and not explained."""
     report = make(tools=ToolsDigest(NEW, 3, 900), tools_of_turns=((OLD, 4), (NEW, 2)))
     assert flags_of(render(report)) == (
         "The project tools changed between two turns before this delivery (the fingerprints the "

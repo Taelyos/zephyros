@@ -812,7 +812,7 @@ class DeliveryService:
             tests=len(tests),
             passed=sum(1 for o in outcomes.values() if o.value == "passed"),
             never_run=len(never_run),
-            # a time limit reached is a cause, not an error of the run (AN-023)
+            # a time limit reached is a cause, not an error of the run
             **({} if not timeouts else {"timed_out": sorted(timeouts)[:LOGGED_PATHS]}),
             **({} if stopped_at is None else {"stopped_at_seconds": stopped_at}),
             **({} if tools is None else {"tools": tools.fingerprint}),
@@ -1002,7 +1002,7 @@ class DeliveryService:
         """The tools the turns of either side found when they started, for the turns started
         before the delivery came in (ADR 0030), in the order of the turns: each fingerprint with
         how many turns in a row found it, so that a change between two turns shows as one
-        fingerprint followed by another (AN-026). A start that recorded none is "none". Read
+        fingerprint followed by another. A start that recorded none is "none". Read
         from the first READ_RECORDS records of the log, as the cost is."""
         runs: list[tuple[str, int]] = []
         for item in self._audit.read(project_id, 0, READ_RECORDS):

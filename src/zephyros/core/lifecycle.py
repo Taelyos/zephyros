@@ -3,8 +3,9 @@
 An instance is a network guard with a fixed address, plus two volumes. It exists from the first
 start of a side of a project until that side is stopped. Each piece of work is a turn: one
 agent container in the guard's namespace. Each turn has its own project token, bound to the
-guard's address: issued when the turn starts, renewed by the watchdog while the turn runs, and
-revoked when it ends (ADR 0016, amended). A token the hub refuses to an instance shows in its
+guard's address: issued when the turn starts, renewed while the turn runs by a round of its own
+(`renew_tokens`, on a thread that no job holds up), and revoked when it ends (ADR 0016,
+amended). A token the hub refuses to an instance shows in its
 status and is told to the main agent; a turn whose own token is refused has lost the hub, and
 the watchdog ends it.
 
@@ -65,6 +66,8 @@ LOST_ROUNDS = 3
 """Rounds of the watchdog without an answer from the filter before an instance is cut off."""
 TOKEN_REFUSED = "instance.token_refused"  # noqa: S105  # reason: an event name, not a secret
 """The event that tells the main agent the hub refused a token of an instance."""
+RENEWAL_ROUNDS = 4
+"""The token of a turn is renewed this many rounds of the renewal before its end, at least."""
 TURN_LOST_REASONS = frozenset({Reason.EXPIRED.value, Reason.REVOKED.value})
 """The refusals of the token of the turn under way that leave the turn without the hub. A
 token presented from another address or on another endpoint is refused there only: the turn
@@ -197,10 +200,13 @@ class InstanceManager:
         self._jobs: deque[_Job] = deque()
         self._outcomes: dict[Key, str] = {}
         self._refusals: dict[Key, TokenRefusal] = {}
+        """The gravest refusal of a token of each instance since its last turn started."""
         self._told: dict[Key, set[str]] = {}
         """The tokens whose refusal the main agent was told of, per instance, since its last
-        turn started: one event per token, however often it is presented."""
+        turn started: one event per token and per turn, however often it is presented."""
         self._reconciled = False
+        self._closing = False
+        """The hub is stopping: it revokes the tokens of the turns itself."""
 
     # ------------------------------------------------------------------ InstanceControl
     def start(
@@ -272,25 +278,27 @@ class InstanceManager:
         )
 
     def token_refused(self, project_id: str, side: Side, token_id: str, reason: str) -> None:
-        """The hub refused a token of the instance (AN-021). Its status says so, and the main
-        agent is told once per token. When it is the token of the turn under way, expired or
-        revoked, the turn has lost the hub: the watchdog ends it, rather than leave it `turn`
-        with no tool that works. Nothing here waits for a container: this runs on the thread
-        of the call that was refused."""
+        """The hub refused a token of the instance. Its status gives the gravest refusal since
+        the last turn started, and the main agent is told once per token and per turn. When it
+        is the token of the turn under way, expired or revoked, the turn has lost the hub: the
+        watchdog ends it, rather than leave it `turn` with no tool that works. Nothing here
+        waits for a container: this runs on the thread of the call that was refused."""
         key = (project_id, side)
         with self._lock:
             live = self._live.get(key)
             running = live is not None and live.phase is InstanceState.TURN
             of_turn = running and live is not None and live.token_id == token_id
             refusal = TokenRefusal(format_time(self._clock.now()), reason, token_id, of_turn)
-            self._refusals[key] = refusal
-            if of_turn and reason in TURN_LOST_REASONS and live is not None:
+            kept = self._refusals.get(key)
+            if kept is None or _gravity(refusal) >= _gravity(kept):
+                self._refusals[key] = refusal
+            # A stopping instance, or a hub that stops, cut the tokens off on purpose: the
+            # refusals of the calls still on their way are expected.
+            expected = self._closing or (live is not None and live.phase is InstanceState.STOPPING)
+            if of_turn and reason in TURN_LOST_REASONS and live is not None and not expected:
                 live.token_lost = True
             told = self._told.setdefault(key, set())
-            # A stopping instance was cut off on purpose: its refusals are expected.
-            tell = token_id not in told and not (
-                live is not None and live.phase is InstanceState.STOPPING
-            )
+            tell = token_id not in told and not expected
             told.add(token_id)
             state = InstanceState.ABSENT if live is None else live.phase
         if tell and self._notifier is not None:
@@ -455,8 +463,9 @@ class InstanceManager:
 
     def _token_for_turn(self, live: _Live, record: InstanceRecord) -> str:
         """The secret to give the turn: a token of its own, issued now (ADR 0016, amended). The
-        hub keeps only its hash; the watchdog renews it while the turn runs, and it is revoked
-        when the turn ends. A token an earlier turn left live is revoked now."""
+        hub keeps only its hash; `renew_tokens` renews it while the turn runs, and it is revoked
+        when the turn ends. A token an earlier turn left live is revoked now. The refusals of the
+        tokens of the instance start over with the turn."""
         principal = instance_principal(live.side, live.project_id)
         current = self._tokens.live_project_tokens(record.instance_id)
         issued = self._tokens.issue_project_token(
@@ -469,6 +478,7 @@ class InstanceManager:
             live.token_id = issued.token_id
             live.token_lost = False
             self._told.pop(live.key, None)
+            self._refusals.pop(live.key, None)
         self._record(
             live.project_id,
             Action.TOKEN_ISSUE,
@@ -683,42 +693,52 @@ class InstanceManager:
         if (now - heard).total_seconds() > self._timing.silence_seconds:
             self._broker.stop_turn(project_id, side)
             self._end_turn(live, "silent")
-            return
-        self._renew(live)
 
-    def _renew(self, live: _Live) -> None:
-        """Renew the token of a turn the watchdog has just seen running, when less than
-        `rotate_before_seconds` of its lifetime remains, and never less than four rounds of the
-        watchdog: a round the filter does not answer renews nothing, and the third such round
-        cuts the instance off. So a turn never loses its token while it runs (AN-021), and a
-        token outlives by one lifetime at most the last round that saw its turn. The secret does
-        not change: the turn has nothing to read again."""
-        margin = max(
-            self._timing.rotate_before_seconds, (LOST_ROUNDS + 1) * self._timing.poll_seconds
-        )
-        token_id = live.token_id
-        record = (
-            None
-            if live.record is None
-            else self._tokens.live_project_token(live.record.instance_id)
-        )
-        if (
-            token_id is None
-            or record is None
-            or record.token_id != token_id
-            or not self._tokens.needs_rotation(record, margin)
-        ):
-            return
-        expires = self._tokens.renew(token_id, self._timing.token_lifetime_seconds)
-        if expires is not None:
-            self._record(
-                live.project_id,
-                Action.TOKEN_RENEW,
-                Outcome.OK,
-                token_id=token_id,
-                side=live.side.value,
-                expires_at=format_time(expires),
-            )
+    # ------------------------------------------------------------------ the renewal
+    def renew_tokens(self) -> None:
+        """One round of the renewal of the tokens of the turns. It runs on a thread of its own
+        (`TokenRenewal`), so that a job, or a watchdog round that waits for the filter, never
+        holds it up: a turn the watchdog lets run never loses its token, whatever the other
+        instances do. It calls no container, and renews the token of each turn under way by the
+        hub's account: within `limits.turn_seconds` of its start, and heard from within
+        `limits.silence_seconds`; the watchdog ends any other. The token is renewed when less
+        than `rotate_before_seconds` of its lifetime remains, and never later than
+        RENEWAL_ROUNDS rounds before its end. So a token outlives the limits of its turn by one
+        lifetime at most. The secret does not change: the turn has nothing to read again."""
+        now = self._clock.now()
+        margin = max(self._timing.rotate_before_seconds, RENEWAL_ROUNDS * self._timing.poll_seconds)
+        with self._lock:
+            turns = [
+                (live.project_id, live.side, live.token_id, live.record, live.turn_started)
+                for live in self._live.values()
+                if live.phase is InstanceState.TURN and not self._closing
+            ]
+        for project_id, side, token_id, record, started in turns:
+            if token_id is None or record is None or started is None:
+                continue
+            seen = self._tokens.last_seen(token_id)
+            heard = started if seen is None or seen < started else seen
+            if (now - started).total_seconds() > self._timing.turn_seconds or (
+                now - heard
+            ).total_seconds() > self._timing.silence_seconds:
+                continue  # the watchdog ends this one
+            current = self._tokens.live_project_token(record.instance_id)
+            if (
+                current is None
+                or current.token_id != token_id
+                or not self._tokens.needs_rotation(current, margin)
+            ):
+                continue
+            expires = self._tokens.renew(token_id, self._timing.token_lifetime_seconds)
+            if expires is not None:
+                self._record(
+                    project_id,
+                    Action.TOKEN_RENEW,
+                    Outcome.OK,
+                    token_id=token_id,
+                    side=side.value,
+                    expires_at=format_time(expires),
+                )
 
     def _end_turn(self, live: _Live, result: str) -> None:
         with self._lock:
@@ -841,6 +861,7 @@ class InstanceManager:
     def shutdown(self) -> None:
         """The hub is stopping: end the turns that run, so none outlives it. Guards stay."""
         with self._lock:
+            self._closing = True
             running = [live for live in self._live.values() if live.phase is InstanceState.TURN]
         for live in running:
             if live.record is not None:
@@ -897,6 +918,38 @@ class InstanceManager:
                 parameters=parameters,
             )
         )
+
+
+def _gravity(refusal: TokenRefusal) -> int:
+    """How grave a refusal is, for the status of the instance: a turn that lost its own token,
+    then a copy of the token of the turn presented elsewhere, then an old token."""
+    if refusal.of_turn and refusal.reason in TURN_LOST_REASONS:
+        return 2
+    return 1 if refusal.of_turn else 0
+
+
+class TokenRenewal:
+    """The renewal of the tokens of the turns, as a service of its own worker thread: no job of
+    the instance manager holds it up (ADR 0016, amended)."""
+
+    def __init__(self, manager: InstanceManager) -> None:
+        self._manager = manager
+        self._stopping = threading.Event()
+
+    def step(self) -> bool:
+        return False
+
+    def tick(self) -> None:
+        self._manager.renew_tokens()
+
+    def wait(self, timeout: float) -> None:
+        self._stopping.wait(timeout)
+
+    def wake(self) -> None:
+        self._stopping.set()
+
+    def shutdown(self) -> None:
+        """Nothing to end: the turns are the instance manager's."""
 
 
 def _result_of(turn: ContainerInfo | None) -> str:

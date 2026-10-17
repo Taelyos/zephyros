@@ -440,7 +440,7 @@ def _tokens() -> Table:
                 "rotate_before_seconds",
                 Integer(30, 86400),
                 "The hub renews the token of a running turn when less than this remains of its "
-                "lifetime (four rounds of the watchdog at least)",
+                "lifetime (four rounds of the renewal at least)",
                 default=900,
             ),
             Field(
@@ -687,7 +687,7 @@ def _rule_ports(data: Mapping[str, object]) -> list[Problem]:
 
 
 def _rule_token_lifetime(data: Mapping[str, object]) -> list[Problem]:
-    # A turn may run longer than the lifetime of a token: the watchdog renews the token of a
+    # A turn may run longer than the lifetime of a token: the hub renews the token of a
     # turn while it runs (ADR 0016, amended), so the lifetime no longer has to outlast a turn.
     tokens = _section(data, "tokens")
     if _int(tokens, "rotate_before_seconds") >= _int(tokens, "lifetime_seconds"):

@@ -327,7 +327,7 @@
           "type": "integer",
           "minimum": 30,
           "maximum": 86400,
-          "description": "The hub renews the token of a running turn when less than this remains of its lifetime (four rounds of the watchdog at least)",
+          "description": "The hub renews the token of a running turn when less than this remains of its lifetime (four rounds of the renewal at least)",
           "default": 900
         },
         "channel_lifetime_days": {

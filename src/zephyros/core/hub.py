@@ -800,7 +800,7 @@ class Hub:
             and principal.project_id is not None
             and result.token_id is not None
         ):
-            # A token the hub issued to an instance, refused: the operator sees it (AN-021).
+            # A token the hub issued to an instance, refused: the operator sees it.
             self._instances.token_refused(
                 principal.project_id, principal.side, result.token_id, result.reason.value
             )

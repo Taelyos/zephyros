@@ -107,7 +107,7 @@ def render_tools_doc() -> str:
             "reasons of a `delivery.review` among them. A text over its limit is refused, and "
             "nothing is cut: the refusal (`invalid_request`) names the field, the limit and the "
             "length received, for example `arguments.prompt: must have at most 4000 "
-            "characters; it has 5210`.",
+            "characters; it has 5210`. A list over its bounds says how many items it holds.",
             "",
             "| Tool | Field | At most |",
             "| --- | --- | --- |",

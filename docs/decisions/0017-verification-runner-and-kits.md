@@ -56,3 +56,13 @@ The method of Zephyros is the same for every project: requirements with their ve
 - Letting the Contractor provide the verification scripts: the Contractor never verifies (EXG-08).
 - Collecting the outcomes in a parent process so the nonce never enters the judge at all (the preferred shape of EXG-37). It is a worthwhile hardening, but it does not change the trust boundary: if delivered code ran in the judge it could still feed the parent a consistent forgery (canaries and all), so the barrier is needed regardless. Kept as a possible later refinement; the barrier is what makes the current design sound.
 - Allowing imports but detecting forgery with canaries only: defeated by the Contractor, which reads the contract and spares the canaries.
+
+## Amendment (Proposed, 2026-10-17): a time limit reached is said, apart from an error
+
+A test that ended on a time limit read `error`, like a test that broke, and its cause was only in the output of the run; a run stopped at the limit of the verification read `not_run` for every test, with one line of the log to say why. A real run spent most of an hour at the gate on such a test, and its report could not say so.
+
+- **The kit says which tests reached a limit of their own.** A test whose setup, call or teardown raised `subprocess.TimeoutExpired` or `TimeoutError` is named in the signed payload of the outcome line, under `timeouts`, with the phase, how long the phase ran and the limit when the exception carries it. A fixture that timed out is raised again for every test that uses it; each is named, with the duration of the first time.
+- **The kit signs each test as it starts.** A line `ZEPHYROS-STARTED {"test": …, "at": …} <hmac>`, signed under the nonce of the run like the outcome line, and begun with a newline so that it stays whole after what pytest wrote. A run stopped at its limit prints no outcome line; the filter then reads the last of these lines, in a log that begins with the one run line, and the runner names the test that was under way and for how long, at most (the start of the sandbox is counted).
+- **Nothing it carries changes an outcome.** The gate counts the outcomes as before; a run stopped at its limit still verifies nothing. `VerificationResult` carries `timeouts` and `stopped_at` (interface 0.3.0), and the report, the log (`verification.run`: `timed_out`, `stopped_at_seconds`) and the replay say "timed out", with the test, the duration and the limit.
+
+A line the delivery writes cannot name another test: it cannot sign one. A limit the acceptance test enforces without raising one of these exceptions is not recognised; its test reads as the kit saw it.

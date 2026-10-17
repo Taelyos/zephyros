@@ -518,7 +518,7 @@ def test_the_operator_starts_and_stops_an_instance_through_the_control(env: Env)
 
 
 def test_a_refused_token_of_an_instance_reaches_its_status(env: Env) -> None:
-    """AN-021: a turn that lost its token used to look `turn` and nothing more."""
+    """A turn that lost its token used to look `turn` and nothing more."""
     caller = env.callers["contractor_a"]
     assert env.tokens.revoke(caller.token_id)
     found = env.hub.identify(
@@ -1284,8 +1284,8 @@ def test_acceptance_put_ignores_a_change_that_can_no_longer_be_approved(env: Env
 def test_a_text_over_its_limit_is_refused_with_the_field_the_limit_and_the_length(
     env: Env, tool: str, field: str, extra: dict[str, str]
 ) -> None:
-    """AN-022: a relaunch and the reasons of a verdict were refused at 4 000 characters, and the
-    refusal did not say how long the text was."""
+    """A relaunch and the reasons of a verdict over 4 000 characters used to be refused without
+    saying how long the text was."""
     response = env.call("operator", tool, project_id=env.project_a, **extra, **{field: "x" * 4321})
     assert response.failure is not None
     assert response.failure.reason is Reason.INVALID_REQUEST

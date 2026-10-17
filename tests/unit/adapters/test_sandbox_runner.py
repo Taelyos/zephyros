@@ -280,7 +280,7 @@ def _answering(**result: Any) -> Any:
 
 
 def test_a_test_that_reached_its_own_time_limit_says_so() -> None:
-    """AN-023: a test over its limit read `error`, with the cause only in the raw output."""
+    """A test over its limit used to read `error`, with the cause only in the raw output."""
     handler = _answering(
         timed_out=False,
         duration_seconds=700.0,

@@ -74,7 +74,7 @@ from zephyros.core.egress import GITHUB_HOST, EgressPolicy, EgressRefusal, host_
 from zephyros.core.gateway import CredentialSource, GatewayLimits, GatewayService
 from zephyros.core.hub import Hub
 from zephyros.core.instances import InstanceControl
-from zephyros.core.lifecycle import InstanceManager, Timing, TurnEngine
+from zephyros.core.lifecycle import InstanceManager, Timing, TokenRenewal, TurnEngine
 from zephyros.core.notifications import Notifier, Send
 from zephyros.core.obstacles import ObstacleService
 from zephyros.core.ports.agent_engine import Side
@@ -468,6 +468,9 @@ async def run(
     workers: list[InstanceWorker] = []
     if isinstance(runtime.instances, InstanceManager):
         workers.append(InstanceWorker(runtime.instances, config.runtime.poll_seconds))
+        # The tokens of the turns are renewed on a thread of their own: a start that waits for
+        # a guard, or a round that waits for the filter, holds up no renewal (ADR 0016, amended).
+        workers.append(InstanceWorker(TokenRenewal(runtime.instances), config.runtime.poll_seconds))
     if runtime.deliveries is not None:
         # The queue of the delivery loop is in memory: a verification that waited or ran when the
         # hub stopped runs again from the start.

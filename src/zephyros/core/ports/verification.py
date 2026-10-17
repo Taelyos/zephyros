@@ -8,7 +8,7 @@ Version 0.x. 0.2.0 adds `VerificationResult.deselected`: the tests the kit found
 files but did not run because no acceptance criterion named them, so the report can say which
 acceptance tests never ran. 0.3.0 adds `VerificationResult.timeouts` and `stopped_at`: the tests
 that ended on a time limit, and the limit of a run stopped at it, so the report can say "timed
-out" apart from an error (AN-023).
+out" apart from an error.
 """
 
 from __future__ import annotations
@@ -45,7 +45,8 @@ class TimeLimit:
     """setup, call or teardown: the phase of the test that reached a limit of its own; `run`:
     the test was under way when the run was stopped at the limit of the verification."""
     seconds: float
-    """How long the phase, or the test under way, had run."""
+    """How long the phase had run; for `run`, how long the test had been under way, at most:
+    the start of the sandbox is counted in it."""
     limit: float | None = None
     """The limit it reached, when it is known."""
 

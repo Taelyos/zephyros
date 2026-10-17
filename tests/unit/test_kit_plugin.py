@@ -321,7 +321,7 @@ def _signed_payload(kit: ModuleType, line: str, mark: str) -> Any:
 
 
 def test_a_test_that_reaches_a_time_limit_is_named_in_the_signed_line(kit: ModuleType) -> None:
-    """AN-023: the cause of a test that timed out was in its output alone."""
+    """The cause of a test that timed out used to be in its output alone."""
     kit.OUTCOMES.clear()
     kit.OUTCOMES.update(dict.fromkeys(["t.py::slow", "t.py::shared", "t.py::other"], "error"))
     expired = subprocess.TimeoutExpired(["bench", "run"], 600)
