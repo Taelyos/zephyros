@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-import socket
 import tempfile
 import threading
 import time
@@ -20,7 +19,7 @@ import pytest
 
 from tests.support.fake_docker import FakeDocker
 from tests.support.filter_process import Running
-from tests.support.sockets import socket_path
+from tests.support.sockets import free_port, socket_path
 from zephyros.adapters.filter.journal import MemoryJournal
 from zephyros.app.hub import run
 from zephyros.core.config import Config, parse_config
@@ -28,12 +27,6 @@ from zephyros.core.config import Config, parse_config
 HERMES_TAIL = ["--oneshot", "--continue=zephyros", "--create-if-missing", "--quiet"]
 
 DIGEST = "ghcr.io/example/app@sha256:" + "e" * 64
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
 
 
 @pytest.fixture
